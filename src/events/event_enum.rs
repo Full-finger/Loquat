@@ -1,3 +1,5 @@
+//! Event enum module - unified event types
+
 use crate::events::message::MessageEvent;
 use crate::events::notice::NoticeEvent;
 use crate::events::request::RequestEvent;
@@ -20,6 +22,24 @@ pub enum EventEnum {
     Request(RequestEvent),
     /// 元事件
     Meta(MetaEvent),
+}
+
+/// 事件状态
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    /// 未知状态
+    Unknown,
+    /// 等待处理
+    Pending,
+    /// 处理中
+    Processing,
+    /// 已成功
+    Succeeded,
+    /// 已失败
+    Failed,
+    /// 已取消
+    Cancelled,
 }
 
 impl EventEnum {

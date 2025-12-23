@@ -24,3 +24,8 @@ pub use target_site::*;
 pub use block::*;
 pub use group::*;
 pub use event_enum::*;
+
+/// Re-export commonly used types
+pub use crate::events::package::Package;
+pub use crate::events::traits::Event;
+pub use crate::events::event_enum::{Status, EventEnum};
