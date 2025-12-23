@@ -1,16 +1,15 @@
 //! Group structure - contains events
 //!
-//! Group contains an array of Event objects.
+//! Group contains an array of EventEnum objects.
 
-use crate::events::Event;
+use crate::events::EventEnum;
 use serde::{Serialize, Deserialize};
-use std::fmt::Debug;
 
-/// Group - contains an array of Event objects
+/// Group - contains an array of EventEnum objects
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
     /// Events - array of event objects
-    pub events: Vec<Box<dyn Event>>,
+    pub events: Vec<EventEnum>,
     
     /// Group ID
     pub group_id: String,
@@ -39,13 +38,13 @@ impl Group {
     }
     
     /// Add an event
-    pub fn with_event(mut self, event: Box<dyn Event>) -> Self {
+    pub fn with_event(mut self, event: EventEnum) -> Self {
         self.events.push(event);
         self
     }
     
     /// Add multiple events
-    pub fn with_events(mut self, events: Vec<Box<dyn Event>>) -> Self {
+    pub fn with_events(mut self, events: Vec<EventEnum>) -> Self {
         self.events.extend(events);
         self
     }
@@ -66,47 +65,8 @@ impl Default for Group {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Mock event for testing
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    struct MockEvent {
-        pub event_id: String,
-        pub timestamp: chrono::DateTime<chrono::Utc>,
-    }
-
-    impl Event for MockEvent {
-        fn event_id(&self) -> &str {
-            &self.event_id
-        }
-        
-        fn event_type(&self) -> &str {
-            "mock"
-        }
-        
-        fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
-            self.timestamp
-        }
-        
-        fn source(&self) -> crate::events::EventSource {
-            crate::events::EventSource::Unknown
-        }
-        
-        fn user_id(&self) -> Option<&str> {
-            None
-        }
-        
-        fn group_id(&self) -> Option<&str> {
-            None
-        }
-        
-        fn self_id(&self) -> Option<&str> {
-            None
-        }
-        
-        fn correlation_id(&self) -> Option<&str> {
-            None
-        }
-    }
+    use crate::events::message::MessageEvent;
+    use crate::events::traits::EventMetadata;
 
     #[test]
     fn test_group_creation() {
@@ -127,13 +87,13 @@ mod tests {
     
     #[test]
     fn test_group_builder() {
-        let mock_event = MockEvent {
-            event_id: "evt-1".to_string(),
-            timestamp: chrono::Utc::now(),
-        };
+        let message_event = EventEnum::Message(MessageEvent::Text {
+            text: "Hello".to_string(),
+            metadata: EventMetadata::default(),
+        });
         
         let group = Group::new("test_group")
-            .with_event(Box::new(mock_event.clone()));
+            .with_event(message_event);
         
         assert_eq!(group.events.len(), 1);
     }

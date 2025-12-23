@@ -8,16 +8,21 @@ pub mod config;
 pub mod errors;
 pub mod logging;
 pub mod web;
+pub mod events;
+pub mod adapters;
 
 pub use aop::*;
 pub use config::*;
 pub use errors::*;
 pub use logging::*;
 pub use web::*;
+pub use events::*;
+pub use adapters::*;
 
 /// Re-export common types for convenience
 pub mod prelude {
     pub use crate::aop::{Aspect, Proxyable};
     pub use crate::logging::{Logger, LogLevel, LogContext};
     pub use crate::errors::{LoquatError, Result};
+    pub use crate::events::{Event, EventMetadata, EventSource, Package};
 }

@@ -47,7 +47,7 @@ pub trait Event: Send + Sync + Debug + Serialize + for<'de> Deserialize<'de> {
 }
 
 /// Common metadata for events
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EventMetadata {
     /// Unique event identifier
     pub event_id: String,

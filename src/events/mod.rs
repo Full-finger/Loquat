@@ -12,6 +12,7 @@ pub mod meta;
 pub mod target_site;
 pub mod block;
 pub mod group;
+pub mod event_enum;
 
 pub use traits::*;
 pub use package::*;
@@ -22,3 +23,4 @@ pub use meta::*;
 pub use target_site::*;
 pub use block::*;
 pub use group::*;
+pub use event_enum::*;

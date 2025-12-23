@@ -81,6 +81,7 @@ impl Default for Package {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::{SiteType, BlockType};
 
     #[test]
     fn test_package_creation() {
@@ -93,7 +94,7 @@ mod tests {
     
     #[test]
     fn test_package_builder() {
-        let site = TargetSite::new("worker1", SiteType::Worker);
+        let site = TargetSite::new("worker1", SiteType::Worker("worker1".to_string()));
         let block = Block::new(BlockType::Default);
         
         let package = Package::new()
