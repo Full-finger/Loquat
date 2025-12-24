@@ -189,7 +189,7 @@ impl Engine for StandardEngine {
         }
     }
 
-    async fn set_config(&mut self, config: EngineConfig) -> Result<(), LoquatError> {
+    async fn set_config(&mut self, config: EngineConfig) -> Result<()> {
         let message = format!("Engine config updated: {:?}", config);
         self.config = config;
         
@@ -200,7 +200,7 @@ impl Engine for StandardEngine {
         Ok(())
     }
 
-    async fn start(&mut self) -> Result<(), LoquatError> {
+    async fn start(&mut self) -> Result<()> {
         let mut state = self.state.write().await;
         
         if state.status.is_running() {
@@ -223,7 +223,7 @@ impl Engine for StandardEngine {
         Ok(())
     }
 
-    async fn stop(&mut self) -> Result<(), LoquatError> {
+    async fn stop(&mut self) -> Result<()> {
         let mut state = self.state.write().await;
         state.status = EngineStatus::Stopped;
         self.status_atomic.store(Self::STATUS_STOPPED, Ordering::SeqCst);
@@ -236,7 +236,7 @@ impl Engine for StandardEngine {
         Ok(())
     }
 
-    async fn process(&mut self, package: Package) -> Result<Package, LoquatError> {
+    async fn process(&mut self, package: Package) -> Result<Package> {
         let start_time = std::time::Instant::now();
         
         let context = self.get_processing_context(&package).await?;

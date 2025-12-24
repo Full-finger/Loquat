@@ -39,35 +39,57 @@ async fn main() -> Result<()> {
     // Create a calculator service
     let calculator = CalculatorService::new("MyCalculator");
 
-    // Create an AOP proxy with logging and error tracking
-    let proxy = AopProxyFactory::create_with_logging(calculator, Arc::clone(&logger));
+    // Create AOP proxy without factory (direct implementation)
+    use loquat::aop::traits::{Aspect, JoinPoint, ExecutionResult};
+    use loquat::logging::traits::{LogContext, LogLevel};
+    
+    struct LoggingAspect {
+        logger: Arc<dyn loquat::logging::traits::Logger>,
+    }
+
+    impl Aspect for LoggingAspect {
+        async fn before(&self, _join_point: &JoinPoint) -> ExecutionResult<()> {
+            ExecutionResult::Continue(())
+        }
+
+        async fn after(&self, _join_point: &JoinPoint, result: &ExecutionResult<()>, context: &LogContext) -> ExecutionResult<()> {
+            if let Err(e) = result {
+                let mut new_context = context.clone();
+                new_context.add("error", e.to_string());
+                self.logger.log(LogLevel::Error, &format!("Operation failed: {}", e), &new_context);
+            }
+            ExecutionResult::Continue(())
+        }
+    }
+
+    let logging_aspect = Arc::new(LoggingAspect { logger: logger.clone() });
+
+    // Create proxy with the aspect
+    let proxy = loquat::aop::proxy::AopProxy::new(calculator, logging_aspect);
 
     // Execute operations with AOP aspects applied
     println!("\n=== Testing Addition ===");
-    let result = proxy.execute_with_aspects("add", |calc| {
+    let result = proxy.execute("add", |calc| {
         calc.add(10, 20)
     }).await?;
     println!("Result: {}", result);
 
     println!("\n=== Testing Division (Success) ===");
-    let result = proxy.execute_with_aspects("divide", |calc| {
+    let result = proxy.execute("divide", |calc| {
         calc.divide(20, 4)
     }).await?;
     println!("Result: {}", result);
 
     println!("\n=== Testing Division (Error) ===");
-    let result = proxy.execute_with_aspects("divide", |calc| {
+    let result = proxy.execute("divide", |calc| {
         calc.divide(10, 0)
-    }).await;
-    match result {
-        Ok(r) => println!("Result: {}", r),
-        Err(e) => println!("Error occurred (expected): {}", e),
-    }
+    }).await?;
+    println!("Result: {}", result);
 
     println!("\n=== Testing with AOP Manager ===");
-    let manager = AopFactory::create_with_logging(Arc::clone(&logger));
+    let manager = loquat::aop::factory::AopFactory::create_with_logging(logger.clone());
     
-    let sum = manager.apply_aspects("manual_add", || {
+    let sum = manager.apply("manual_add", || {
         Ok(5 + 3)
     }).await?;
     println!("Manual calculation result: {}", sum);

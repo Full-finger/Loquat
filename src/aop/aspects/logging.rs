@@ -1,8 +1,8 @@
 //! Logging aspect implementation
 
-use crate::aop::traits::{Aspect, AspectContext, AspectResult};
-use crate::logging::traits::{Logger, LogLevel, LogContext};
+use crate::aop::traits::Aspect;
 use crate::errors::Result;
+use crate::logging::traits::{Logger, LogLevel, LogContext};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -86,9 +86,10 @@ impl LoggingAspect {
 
 #[async_trait]
 impl Aspect for LoggingAspect {
-    async fn before(&self, operation: &str) -> crate::errors::Result<()> {
-        let log_context = LogContext::new()
-            .with_metadata("operation", operation);
+    async fn before(&self, operation: &str) -> Result<()> {
+        let mut log_context = LogContext::new();
+        log_context = log_context
+            .with_metadata("operation", operation)?;
 
         self.logger.log_with_context(
             self.log_level,
@@ -99,9 +100,10 @@ impl Aspect for LoggingAspect {
         Ok(())
     }
 
-    async fn after(&self, operation: &str, _result: &crate::errors::Result<()>) -> crate::errors::Result<()> {
-        let log_context = LogContext::new()
-            .with_metadata("operation", operation);
+    async fn after(&self, operation: &str, _result: &Result<()>) -> Result<()> {
+        let mut log_context = LogContext::new();
+        log_context = log_context
+            .with_metadata("operation", operation)?;
 
         self.logger.log_with_context(
             self.log_level,
@@ -112,11 +114,12 @@ impl Aspect for LoggingAspect {
         Ok(())
     }
 
-    async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> crate::errors::Result<()> {
-        let log_context = LogContext::new()
-            .with_metadata("operation", operation)
-            .with_metadata("error_type", std::any::type_name_of_val(error))
-            .with_metadata("error_message", error.to_string());
+    async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> Result<()> {
+        let mut log_context = LogContext::new();
+        log_context = log_context
+            .with_metadata("operation", operation)?
+            .with_metadata("error_type", std::any::type_name_of_val(error))?
+            .with_metadata("error_message", error.to_string())?;
 
         self.logger.log_with_context(
             LogLevel::Error,
@@ -147,13 +150,13 @@ impl LoggingAspectBuilder {
         }
     }
 
-    /// Set the logger
+    /// Set logger
     pub fn logger(mut self, logger: Arc<dyn Logger>) -> Self {
         self.logger = Some(logger);
         self
     }
 
-    /// Set the log level
+    /// Set log level
     pub fn log_level(mut self, level: LogLevel) -> Self {
         self.log_level = level;
         self
@@ -171,7 +174,7 @@ impl LoggingAspectBuilder {
         self
     }
 
-    /// Build the logging aspect
+    /// Build logging aspect
     pub fn build(self) -> Result<LoggingAspect> {
         let logger = self.logger.ok_or_else(|| {
             crate::errors::LoquatError::Config(crate::errors::ConfigError::MissingRequired(

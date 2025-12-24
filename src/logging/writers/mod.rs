@@ -124,4 +124,44 @@ impl LogWriter for CombinedWriter {
             ).into())
         }
     }
+
+    async fn flush_async(&self) -> crate::errors::Result<()> {
+        let mut errors = Vec::new();
+        
+        for writer in &self.writers {
+            if let Err(e) = writer.flush_async().await {
+                errors.push(e);
+            }
+        }
+        
+        if errors.is_empty() {
+            Ok(())
+        } else if errors.len() == 1 {
+            Err(errors.into_iter().next().unwrap())
+        } else {
+            Err(crate::errors::LoggingError::WriteError(
+                format!("Multiple flush errors: {:?}", errors)
+            ).into())
+        }
+    }
+
+    async fn close_async(&self) -> crate::errors::Result<()> {
+        let mut errors = Vec::new();
+        
+        for writer in &self.writers {
+            if let Err(e) = writer.close_async().await {
+                errors.push(e);
+            }
+        }
+        
+        if errors.is_empty() {
+            Ok(())
+        } else if errors.len() == 1 {
+            Err(errors.into_iter().next().unwrap())
+        } else {
+            Err(crate::errors::LoggingError::WriteError(
+                format!("Multiple close errors: {:?}", errors)
+            ).into())
+        }
+    }
 }

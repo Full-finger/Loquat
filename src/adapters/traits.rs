@@ -64,7 +64,7 @@ pub enum Message {
 }
 
 /// Core adapter trait - all platform adapters must implement this
-/// 
+///
 /// Note: This trait is object-safe and can be used as `dyn Adapter`.
 pub trait Adapter: Send + Sync + Debug {
     /// Get adapter name
@@ -77,7 +77,7 @@ pub trait Adapter: Send + Sync + Debug {
     fn adapter_id(&self) -> &str;
     
     /// Get adapter configuration
-    fn config(&self) -> &AdapterConfig;
+    fn config(&self) -> AdapterConfig;
     
     /// Get adapter status
     fn status(&self) -> AdapterStatus;
@@ -93,52 +93,63 @@ pub trait Adapter: Send + Sync + Debug {
     }
     
     /// Get statistics about adapter
-    fn statistics(&self) -> AdapterStatistics;
-}
-
-/// Adapter statistics
-#[derive(Debug, Clone)]
-pub struct AdapterStatistics {
-    /// Number of events received
-    pub events_received: u64,
-    
-    /// Number of events sent
-    pub events_sent: u64,
-    
-    /// Number of messages sent
-    pub messages_sent: u64,
-    
-    /// Number of errors encountered
-    pub errors: u64,
-    
-    /// Uptime in seconds
-    pub uptime_seconds: u64,
-    
-    /// Last activity timestamp
-    pub last_activity: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl Default for AdapterStatistics {
-    fn default() -> Self {
-        Self {
-            events_received: 0,
-            events_sent: 0,
-            messages_sent: 0,
-            errors: 0,
-            uptime_seconds: 0,
-            last_activity: None,
-        }
-    }
+    fn statistics(&self) -> crate::adapters::types::AdapterStatistics;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Mock adapter for testing
+    #[derive(Debug)]
+    struct MockAdapter;
+
+    impl Adapter for MockAdapter {
+        fn name(&self) -> &str {
+            "MockAdapter"
+        }
+
+        fn version(&self) -> &str {
+            "1.0.0"
+        }
+
+        fn adapter_id(&self) -> &str {
+            "mock-001"
+        }
+
+        fn config(&self) -> AdapterConfig {
+            AdapterConfig::new("mock", "mock-001", "ws://localhost")
+        }
+
+        fn status(&self) -> AdapterStatus {
+            AdapterStatus::Running
+        }
+
+        fn is_running(&self) -> bool {
+            true
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
+
+        fn statistics(&self) -> crate::adapters::types::AdapterStatistics {
+            crate::adapters::types::AdapterStatistics::default()
+        }
+    }
+
     #[test]
-    fn test_adapter_statistics_default() {
-        let stats = AdapterStatistics::default();
+    fn test_adapter_trait() {
+        let adapter = MockAdapter;
         
+        assert_eq!(adapter.name(), "MockAdapter");
+        assert_eq!(adapter.version(), "1.0.0");
+        assert_eq!(adapter.adapter_id(), "mock-001");
+        assert!(adapter.is_running());
+        assert!(adapter.is_connected());
+        assert_eq!(adapter.status(), AdapterStatus::Running);
+        
+        let stats = adapter.statistics();
         assert_eq!(stats.events_received, 0);
         assert_eq!(stats.events_sent, 0);
         assert_eq!(stats.messages_sent, 0);

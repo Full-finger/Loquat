@@ -31,22 +31,22 @@ pub trait Plugin: Send + Sync + Debug {
         Vec::new()
     }
     
-    /// Initialize the plugin
+    /// Initialize plugin
     async fn init(&mut self) -> crate::errors::Result<()> {
         Ok(())
     }
     
-    /// Load the plugin (called after init)
+    /// Load of plugin (called after init)
     async fn load(&mut self) -> crate::errors::Result<()> {
         Ok(())
     }
     
-    /// Unload the plugin
+    /// Unload of plugin
     async fn unload(&mut self) -> crate::errors::Result<()> {
         Ok(())
     }
     
-    /// Reload the plugin (hot-reload)
+    /// Reload of plugin (hot-reload)
     async fn reload(&mut self) -> crate::errors::Result<()> {
         self.unload().await?;
         self.load().await
@@ -58,7 +58,7 @@ pub trait Plugin: Send + Sync + Debug {
     }
     
     /// Handle plugin-specific configuration update
-    async fn update_config(&mut self, config: serde_json::Value) -> crate::errors::Result<()> {
+    async fn update_config(&mut self, _config: serde_json::Value) -> crate::errors::Result<()> {
         // Default: ignore config updates
         Ok(())
     }

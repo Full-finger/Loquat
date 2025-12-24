@@ -84,6 +84,16 @@ impl LogWriter for ConsoleWriter {
             .map_err(|e| LoggingError::WriteError(e.to_string()))?;
         Ok(())
     }
+
+    async fn flush_async(&self) -> Result<()> {
+        // Console flush is immediate, no async needed
+        self.flush()
+    }
+
+    async fn close_async(&self) -> Result<()> {
+        self.flush()?;
+        Ok(())
+    }
 }
 
 /// Console writer that automatically routes messages based on log level
@@ -157,6 +167,15 @@ impl LogWriter for AutoRoutingConsoleWriter {
         // Flush both streams
         self.stdout_writer.flush()?;
         self.stderr_writer.flush()?;
+        Ok(())
+    }
+
+    async fn flush_async(&self) -> Result<()> {
+        self.flush()
+    }
+
+    async fn close_async(&self) -> Result<()> {
+        self.flush()?;
         Ok(())
     }
 }
@@ -244,6 +263,16 @@ impl LogWriter for EnhancedConsoleWriter {
 
     fn flush(&self) -> Result<()> {
         self.base.flush()
+    }
+
+    async fn flush_async(&self) -> Result<()> {
+        self.base.flush_async().await?;
+        Ok(())
+    }
+
+    async fn close_async(&self) -> Result<()> {
+        self.flush()?;
+        Ok(())
     }
 }
 

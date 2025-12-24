@@ -1,4 +1,4 @@
-//! Core traits for the logging system
+//! Core traits for logging system
 
 use crate::errors::{LoggingError, Result};
 use async_trait::async_trait;
@@ -40,7 +40,7 @@ impl LogLevel {
         }
     }
 
-    /// Check if this level should be logged given the minimum level
+    /// Check if this level should be logged given to minimum level
     pub fn should_log(&self, min_level: LogLevel) -> bool {
         *self >= min_level
     }
@@ -57,19 +57,19 @@ impl std::fmt::Display for LogLevel {
 pub struct LogContext {
     /// Unique request/correlation ID
     pub correlation_id: Option<String>,
-    
+
     /// User ID if available
     pub user_id: Option<String>,
-    
+
     /// Session ID
     pub session_id: Option<String>,
-    
+
     /// Request path/method for web requests
     pub request_info: Option<RequestInfo>,
-    
+
     /// Component/module name
     pub component: Option<String>,
-    
+
     /// Additional metadata
     pub metadata: HashMap<String, serde_json::Value>,
 }
@@ -87,33 +87,36 @@ impl LogContext {
         }
     }
 
-    /// Get the current context (in a real implementation, this would use thread-local or async context)
+    /// Create a new empty context (returns Result for convenience)
+    pub fn new_result() -> Result<Self> {
+        Ok(Self::new())
+    }
+
+    /// Get current context (in a real implementation, this would use thread-local or async context)
     pub fn current() -> Self {
         // Simplified implementation - in production, use proper context propagation
         Self::new()
     }
 
     /// Create context with correlation ID
-    pub fn with_correlation_id(correlation_id: String) -> Self {
-        let mut ctx = Self::new();
-        ctx.correlation_id = Some(correlation_id);
-        ctx
+    pub fn with_correlation_id(mut self, correlation_id: String) -> Self {
+        self.correlation_id = Some(correlation_id);
+        self
     }
 
     /// Add metadata
-    pub fn with_metadata<K: Into<String>, V: Serialize>(mut self, key: K, value: V) -> Self {
+    pub fn with_metadata<K: Into<String>, V: Serialize>(mut self, key: K, value: V) -> Result<Self> {
         if let Ok(val) = serde_json::to_value(value) {
             self.metadata.insert(key.into(), val);
         }
-        self
+        Ok(self)
     }
 
     /// Add metadata to context (chaining version)
-    pub fn add<K: Into<String>, V: Serialize>(&mut self, key: K, value: V) -> &mut Self {
+    pub fn add<K: Into<String>, V: Serialize>(&mut self, key: K, value: V) {
         if let Ok(val) = serde_json::to_value(value) {
             self.metadata.insert(key.into(), val);
         }
-        self
     }
 
     /// Set component
@@ -187,16 +190,16 @@ impl LogEntry {
 /// Core logger trait
 #[async_trait]
 pub trait Logger: Send + Sync {
-    /// Log a message with the given level and context
+    /// Log a message with given level and context
     fn log(&self, level: LogLevel, message: &str, context: &LogContext);
 
     /// Log a structured entry
-    fn log_entry(&self, entry: LogEntry);
+    fn log_entry(&self, entry: &LogEntry);
 
-    /// Set the minimum log level
+    /// Set minimum log level
     fn set_level(&self, level: LogLevel);
 
-    /// Get the current log level
+    /// Get current log level
     fn get_level(&self) -> LogLevel;
 
     /// Check if a level should be logged
@@ -204,7 +207,7 @@ pub trait Logger: Send + Sync {
         level.should_log(self.get_level())
     }
 
-    /// Initialize the logger (async for potentially expensive setup)
+    /// Initialize logger (async for potentially expensive setup)
     async fn init_async(&self) -> Result<()> {
         Ok(())
     }
@@ -217,11 +220,20 @@ pub trait Logger: Send + Sync {
     }
 
     /// Flush any pending logs
-    fn flush(&self);
+    async fn flush_async(&self) -> Result<()> {
+        Ok(())
+    }
 
-    /// Shutdown the logger gracefully
+    /// Synchronous flush (calls async internally)
+    fn flush(&self) -> Result<()> {
+        // Simple blocking implementation - in production, use proper async runtime
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        Ok(())
+    }
+
+    /// Shutdown logger gracefully
     async fn shutdown_async(&self) -> Result<()> {
-        self.flush();
+        self.flush()?;
         Ok(())
     }
 
@@ -267,11 +279,14 @@ pub trait LogWriter: Send + Sync {
     /// Flush pending writes
     fn flush(&self) -> Result<()>;
 
-    /// Close the writer
+    /// Close writer
     async fn close_async(&self) -> Result<()> {
         self.flush()?;
         Ok(())
     }
+
+    /// Async flush
+    async fn flush_async(&self) -> Result<()>;
 }
 
 /// Logger configuration

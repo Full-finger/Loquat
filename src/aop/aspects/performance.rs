@@ -1,13 +1,12 @@
 //! Performance monitoring aspect implementation
 
-use crate::aop::traits::{Aspect, AspectContext, AspectResult};
-use crate::logging::traits::{Logger, LogLevel, LogContext};
+use crate::aop::traits::Aspect;
 use crate::errors::{AopError, Result};
+use crate::logging::traits::{Logger, LogLevel, LogContext};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Performance monitoring aspect that tracks execution time and performance metrics
 pub struct PerformanceAspect {
     logger: Arc<dyn Logger>,
     slow_threshold: Duration,
@@ -17,81 +16,71 @@ pub struct PerformanceAspect {
 }
 
 impl PerformanceAspect {
-    /// Create a new performance aspect
     pub fn new(logger: Arc<dyn Logger>) -> Self {
         Self {
             logger,
-            slow_threshold: Duration::from_millis(1000), // 1 second default
+            slow_threshold: Duration::from_millis(1000),
             track_memory: false,
             track_cpu: false,
             enable_metrics: true,
         }
     }
 
-    /// Set the slow operation threshold
     pub fn with_slow_threshold(mut self, threshold: Duration) -> Self {
         self.slow_threshold = threshold;
         self
     }
 
-    /// Set whether to track memory usage
     pub fn with_memory_tracking(mut self, track: bool) -> Self {
         self.track_memory = track;
         self
     }
 
-    /// Set whether to track CPU usage
     pub fn with_cpu_tracking(mut self, track: bool) -> Self {
         self.track_cpu = track;
         self
     }
 
-    /// Set whether to enable detailed metrics
     pub fn with_metrics(mut self, enable: bool) -> Self {
         self.enable_metrics = enable;
         self
     }
 
-    /// Create a performance monitor for web requests
     pub fn web_request_monitor(logger: Arc<dyn Logger>) -> Self {
         Self {
             logger,
-            slow_threshold: Duration::from_millis(500), // 500ms for web requests
+            slow_threshold: Duration::from_millis(500),
             track_memory: true,
             track_cpu: false,
             enable_metrics: true,
         }
     }
 
-    /// Create a performance monitor for database operations
     pub fn database_monitor(logger: Arc<dyn Logger>) -> Self {
         Self {
             logger,
-            slow_threshold: Duration::from_millis(200), // 200ms for database
+            slow_threshold: Duration::from_millis(200),
             track_memory: false,
             track_cpu: false,
             enable_metrics: true,
         }
     }
 
-    /// Create a performance monitor for background jobs
     pub fn background_job_monitor(logger: Arc<dyn Logger>) -> Self {
         Self {
             logger,
-            slow_threshold: Duration::from_secs(30), // 30 seconds for background jobs
+            slow_threshold: Duration::from_secs(30),
             track_memory: true,
             track_cpu: true,
             enable_metrics: true,
         }
     }
 
-    /// Get memory usage if tracking is enabled
-    fn get_memory_usage(&self) -> Option<(usize, usize)> {
+    pub fn get_memory_usage(&self) -> Option<(usize, usize)> {
         if !self.track_memory {
             return None;
         }
 
-        // Get memory usage using std::process
         match std::process::Command::new("ps").arg("-o").arg("vsz,rss").arg("-p").arg(&std::process::id().to_string()).output() {
             Ok(output) => {
                 let output_str = String::from_utf8_lossy(&output.stdout);
@@ -100,7 +89,7 @@ impl PerformanceAspect {
                     let parts: Vec<&str> = lines[1].split_whitespace().collect();
                     if parts.len() >= 2 {
                         if let (Ok(vsz), Ok(rss)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
-                            return Some((vsz * 1024, rss * 1024)); // Convert KB to bytes
+                            return Some((vsz * 1024, rss * 1024));
                         }
                     }
                 }
@@ -110,14 +99,11 @@ impl PerformanceAspect {
         }
     }
 
-    /// Get CPU usage if tracking is enabled
-    fn get_cpu_usage(&self) -> Option<f64> {
+    pub fn get_cpu_usage(&self) -> Option<f64> {
         if !self.track_cpu {
             return None;
         }
 
-        // This is a simplified CPU usage calculation
-        // In a real implementation, you'd want more sophisticated CPU tracking
         match std::process::Command::new("ps").arg("-o").arg("%cpu").arg("-p").arg(&std::process::id().to_string()).output() {
             Ok(output) => {
                 let output_str = String::from_utf8_lossy(&output.stdout);
@@ -136,49 +122,49 @@ impl PerformanceAspect {
 
 #[async_trait]
 impl Aspect for PerformanceAspect {
-    async fn before(&self, operation: &str) -> crate::errors::Result<()> {
-        if self.enable_metrics {
-            let mut log_context = LogContext::new()
-                .with_metadata("operation", operation)
-                .with_metadata("phase", "start");
-
-            // Add initial memory usage if tracking
-            if let Some((vsz, rss)) = self.get_memory_usage() {
-                log_context = log_context.with_metadata("memory_vsz_initial", vsz)
-                    .with_metadata("memory_rss_initial", rss);
-            }
-
-            // Add initial CPU usage if tracking
-            if let Some(cpu) = self.get_cpu_usage() {
-                log_context = log_context.with_metadata("cpu_initial", cpu);
-            }
-
-            self.logger.log_with_context(
-                LogLevel::Debug,
-                &format!("Starting performance monitoring for {}", operation),
-                &log_context,
-            );
+    async fn before(&self, operation: &str) -> Result<()> {
+        if !self.enable_metrics {
+            return Ok(());
         }
+
+        let mut log_context = LogContext::new();
+        log_context = log_context.with_metadata("operation", operation)?;
+        log_context = log_context.with_metadata("phase", "start")?;
+
+        if let Some((vsz, rss)) = self.get_memory_usage() {
+            log_context = log_context.with_metadata("memory_vsz_initial", vsz)?;
+            log_context = log_context.with_metadata("memory_rss_initial", rss)?;
+        }
+
+        if let Some(cpu) = self.get_cpu_usage() {
+            log_context = log_context.with_metadata("cpu_initial", cpu)?;
+        }
+
+        self.logger.log_with_context(
+            LogLevel::Debug,
+            &format!("Starting performance monitoring for {}", operation),
+            &log_context,
+        );
 
         Ok(())
     }
 
-    async fn after(&self, operation: &str, result: &crate::errors::Result<()>) -> crate::errors::Result<()> {
-        // Note: In a real implementation, you'd want to store the start time
-        // This is a simplified version that just logs the completion
-        let mut log_context = LogContext::new()
-            .with_metadata("operation", operation)
-            .with_metadata("success", result.is_ok());
-
-        // Add final memory usage if tracking
-        if let Some((vsz, rss)) = self.get_memory_usage() {
-            log_context = log_context.with_metadata("memory_vsz_final", vsz)
-                .with_metadata("memory_rss_final", rss);
+    async fn after(&self, operation: &str, result: &Result<()>) -> Result<()> {
+        if !self.enable_metrics {
+            return Ok(());
         }
 
-        // Add final CPU usage if tracking
+        let mut log_context = LogContext::new();
+        log_context = log_context.with_metadata("operation", operation)?;
+        log_context = log_context.with_metadata("success", result.is_ok())?;
+
+        if let Some((vsz, rss)) = self.get_memory_usage() {
+            log_context = log_context.with_metadata("memory_vsz_final", vsz)?;
+            log_context = log_context.with_metadata("memory_rss_final", rss)?;
+        }
+
         if let Some(cpu) = self.get_cpu_usage() {
-            log_context = log_context.with_metadata("cpu_final", cpu);
+            log_context = log_context.with_metadata("cpu_final", cpu)?;
         }
 
         let log_level = if result.is_err() {
@@ -196,15 +182,15 @@ impl Aspect for PerformanceAspect {
         Ok(())
     }
 
-    async fn on_error(&self, operation: &str, error: &AopError) -> crate::errors::Result<()> {
-        let log_context = LogContext::new()
-            .with_metadata("operation", operation)
-            .with_metadata("error_type", std::any::type_name_of_val(error))
-            .with_metadata("error_message", error.to_string());
+    async fn on_error(&self, operation: &str, error: &AopError) -> Result<()> {
+        let mut log_context = LogContext::new();
+        log_context = log_context.with_metadata("operation", operation)?;
+        log_context = log_context.with_metadata("error_type", std::any::type_name_of_val(error))?;
+        log_context = log_context.with_metadata("error_message", error.to_string())?;
 
         self.logger.log_with_context(
             LogLevel::Error,
-            &format!("Performance monitoring error in {}: {}", operation, error),
+            &format!("Performance monitoring error in {}", operation),
             &log_context,
         );
 
@@ -212,7 +198,6 @@ impl Aspect for PerformanceAspect {
     }
 }
 
-/// Performance metrics collector
 #[derive(Debug, Clone)]
 pub struct PerformanceMetrics {
     pub operation: String,
@@ -226,7 +211,6 @@ pub struct PerformanceMetrics {
 }
 
 impl PerformanceMetrics {
-    /// Create new performance metrics
     pub fn new(operation: &str) -> Self {
         Self {
             operation: operation.to_string(),
@@ -240,40 +224,33 @@ impl PerformanceMetrics {
         }
     }
 
-    /// Mark the operation as completed
     pub fn complete(&mut self, success: bool) {
         self.end_time = Some(Instant::now());
         self.success = Some(success);
     }
 
-    /// Get execution duration
     pub fn duration(&self) -> Option<Duration> {
         self.end_time.map(|end| end.duration_since(self.start_time))
     }
 
-    /// Get memory delta
     pub fn memory_delta(&self) -> Option<(isize, isize)> {
         match (self.memory_initial, self.memory_final) {
-            (Some((vsz_initial, rss_initial)), Some((vsz_final, rss_final))) => {
-                Some((
-                    vsz_final as isize - vsz_initial as isize,
-                    rss_final as isize - rss_initial as isize,
-                ))
-            },
+            (Some(initial), Some(final_res)) => Some((
+                final_res.0 as isize - initial.0 as isize,
+                final_res.1 as isize - initial.1 as isize,
+            )),
             _ => None,
         }
     }
 
-    /// Get CPU delta
     pub fn cpu_delta(&self) -> Option<f64> {
         match (self.cpu_initial, self.cpu_final) {
-            (Some(initial), Some(final_cpu)) => Some(final_cpu - initial),
+            (Some(initial), Some(final_res)) => Some(final_res - initial),
             _ => None,
         }
     }
 }
 
-/// Builder for creating performance aspects
 pub struct PerformanceAspectBuilder {
     logger: Option<Arc<dyn Logger>>,
     slow_threshold: Duration,
@@ -283,7 +260,6 @@ pub struct PerformanceAspectBuilder {
 }
 
 impl PerformanceAspectBuilder {
-    /// Create a new performance aspect builder
     pub fn new() -> Self {
         Self {
             logger: None,
@@ -294,37 +270,31 @@ impl PerformanceAspectBuilder {
         }
     }
 
-    /// Set the logger
     pub fn logger(mut self, logger: Arc<dyn Logger>) -> Self {
         self.logger = Some(logger);
         self
     }
 
-    /// Set the slow threshold
     pub fn slow_threshold(mut self, threshold: Duration) -> Self {
         self.slow_threshold = threshold;
         self
     }
 
-    /// Set memory tracking
     pub fn track_memory(mut self, track: bool) -> Self {
         self.track_memory = track;
         self
     }
 
-    /// Set CPU tracking
     pub fn track_cpu(mut self, track: bool) -> Self {
         self.track_cpu = track;
         self
     }
 
-    /// Set metrics enabled
     pub fn enable_metrics(mut self, enable: bool) -> Self {
         self.enable_metrics = enable;
         self
     }
 
-    /// Build the performance aspect
     pub fn build(self) -> Result<PerformanceAspect> {
         let logger = self.logger.ok_or_else(|| {
             crate::errors::LoquatError::Config(crate::errors::ConfigError::MissingRequired(
@@ -408,12 +378,12 @@ mod tests {
     #[test]
     fn test_performance_metrics() {
         let mut metrics = PerformanceMetrics::new("test_operation");
-        
+
         assert!(metrics.duration().is_none());
         assert!(metrics.success.is_none());
-        
+
         metrics.complete(true);
-        
+
         assert!(metrics.duration().is_some());
         assert_eq!(metrics.success, Some(true));
     }

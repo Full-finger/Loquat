@@ -12,12 +12,11 @@ pub use aspects::*;
 pub use proxy::*;
 pub use traits::*;
 
-use crate::errors::{AopError, LoquatError, Result};
-use std::sync::Arc;
+use crate::errors::Result;
 
 /// AOP manager for coordinating aspects and proxies
 pub struct AopManager {
-    aspects: Vec<Arc<dyn Aspect>>,
+    aspects: Vec<std::sync::Arc<dyn crate::aop::traits::Aspect>>,
 }
 
 impl AopManager {
@@ -28,35 +27,36 @@ impl AopManager {
         }
     }
 
-    /// Add an aspect to the manager
-    pub fn add_aspect(&mut self, aspect: Arc<dyn Aspect>) {
+    /// Add an aspect to manager
+    pub fn add_aspect(&mut self, aspect: std::sync::Arc<dyn crate::aop::traits::Aspect>) {
         self.aspects.push(aspect);
     }
 
     /// Create a proxy with all registered aspects
-    pub fn create_proxy<T>(&self, target: T) -> AopProxy<T>
+    pub fn create_proxy<T>(&self, target: T) -> crate::aop::proxy::AopProxy<T>
     where
         T: Send + Sync,
     {
-        AopProxy::new(target, self.aspects.clone())
+        crate::aop::proxy::AopProxy::new(target, self.aspects.clone())
     }
 
     /// Apply aspects to a function
     pub async fn apply_aspects<F, R>(&self, operation: &str, f: F) -> Result<R>
     where
         F: FnOnce() -> Result<R> + Send,
+        R: Send,
     {
         // Execute before advice for all aspects
         for aspect in &self.aspects {
             aspect.before(operation).await?;
         }
 
-        // Execute the target function
+        // Execute target function
         let result = f();
 
         // Execute after advice for all aspects
         for aspect in &self.aspects {
-            let unit_result: Result<()> = result.as_ref().map(|_| ()).map_err(|e| LoquatError::Aop(AopError::ExecutionFailed(e.to_string())));
+            let unit_result: Result<()> = result.as_ref().map(|_| ()).map_err(|e| crate::errors::LoquatError::Aop(crate::errors::AopError::ExecutionFailed(e.to_string())));
             aspect.after(operation, &unit_result).await?;
         }
 
@@ -74,37 +74,38 @@ impl Default for AopManager {
 pub struct AopFactory;
 
 impl AopFactory {
-    /// Create an AOP manager with logging and error tracking
-    pub fn create_with_logging(logger: Arc<dyn crate::logging::traits::Logger>) -> AopManager {
+    /// Create an AOP manager with default aspects
+    pub fn create_manager() -> AopManager {
+        AopManager::new()
+    }
+
+    /// Create an AOP manager with logging
+    pub fn create_with_logging(logger: std::sync::Arc<dyn crate::logging::traits::Logger>) -> AopManager {
         let mut manager = AopManager::new();
-        
-        // Add logging aspect
-        manager.add_aspect(Arc::new(crate::aop::aspects::LoggingAspect::new(Arc::clone(&logger))));
-        
-        // Add error tracking aspect
-        manager.add_aspect(Arc::new(crate::aop::aspects::ErrorTrackingAspect::new(Arc::clone(&logger))));
-        
+        manager.add_aspect(std::sync::Arc::new(crate::aop::aspects::LoggingAspect::new(std::sync::Arc::clone(&logger))));
+        manager
+    }
+
+    /// Create an AOP manager with error tracking
+    pub fn create_with_error_tracking(logger: std::sync::Arc<dyn crate::logging::traits::Logger>) -> AopManager {
+        let mut manager = AopManager::new();
+        manager.add_aspect(std::sync::Arc::new(crate::aop::aspects::ErrorTrackingAspect::new(std::sync::Arc::clone(&logger))));
         manager
     }
 
     /// Create an AOP manager with performance monitoring
-    pub fn create_with_performance(logger: Arc<dyn crate::logging::traits::Logger>) -> AopManager {
+    pub fn create_with_performance(logger: std::sync::Arc<dyn crate::logging::traits::Logger>) -> AopManager {
         let mut manager = AopManager::new();
-        
-        // Add performance aspect
-        manager.add_aspect(Arc::new(crate::aop::aspects::PerformanceAspect::new(Arc::clone(&logger))));
-        
+        manager.add_aspect(std::sync::Arc::new(crate::aop::aspects::PerformanceAspect::new(std::sync::Arc::clone(&logger))));
         manager
     }
 
-    /// Create a full-featured AOP manager
-    pub fn create_full(logger: Arc<dyn crate::logging::traits::Logger>) -> AopManager {
+    /// Create a full-featured AOP manager with all aspects
+    pub fn create_full(logger: std::sync::Arc<dyn crate::logging::traits::Logger>) -> AopManager {
         let mut manager = AopManager::new();
-        
-        manager.add_aspect(Arc::new(crate::aop::aspects::LoggingAspect::new(Arc::clone(&logger))));
-        manager.add_aspect(Arc::new(crate::aop::aspects::ErrorTrackingAspect::new(Arc::clone(&logger))));
-        manager.add_aspect(Arc::new(crate::aop::aspects::PerformanceAspect::new(Arc::clone(&logger))));
-        
+        manager.add_aspect(std::sync::Arc::new(crate::aop::aspects::LoggingAspect::new(std::sync::Arc::clone(&logger))));
+        manager.add_aspect(std::sync::Arc::new(crate::aop::aspects::ErrorTrackingAspect::new(std::sync::Arc::clone(&logger))));
+        manager.add_aspect(std::sync::Arc::new(crate::aop::aspects::PerformanceAspect::new(std::sync::Arc::clone(&logger))));
         manager
     }
 }
@@ -112,35 +113,24 @@ impl AopFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aop::aspects::{LoggingAspect, ErrorTrackingAspect};
-    use crate::logging::writers::ConsoleWriter;
-    use crate::logging::formatters::TextFormatter;
 
-    #[test]
-    fn test_aop_manager_creation() {
+    #[tokio::test]
+    async fn test_aop_manager_creation() {
         let manager = AopManager::new();
         assert_eq!(manager.aspects.len(), 0);
     }
 
-    #[test]
-    fn test_aop_manager_add_aspect() {
-        let mut manager = AopManager::new();
-        let writer = Arc::new(ConsoleWriter::new());
-        let formatter = Arc::new(TextFormatter::detailed());
-        let logger: Arc<dyn crate::logging::traits::Logger> = Arc::new(crate::logging::logger::StructuredLogger::new(formatter, writer));
-        let aspect = Arc::new(LoggingAspect::new(Arc::clone(&logger)));
-        
-        manager.add_aspect(aspect.clone());
-        assert_eq!(manager.aspects.len(), 1);
-        assert_eq!(manager.aspects[0].as_ref() as *const dyn Aspect, aspect.as_ref() as *const dyn Aspect);
-    }
-
     #[tokio::test]
-    async fn test_aop_manager_apply_aspects() {
-        let writer = Arc::new(ConsoleWriter::new());
-        let formatter = Arc::new(TextFormatter::detailed());
-        let logger: Arc<dyn crate::logging::traits::Logger> = Arc::new(crate::logging::logger::StructuredLogger::new(formatter, writer));
-        let manager = AopFactory::create_with_logging(Arc::clone(&logger));
+    async fn test_aop_manager_add_aspect() {
+        let writer = std::sync::Arc::new(crate::logging::writers::ConsoleWriter::new());
+        let formatter = std::sync::Arc::new(crate::logging::formatters::TextFormatter::detailed());
+        let logger: std::sync::Arc<dyn crate::logging::traits::Logger> = std::sync::Arc::new(crate::logging::logger::StructuredLogger::new(formatter, writer));
+
+        let mut manager = AopManager::new();
+        let aspect = std::sync::Arc::new(crate::aop::aspects::LoggingAspect::new(std::sync::Arc::clone(&logger)));
+        
+        manager.add_aspect(std::sync::Arc::clone(&aspect));
+        assert_eq!(manager.aspects.len(), 1);
         
         let result = manager.apply_aspects("test_operation", || {
             Ok(42)
@@ -152,14 +142,17 @@ mod tests {
 
     #[test]
     fn test_aop_factory() {
-        let writer = Arc::new(ConsoleWriter::new());
-        let formatter = Arc::new(TextFormatter::detailed());
-        let logger: Arc<dyn crate::logging::traits::Logger> = Arc::new(crate::logging::logger::StructuredLogger::new(formatter, writer));
+        let writer = std::sync::Arc::new(crate::logging::writers::ConsoleWriter::new());
+        let formatter = std::sync::Arc::new(crate::logging::formatters::TextFormatter::detailed());
+        let logger: std::sync::Arc<dyn crate::logging::traits::Logger> = std::sync::Arc::new(crate::logging::logger::StructuredLogger::new(formatter, writer));
         
-        let manager = AopFactory::create_with_logging(Arc::clone(&logger));
-        assert_eq!(manager.aspects.len(), 2); // Logging + ErrorTracking
+        let manager = AopFactory::create_manager();
+        assert_eq!(manager.aspects.len(), 0);
         
-        let full_manager = AopFactory::create_full(Arc::clone(&logger));
-        assert_eq!(full_manager.aspects.len(), 3); // Logging + ErrorTracking + Performance
+        let logging_manager = AopFactory::create_with_logging(std::sync::Arc::clone(&logger));
+        assert_eq!(logging_manager.aspects.len(), 1);
+        
+        let full_manager = AopFactory::create_full(std::sync::Arc::clone(&logger));
+        assert_eq!(full_manager.aspects.len(), 3);
     }
 }

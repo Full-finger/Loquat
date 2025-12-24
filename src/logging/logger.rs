@@ -37,7 +37,7 @@ impl StructuredLogger {
         }
     }
 
-    /// Initialize the logger (marks as ready for use)
+    /// Initialize logger (marks as ready for use)
     pub fn initialize(&self) {
         self.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
     }
@@ -68,11 +68,11 @@ impl StructuredLogger {
         line: Option<u32>,
     ) -> LogEntry {
         let mut entry = LogEntry::new(level, message.to_string(), context.clone());
-        
+
         if let (Some(module), Some(src_file), Some(line_num)) = (module_path, file, line) {
             entry = entry.with_location(module, src_file, line_num);
         }
-        
+
         entry
     }
 
@@ -173,8 +173,8 @@ impl Logger for StructuredLogger {
         }
     }
 
-    fn log_entry(&self, entry: LogEntry) {
-        if let Err(e) = self.log_batch(&[entry]) {
+    fn log_entry(&self, entry: &LogEntry) {
+        if let Err(e) = self.log_batch(&[entry.clone()]) {
             eprintln!("Failed to log entry: {}", e);
         }
     }
@@ -196,10 +196,8 @@ impl Logger for StructuredLogger {
         Ok(())
     }
 
-    fn flush(&self) {
-        if let Err(e) = self.writer.flush() {
-            eprintln!("Failed to flush logger: {}", e);
-        }
+    fn flush(&self) -> Result<()> {
+        self.writer.flush().map_err(|e| e.into())
     }
 }
 
@@ -220,26 +218,26 @@ impl LoggerBuilder {
         }
     }
 
-    /// Set the formatter
+    /// Set's formatter
     pub fn formatter(mut self, formatter: Arc<dyn LogFormatter>) -> Self {
         self.formatter = Some(formatter);
         self
     }
 
-    /// Set the writer
+    /// Set's writer
     pub fn writer(mut self, writer: Arc<dyn LogWriter>) -> Self {
         self.writer = Some(writer);
         self
     }
 
-    /// Set the log level
+    /// Set log level
     pub fn level(mut self, level: LogLevel) -> Self {
         self.level = level;
         self
     }
 
-    /// Build the logger
-    pub fn build(self) -> Result<Arc<StructuredLogger>> {
+    /// Build logger
+    pub fn build(self) -> Result<Arc<dyn Logger>> {
         let formatter = self.formatter
             .ok_or_else(|| LoggingError::Configuration("No formatter specified".to_string()))?;
         let writer = self.writer
@@ -267,7 +265,7 @@ impl LoggerFactory {
         use crate::logging::writers::ConsoleWriter;
 
         let formatter = Arc::new(JsonFormatter::new());
-        let writer = Arc::new(ConsoleWriter::auto_routing());
+        let writer: Arc<dyn LogWriter> = Arc::new(ConsoleWriter::auto_routing());
         let logger = Arc::new(StructuredLogger::new(formatter, writer));
         logger.init()?;
         Ok(logger)
@@ -279,7 +277,7 @@ impl LoggerFactory {
         use crate::logging::writers::ConsoleWriter;
 
         let formatter = Arc::new(TextFormatter::detailed());
-        let writer = Arc::new(ConsoleWriter::auto_routing());
+        let writer: Arc<dyn LogWriter> = Arc::new(ConsoleWriter::auto_routing());
         let logger = Arc::new(StructuredLogger::new(formatter, writer));
         logger.init()?;
         Ok(logger)
@@ -291,8 +289,9 @@ impl LoggerFactory {
         use crate::logging::writers::FileWriter;
 
         let formatter = Arc::new(JsonFormatter::new());
-        let writer = Arc::new(FileWriter::with_rotation(path).await
-            .map_err(|e| LoggingError::Configuration(e.to_string()))?);
+        let file_writer = FileWriter::with_rotation(path).await
+            .map_err(|e| LoggingError::Configuration(e.to_string()))?;
+        let writer: Arc<dyn LogWriter> = Arc::new(file_writer);
         let logger = Arc::new(StructuredLogger::new(formatter, writer));
         logger.init()?;
         Ok(logger)
@@ -304,8 +303,9 @@ impl LoggerFactory {
         use crate::logging::writers::FileWriter;
 
         let formatter = Arc::new(TextFormatter::detailed());
-        let writer = Arc::new(FileWriter::with_rotation(path).await
-            .map_err(|e| LoggingError::Configuration(e.to_string()))?);
+        let file_writer = FileWriter::with_rotation(path).await
+            .map_err(|e| LoggingError::Configuration(e.to_string()))?;
+        let writer: Arc<dyn LogWriter> = Arc::new(file_writer);
         let logger = Arc::new(StructuredLogger::new(formatter, writer));
         logger.init()?;
         Ok(logger)
@@ -317,10 +317,11 @@ impl LoggerFactory {
         use crate::logging::writers::{ConsoleWriter, FileWriter, CombinedWriter};
 
         let formatter = Arc::new(JsonFormatter::new());
-        let console_writer = Arc::new(ConsoleWriter::auto_routing());
-        let file_writer = Arc::new(FileWriter::with_rotation(path).await
-            .map_err(|e| LoggingError::Configuration(e.to_string()))?);
-        let combined_writer = Arc::new(CombinedWriter::new(vec![console_writer, file_writer]));
+        let console_writer: Arc<dyn LogWriter> = Arc::new(ConsoleWriter::auto_routing());
+        let file_writer = FileWriter::with_rotation(path).await
+            .map_err(|e| LoggingError::Configuration(e.to_string()))?;
+        let file_writer: Arc<dyn LogWriter> = Arc::new(file_writer);
+        let combined_writer: Arc<dyn LogWriter> = Arc::new(CombinedWriter::new(vec![console_writer, file_writer]));
         let logger = Arc::new(StructuredLogger::new(formatter, combined_writer));
         logger.init()?;
         Ok(logger)
@@ -339,7 +340,7 @@ mod tests {
         let formatter = Arc::new(JsonFormatter::new());
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
-        
+
         assert!(!logger.is_initialized());
         assert_eq!(logger.current_level(), LogLevel::Info);
     }
@@ -349,7 +350,7 @@ mod tests {
         let formatter = Arc::new(JsonFormatter::new());
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
-        
+
         logger.set_level(LogLevel::Debug);
         assert_eq!(logger.get_level(), LogLevel::Debug);
         assert!(logger.is_enabled(LogLevel::Debug));
@@ -360,13 +361,13 @@ mod tests {
     fn test_logger_builder() {
         let formatter = Arc::new(JsonFormatter::new());
         let writer = Arc::new(ConsoleWriter::new());
-        
+
         let logger = LoggerBuilder::new()
             .formatter(formatter)
             .writer(writer)
             .level(LogLevel::Debug)
             .build();
-        
+
         assert!(logger.is_ok());
     }
 
@@ -380,7 +381,7 @@ mod tests {
     async fn test_logger_factory_file() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test.log");
-        
+
         let logger = LoggerFactory::file_json(&file_path).await;
         assert!(logger.is_ok());
         assert!(file_path.exists());
@@ -392,7 +393,7 @@ mod tests {
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
         logger.init().unwrap();
-        
+
         let context = LogContext::new();
         let result = logger.log_with_location(
             LogLevel::Info,
@@ -402,7 +403,7 @@ mod tests {
             "test_file.rs",
             42,
         );
-        
+
         assert!(result.is_ok());
     }
 
@@ -412,12 +413,12 @@ mod tests {
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
         logger.init().unwrap();
-        
+
         let entries = vec![
             LogEntry::new(LogLevel::Info, "Message 1".to_string(), LogContext::new()),
             LogEntry::new(LogLevel::Debug, "Message 2".to_string(), LogContext::new()),
         ];
-        
+
         let result = logger.log_batch(&entries);
         assert!(result.is_ok());
     }

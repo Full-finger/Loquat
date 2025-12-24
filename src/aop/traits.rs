@@ -1,26 +1,26 @@
 //! Core traits for Aspect-Oriented Programming
 
 use async_trait::async_trait;
-use crate::errors::{AopError, Result};
+use crate::errors::Result;
 use std::fmt::Debug;
 
 /// Core aspect trait for AOP functionality
 #[async_trait]
 pub trait Aspect: Send + Sync + Debug {
-    /// Execute before the target method
+    /// Execute before target method
     async fn before(&self, operation: &str) -> Result<()> {
         Ok(())
     }
 
-    /// Execute after the target method successfully completes
+    /// Execute after target method successfully completes
     async fn after(&self, operation: &str, result: &Result<()>) -> Result<()> {
         Ok(())
     }
 
 
-    /// Handle exceptions/errors from the target method
-    async fn on_error(&self, operation: &str, error: &AopError) -> Result<()> {
-        // Default: just log the error
+    /// Handle exceptions/errors from target method
+    async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> Result<()> {
+        // Default: just log error
         eprintln!("Aspect error in {}: {:?}", operation, error);
         Ok(())
     }
@@ -31,7 +31,7 @@ pub trait Aspect: Send + Sync + Debug {
     }
 
     /// Check if this aspect applies to the given operation
-    fn applies_to(&self, operation: &str) -> bool {
+    fn applies_to(&self, _operation: &str) -> bool {
         true // Default: apply to all operations
     }
 }
@@ -55,13 +55,13 @@ pub trait Proxyable: Send + Sync {
 pub struct AspectContext {
     /// Operation name
     pub operation: String,
-    
+
     /// Component name
     pub component: Option<String>,
-    
+
     /// Execution start time
     pub start_time: chrono::DateTime<chrono::Utc>,
-    
+
     /// Additional metadata
     pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
@@ -77,7 +77,7 @@ impl AspectContext {
         }
     }
 
-    /// Set the component
+    /// Set component
     pub fn with_component(mut self, component: &str) -> Self {
         self.component = Some(component.to_string());
         self
@@ -86,7 +86,7 @@ impl AspectContext {
     /// Add metadata
     pub fn with_metadata<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Result<Self> {
         let serialized = serde_json::to_value(value)
-            .map_err(|e| AopError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
         self.metadata.insert(key.into(), serialized);
         Ok(self)
     }
@@ -102,16 +102,16 @@ impl AspectContext {
 pub struct AspectResult {
     /// Context information
     pub context: AspectContext,
-    
+
     /// Whether the operation was successful
     pub success: bool,
-    
+
     /// Error information if failed
-    pub error: Option<AopError>,
-    
+    pub error: Option<crate::errors::AopError>,
+
     /// Execution duration
     pub duration: chrono::Duration,
-    
+
     /// Additional data from aspects
     pub data: std::collections::HashMap<String, serde_json::Value>,
 }
@@ -130,7 +130,7 @@ impl AspectResult {
     }
 
     /// Create a failed aspect result
-    pub fn failure(context: AspectContext, error: AopError) -> Self {
+    pub fn failure(context: AspectContext, error: crate::errors::AopError) -> Self {
         let duration = context.duration();
         Self {
             context,
@@ -144,7 +144,7 @@ impl AspectResult {
     /// Add data to the result
     pub fn with_data<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Result<Self> {
         let serialized = serde_json::to_value(value)
-            .map_err(|e| AopError::ExecutionFailed(e.to_string()))?;
+            .map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
         self.data.insert(key.into(), serialized);
         Ok(self)
     }
@@ -155,7 +155,7 @@ impl AspectResult {
 pub trait AspectChain: Send + Sync {
     /// Add an aspect to the chain
     fn add_aspect(&mut self, aspect: std::sync::Arc<dyn Aspect>);
-    
+
     /// Execute the aspect chain
     async fn execute(&self, context: AspectContext) -> Result<AspectResult>;
 }
@@ -223,12 +223,10 @@ impl AspectChain for SimpleAspectChain {
 
     async fn execute(&self, context: AspectContext) -> Result<AspectResult> {
         let current_context = context.clone();
-        
+
         // Execute before advice for all applicable aspects
         for aspect in &self.aspects {
-            if aspect.applies_to(&current_context.operation) {
-                aspect.before(&current_context.operation).await?;
-            }
+            aspect.before(&current_context.operation).await?;
         }
 
         // In a real implementation, this would execute the target function
@@ -237,9 +235,7 @@ impl AspectChain for SimpleAspectChain {
 
         // Execute after advice for all applicable aspects
         for aspect in &self.aspects {
-            if aspect.applies_to(&result.context.operation) {
-                aspect.after(&result.context.operation, &Ok(())).await?;
-            }
+            aspect.after(&result.context.operation, &Ok(())).await?;
         }
 
         Ok(result)
@@ -251,6 +247,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    /// Mock aspect for testing
     #[derive(Debug)]
     struct TestAspect {
         name: &'static str,
@@ -277,14 +274,19 @@ mod tests {
             println!("{}: After {}", self.name, operation);
             Ok(())
         }
+
+        async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> Result<()> {
+            println!("{}: Error in {}", self.name, operation);
+            Ok(())
+        }
     }
 
     #[tokio::test]
     async fn test_aspect_trait() {
         let aspect = TestAspect::new("TestAspect");
-        
+
         assert_eq!(aspect.name(), "TestAspect");
-        
+
         aspect.before("test_operation").await.unwrap();
         aspect.after("test_operation", &Ok(())).await.unwrap();
     }
@@ -294,15 +296,15 @@ mod tests {
         let mut chain = SimpleAspectChain::new();
         let aspect1 = Arc::new(TestAspect::new("Aspect1"));
         let aspect2 = Arc::new(TestAspect::new("Aspect2"));
-        
+
         chain.add_aspect(aspect1.clone());
         chain.add_aspect(aspect2.clone());
-        
+
         assert_eq!(chain.len(), 2);
-        
+
         let context = AspectContext::new("test_operation");
         let result = chain.execute(context).await;
-        
+
         assert!(result.is_ok());
     }
 
@@ -312,7 +314,7 @@ mod tests {
             .with_component("test_component")
             .with_metadata("test_key", "test_value")
             .unwrap();
-        
+
         assert_eq!(context.operation, "test_op");
         assert_eq!(context.component.as_ref().unwrap(), "test_component");
         assert!(context.metadata.contains_key("test_key"));
@@ -322,13 +324,13 @@ mod tests {
     fn test_aspect_result() {
         let context = AspectContext::new("test_op");
         let success_result = AspectResult::success(context.clone());
-        
+
         assert!(success_result.success);
         assert!(success_result.error.is_none());
-        
-        let error = AopError::ExecutionFailed("Test error".to_string());
+
+        let error = crate::errors::AopError::ExecutionFailed("Test error".to_string());
         let failure_result = AspectResult::failure(context, error);
-        
+
         assert!(!failure_result.success);
         assert!(failure_result.error.is_some());
     }

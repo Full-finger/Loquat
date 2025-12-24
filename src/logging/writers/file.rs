@@ -209,9 +209,27 @@ impl LogWriter for FileWriter {
     }
 
     fn flush(&self) -> Result<()> {
+        // Synchronous implementation - delegates to async
+        use tokio::runtime::Handle;
+        let rt = Handle::current();
+        rt.block_on(self.flush_async())
+    }
+
+    /// Async flush implementation
+    async fn flush_async(&self) -> Result<()> {
         let mut writer = self.writer.lock().unwrap();
         writer.flush()
             .map_err(|e| crate::errors::LoquatError::Io(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Async close implementation
+    async fn close_async(&self) -> Result<()> {
+        self.flush_async().await?;
+        {
+            let mut writer = self.writer.lock().unwrap();
+            let _ = writer.get_ref().flush();
+        }
         Ok(())
     }
 }
@@ -294,6 +312,14 @@ impl LogWriter for EnhancedFileWriter {
 
     fn flush(&self) -> Result<()> {
         self.base.flush()
+    }
+
+    async fn flush_async(&self) -> Result<()> {
+        self.base.flush_async().await
+    }
+
+    async fn close_async(&self) -> Result<()> {
+        self.base.close_async().await
     }
 }
 
