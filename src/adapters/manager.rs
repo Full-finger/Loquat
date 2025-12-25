@@ -260,7 +260,7 @@ impl AdapterManager {
                 return Ok(AdapterLoadResult::success(config.adapter_id.clone()));
             }
 
-            self.registry.validate_config(config)?;
+            self.registry.validate_config(config.clone())?;
 
             let mut log_context = LogContext::new();
             log_context.component = Some("AdapterManager".to_string());
@@ -653,8 +653,8 @@ mod tests {
     #[tokio::test]
     async fn test_adapter_config_should_load() {
         let config = AdapterManagerConfig::new()
-            .with_whitelist(vec!["qq"])
-            .with_blacklist(vec!["telegram"]);
+            .with_whitelist(vec!["qq".to_string()])
+            .with_blacklist(vec!["telegram".to_string()]);
 
         assert!(config.should_load("qq"));
         assert!(config.should_load("wechat"));

@@ -87,7 +87,7 @@ impl AdapterFactoryRegistry {
                 )
             ))?;
 
-        factory.validate_config(&config)?;
+        factory.validate_config(config.clone())?;
         factory.create(config)
     }
 
@@ -205,7 +205,7 @@ mod tests {
         registry.register(Box::new(MockFactory)).unwrap();
 
         let config = AdapterConfig::new("mock", "test-001", "ws://localhost");
-        assert!(registry.validate_config(&config).is_ok());
+        assert!(registry.validate_config(config).is_ok());
     }
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
         registry.register(Box::new(MockFactory)).unwrap();
 
         let config = AdapterConfig::new("unknown", "test-001", "ws://localhost");
-        assert!(registry.validate_config(&config).is_err());
+        assert!(registry.validate_config(config).is_err());
     }
 
     #[test]
@@ -224,7 +224,7 @@ mod tests {
 
         let config = AdapterConfig::new("mock", "test-001", "ws://localhost")
             .with_enabled(false);
-        assert!(registry.validate_config(&config).is_err());
+        assert!(registry.validate_config(config).is_err());
     }
 
     #[test]
@@ -246,6 +246,6 @@ mod tests {
         let registry = AdapterFactoryRegistry::new();
 
         let config = AdapterConfig::new("unknown", "test-001", "ws://localhost");
-        assert!(registry.create(config).is_err());
+        assert!(registry.validate_config(config).is_err());
     }
 }

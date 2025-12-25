@@ -369,8 +369,9 @@ mod tests {
     #[test]
     fn test_text_formatter_with_correlation_id() {
         let formatter = TextFormatter::full();
-        let context = LogContext::with_correlation_id("req-123".to_string())
-            .with_component("api");
+        let context = LogContext::new()
+            .with_component("api")
+            .with_correlation_id("req-123".to_string());
         let entry = LogEntry::new(LogLevel::Info, "Request processed".to_string(), context);
 
         let formatted = formatter.format(&entry);

@@ -27,8 +27,8 @@ impl AopManager {
         }
     }
 
-    /// Add an aspect to manager
-    pub fn add_aspect(&mut self, aspect: std::sync::Arc<dyn crate::aop::traits::Aspect>) {
+    /// Add an aspect to manager (generic version)
+    pub fn add_aspect<A: crate::aop::traits::Aspect + Send + Sync + 'static>(&mut self, aspect: std::sync::Arc<A>) {
         self.aspects.push(aspect);
     }
 
@@ -129,7 +129,7 @@ mod tests {
         let mut manager = AopManager::new();
         let aspect = std::sync::Arc::new(crate::aop::aspects::LoggingAspect::new(std::sync::Arc::clone(&logger)));
         
-        manager.add_aspect(std::sync::Arc::clone(&aspect));
+        manager.add_aspect(aspect);
         assert_eq!(manager.aspects.len(), 1);
         
         let result = manager.apply_aspects("test_operation", || {

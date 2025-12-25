@@ -1,27 +1,58 @@
 //! Core traits for Aspect-Oriented Programming
 
 use async_trait::async_trait;
-use crate::errors::Result;
+use crate::errors::{Result, LoquatError, AopError};
 use std::fmt::Debug;
+
+/// Result type for AOP operations
+pub type AopResult<T> = std::result::Result<T, crate::errors::AopError>;
+
+/// Execution result for AOP operations
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecutionResult {
+    Continue(()),
+    Stop(()),
+}
+
+/// Join point in AOP for representing a connection point
+#[derive(Debug, Clone)]
+pub struct JoinPoint {
+    /// Operation name
+    pub operation: String,
+    
+    /// Join point type
+    pub join_type: JoinType,
+}
+
+#[derive(Debug, Clone)]
+pub enum JoinType {
+    /// Call join
+    Call,
+    
+    /// Around join
+    Around,
+    
+    /// Return join
+    Return,
+}
 
 /// Core aspect trait for AOP functionality
 #[async_trait]
 pub trait Aspect: Send + Sync + Debug {
     /// Execute before target method
-    async fn before(&self, operation: &str) -> Result<()> {
+    async fn before(&self, _operation: &str) -> AopResult<()> {
         Ok(())
     }
 
     /// Execute after target method successfully completes
-    async fn after(&self, operation: &str, result: &Result<()>) -> Result<()> {
+    async fn after(&self, _operation: &str, _result: &AopResult<()>) -> AopResult<()> {
         Ok(())
     }
 
-
     /// Handle exceptions/errors from target method
-    async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> Result<()> {
+    async fn on_error(&self, _operation: &str, _error: &crate::errors::AopError) -> AopResult<()> {
         // Default: just log error
-        eprintln!("Aspect error in {}: {:?}", operation, error);
+        eprintln!("Aspect error in operation");
         Ok(())
     }
 
@@ -41,9 +72,9 @@ pub trait Proxyable: Send + Sync {
     type Output;
 
     /// Execute with aspect weaving
-    fn execute_with_aspects<F, R>(&self, aspects: &[std::sync::Arc<dyn Aspect>], operation: &str, f: F) -> Result<R>
+    fn execute_with_aspects<F, R>(&self, aspects: &[std::sync::Arc<dyn Aspect>], operation: &str, f: F) -> AopResult<R>
     where
-        F: FnOnce() -> Result<R> + Send,
+        F: FnOnce() -> AopResult<R> + Send,
         R: Send;
 
     /// Get a reference to the underlying target
@@ -157,7 +188,7 @@ pub trait AspectChain: Send + Sync {
     fn add_aspect(&mut self, aspect: std::sync::Arc<dyn Aspect>);
 
     /// Execute the aspect chain
-    async fn execute(&self, context: AspectContext) -> Result<AspectResult>;
+    async fn execute(&self, context: AspectContext) -> AopResult<AspectResult>;
 }
 
 /// Simple aspect chain implementation
@@ -221,7 +252,7 @@ impl AspectChain for SimpleAspectChain {
         self.aspects.push(aspect);
     }
 
-    async fn execute(&self, context: AspectContext) -> Result<AspectResult> {
+    async fn execute(&self, context: AspectContext) -> AopResult<AspectResult> {
         let current_context = context.clone();
 
         // Execute before advice for all applicable aspects
@@ -235,10 +266,11 @@ impl AspectChain for SimpleAspectChain {
 
         // Execute after advice for all applicable aspects
         for aspect in &self.aspects {
-            aspect.after(&result.context.operation, &Ok(())).await?;
+            let unit_result: AopResult<()> = result.as_ref().map(|_| ()).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()));
+            aspect.after(&result.context.operation, &unit_result).await?;
         }
 
-        Ok(result)
+        AopResult::Ok(result)
     }
 }
 
@@ -265,17 +297,17 @@ mod tests {
             self.name
         }
 
-        async fn before(&self, operation: &str) -> Result<()> {
+        async fn before(&self, operation: &str) -> AopResult<()> {
             println!("{}: Before {}", self.name, operation);
             Ok(())
         }
 
-        async fn after(&self, operation: &str, _result: &Result<()>) -> Result<()> {
+        async fn after(&self, operation: &str, _result: &AopResult<()>) -> AopResult<()> {
             println!("{}: After {}", self.name, operation);
             Ok(())
         }
 
-        async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> Result<()> {
+        async fn on_error(&self, operation: &str, _error: &crate::errors::AopError) -> AopResult<()> {
             println!("{}: Error in {}", self.name, operation);
             Ok(())
         }

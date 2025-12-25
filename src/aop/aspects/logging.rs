@@ -85,8 +85,8 @@ impl LoggingAspect {
 }
 
 #[async_trait]
-impl Aspect for LoggingAspect {
-    async fn before(&self, operation: &str) -> Result<()> {
+impl Aspect for LoggingAspect where Self: std::fmt::Debug {
+    async fn before(&self, operation: &str) -> crate::errors::AopResult<()> {
         let mut log_context = LogContext::new();
         log_context = log_context
             .with_metadata("operation", operation)?;

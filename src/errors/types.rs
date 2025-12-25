@@ -4,6 +4,9 @@ use crate::errors::{LoquatError, Result};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Result type alias for AOP operations
+pub type AopResult<T> = std::result::Result<T, crate::errors::AopError>;
+
 /// Error context information for debugging and monitoring
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ErrorContext {
@@ -44,9 +47,9 @@ impl ErrorContext {
         }
     }
     
-    /// Set the operation
-    pub fn with_operation(mut self, operation: &str) -> Self {
-        self.operation = Some(operation.to_string());
+    /// Set component
+    pub fn with_component(mut self, component: &str) -> Self {
+        self.component = Some(component.to_string());
         self
     }
     
@@ -67,7 +70,7 @@ impl ErrorContext {
     }
     
     #[cfg(not(debug_assertions))]
-    pub fn with_stack_trace(self) -> Self {
+    pub fn with_stack_trace(mut self) -> Self {
         self
     }
 }
@@ -135,7 +138,7 @@ impl std::fmt::Display for ContextualError {
 }
 
 impl std::error::Error for ContextualError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static>> {
         Some(&self.error)
     }
 }
@@ -195,7 +198,7 @@ pub trait ErrorContextExt<T> {
     ) -> Result<T>;
 }
 
-impl<T, E> ErrorContextExt<T> for std::result::Result<T, E>
+impl<T, E> ErrorContextExt<T> for Result<T>
 where
     E: Into<LoquatError>,
 {

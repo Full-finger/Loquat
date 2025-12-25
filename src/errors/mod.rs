@@ -6,6 +6,9 @@ pub mod types;
 
 pub use types::*;
 
+/// Re-export commonly used error types
+pub use types::{LoquatError, LoquatResult, AopError, AopResult};
+
 /// Main error type for Loquat framework
 pub type LoquatError = crate::errors::Error;
 
