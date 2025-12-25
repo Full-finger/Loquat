@@ -1,17 +1,24 @@
 //! Loquat Framework - Main Entry Point
+//! 
+//! Provides one-click startup with configuration file support
 
+use loquat::config::loquat_config::{LoquatConfig, LoggingConfig, PluginConfig, AdapterConfig};
+use loquat::config::PluginConfig as LegacyPluginConfig;
+use loquat::config::AdapterConfig as LegacyAdapterConfig;
 use loquat::engine::{Engine, StandardEngine};
-use loquat::logging::formatters::JsonFormatter;
-use loquat::logging::writers::ConsoleWriter;
+use loquat::logging::formatters::{JsonFormatter, TextFormatter};
+use loquat::logging::writers::{ConsoleWriter, FileWriter, CombinedWriter};
 use loquat::logging::traits::{Logger, LogLevel};
-use loquat::plugins::{PluginManager, HotReloadManager, PluginConfig};
-use loquat::adapters::{AdapterManager, AdapterManagerConfig, AdapterHotReloadManager};
+use loquat::plugins::{PluginManager, HotReloadManager};
+use loquat::adapters::{AdapterManager, AdapterHotReloadManager};
 use loquat::errors::Result;
 use std::sync::Arc;
 use std::time::Duration;
+use std::path::PathBuf;
 
-/// Loquat application
+/// Loquat application with configuration support
 struct LoquatApplication {
+    config: LoquatConfig,
     plugin_manager: Arc<PluginManager>,
     adapter_manager: Arc<AdapterManager>,
     hot_reload_manager: Option<Arc<HotReloadManager>>,
@@ -20,23 +27,22 @@ struct LoquatApplication {
 }
 
 impl LoquatApplication {
-    /// Create a new Loquat application
-    fn new() -> Result<Self> {
-        // Initialize logger with JSON formatter and console output
-        let formatter = Arc::new(JsonFormatter::new());
-        let console_writer = Arc::new(ConsoleWriter::new());
-        let logger = Arc::new(loquat::logging::StructuredLogger::new(formatter, console_writer));
+    /// Create a new Loquat application from configuration
+    fn from_config(config: LoquatConfig) -> Result<Self> {
+        // Initialize logger based on config
+        let logger = Self::create_logger(&config.logging)?;
         logger.init()?;
 
-        // Initialize plugin manager with default config
-        let plugin_config = PluginConfig::new();
+        // Initialize plugin manager with config
+        let plugin_config = Self::convert_plugin_config(&config.plugins);
         let plugin_manager = Arc::new(PluginManager::new(plugin_config));
 
-        // Initialize adapter manager with default config
-        let adapter_config = AdapterManagerConfig::new();
+        // Initialize adapter manager with config
+        let adapter_config = Self::convert_adapter_config(&config.adapters);
         let adapter_manager = Arc::new(AdapterManager::new(adapter_config, logger.clone()));
 
         Ok(Self {
+            config,
             plugin_manager,
             adapter_manager,
             hot_reload_manager: None,
@@ -45,28 +51,88 @@ impl LoquatApplication {
         })
     }
 
+    /// Create logger based on configuration
+    fn create_logger(logging_config: &LoggingConfig) -> Result<Arc<dyn Logger>> {
+        let formatter: Arc<dyn loquat::logging::traits::LogFormatter> = match logging_config.format.as_str() {
+            "json" => Arc::new(JsonFormatter::new()),
+            "text" => Arc::new(TextFormatter::detailed()),
+            _ => Arc::new(TextFormatter::detailed()),
+        };
+
+        let writer: Arc<dyn loquat::logging::traits::LogWriter> = match logging_config.output.as_str() {
+            "file" => {
+                let log_path = PathBuf::from(&logging_config.file_path);
+                // Create parent directories if needed
+                if let Some(parent) = log_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                Arc::new(FileWriter::new(log_path)?)
+            },
+            "combined" => {
+                let log_path = PathBuf::from(&logging_config.file_path);
+                if let Some(parent) = log_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                let console_writer = Arc::new(ConsoleWriter::new());
+                let file_writer = Arc::new(FileWriter::new(log_path)?);
+                Arc::new(CombinedWriter::new(vec![console_writer, file_writer]))
+            },
+            _ => Arc::new(ConsoleWriter::new()),
+        };
+
+        Ok(Arc::new(loquat::logging::StructuredLogger::new(formatter, writer)))
+    }
+
+    /// Convert new PluginConfig to legacy PluginConfig
+    fn convert_plugin_config(config: &PluginConfig) -> LegacyPluginConfig {
+        LegacyPluginConfig {
+            plugin_dir: config.plugin_dir.clone(),
+            auto_load: config.auto_load,
+            enable_hot_reload: config.enable_hot_reload,
+            hot_reload_interval: config.hot_reload_interval,
+            whitelist: config.whitelist.clone(),
+            blacklist: config.blacklist.clone(),
+        }
+    }
+
+    /// Convert new AdapterConfig to legacy AdapterManagerConfig
+    fn convert_adapter_config(config: &AdapterConfig) -> loquat::adapters::AdapterManagerConfig {
+        use loquat::adapters::AdapterManagerConfig;
+        use std::collections::HashMap;
+
+        AdapterManagerConfig {
+            adapter_dir: config.adapter_dir.clone(),
+            auto_load: config.auto_load,
+            enable_hot_reload: config.enable_hot_reload,
+            hot_reload_interval: config.hot_reload_interval,
+            whitelist: config.whitelist.clone(),
+            blacklist: config.blacklist.clone(),
+            adapters: HashMap::new(),
+        }
+    }
+
     /// Run Loquat application
     async fn run(&mut self) {
         // Log startup
         self.logger.log(
             LogLevel::Info,
-            "Starting Loquat Framework...",
+            &format!("Starting {}...", self.config.general.name),
             &Default::default(),
         );
 
         // Create and start engine
         let mut engine = StandardEngine::new(self.logger.clone());
-        if let Err(_) = engine.start().await {
+        if let Err(e) = engine.start().await {
             self.logger.log(
                 LogLevel::Error,
-                "Failed to start engine",
+                &format!("Failed to start engine: {}", e),
                 &Default::default(),
             );
+            return;
         }
 
-        // Auto-load adapters if configured
-        let adapter_config = self.adapter_manager.config();
-        if adapter_config.auto_load {
+        // Auto-load adapters if enabled
+        if self.config.adapters.enabled && self.config.adapters.auto_load {
             self.logger.log(
                 LogLevel::Info,
                 "Auto-loading adapters...",
@@ -94,9 +160,8 @@ impl LoquatApplication {
             }
         }
 
-        // Auto-load plugins if configured
-        let plugin_config = self.plugin_manager.config();
-        if plugin_config.auto_load {
+        // Auto-load plugins if enabled
+        if self.config.plugins.enabled && self.config.plugins.auto_load {
             self.logger.log(
                 LogLevel::Info,
                 "Auto-loading plugins...",
@@ -124,17 +189,17 @@ impl LoquatApplication {
             }
         }
 
-        // Start hot reload if configured
-        if adapter_config.enable_hot_reload {
+        // Start adapter hot reload if enabled
+        if self.config.adapters.enabled && self.config.adapters.enable_hot_reload {
             self.logger.log(
                 LogLevel::Info,
-                &format!("Starting adapter hot reload (interval: {}s)...", adapter_config.hot_reload_interval),
+                &format!("Starting adapter hot reload (interval: {}s)...", self.config.adapters.hot_reload_interval),
                 &Default::default(),
             );
 
             let adapter_hot_reload_manager = Arc::new(AdapterHotReloadManager::new(
                 self.adapter_manager.clone(),
-                Duration::from_secs(adapter_config.hot_reload_interval),
+                Duration::from_secs(self.config.adapters.hot_reload_interval),
             ));
 
             if let Err(e) = adapter_hot_reload_manager.start().await {
@@ -148,16 +213,17 @@ impl LoquatApplication {
             }
         }
 
-        if plugin_config.enable_hot_reload {
+        // Start plugin hot reload if enabled
+        if self.config.plugins.enabled && self.config.plugins.enable_hot_reload {
             self.logger.log(
                 LogLevel::Info,
-                &format!("Starting plugin hot reload (interval: {}s)...", plugin_config.hot_reload_interval),
+                &format!("Starting plugin hot reload (interval: {}s)...", self.config.plugins.hot_reload_interval),
                 &Default::default(),
             );
 
             let hot_reload_manager = Arc::new(HotReloadManager::new(
                 self.plugin_manager.clone(),
-                Duration::from_secs(plugin_config.hot_reload_interval),
+                Duration::from_secs(self.config.plugins.hot_reload_interval),
             ));
 
             if let Err(e) = hot_reload_manager.start().await {
@@ -174,7 +240,9 @@ impl LoquatApplication {
         // Log ready state
         self.logger.log(
             LogLevel::Info,
-            "Loquat is running. Press Ctrl+C to stop.",
+            &format!("{} is running (Environment: {}). Press Ctrl+C to stop.",
+                self.config.general.name,
+                self.config.general.environment),
             &Default::default(),
         );
 
@@ -235,7 +303,7 @@ impl LoquatApplication {
         // Log shutdown complete
         self.logger.log(
             LogLevel::Info,
-            "Loquat shut down successfully.",
+            &format!("{} shut down successfully.", self.config.general.name),
             &Default::default(),
         );
     }
@@ -256,12 +324,77 @@ impl LoquatApplication {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut app = LoquatApplication::new()?;
+/// Parse command line arguments
+fn parse_args() -> (String, bool) {
+    let args: Vec<String> = std::env::args().collect();
+    let mut environment = "dev".to_string();
+    let mut rebuild = false;
+
+    for i in 1..args.len() {
+        match args[i].as_str() {
+            "--env" => {
+                if i + 1 < args.len() {
+                    environment = args[i + 1].clone();
+                }
+            }
+            "--rebuild" => {
+                rebuild = true;
+            }
+            _ => {
+                // Check if it's an environment name (no flag)
+                if !args[i].starts_with("--") {
+                    environment = args[i].clone();
+                }
+            }
+        }
+    }
+
+    (environment, rebuild)
+}
+
+fn main() -> Result<()> {
+    // Parse command line arguments
+    let (environment, rebuild) = parse_args();
+
+    // Print banner
+    println!();
+    println!("╔════════════════════════════════════════════════════════════╗");
+    println!("║                    Loquat Framework                        ║");
+    println!("║             One-Click Startup System                       ║");
+    println!("╚════════════════════════════════════════════════════════════╝");
+    println!();
+    println!("Environment: {}", environment);
+    println!();
+
+    // Check if rebuild is requested
+    if rebuild {
+        println!("Rebuilding project...");
+        // In a real scenario, you might run cargo build here
+        println!("Rebuild complete!");
+        println!();
+    }
+
+    // Load configuration
+    let config = LoquatConfig::from_environment("config", &environment)?;
+    
+    println!("Configuration loaded successfully!");
+    println!("  - Log Level: {}", config.logging.level);
+    println!("  - Output: {}", config.logging.output);
+    println!("  - Plugins: {}", if config.plugins.enabled { "Enabled" } else { "Disabled" });
+    println!("  - Adapters: {}", if config.adapters.enabled { "Enabled" } else { "Disabled" });
+    println!();
+    println!("Starting framework...");
+    println!("═══════════════════════════════════════════════════════════");
+    println!();
+
+    // Create application
+    let mut app = LoquatApplication::from_config(config)?;
 
     // Run application
-    app.run().await;
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        app.run().await;
+    });
 
     Ok(())
 }

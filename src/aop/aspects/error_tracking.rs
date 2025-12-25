@@ -80,12 +80,12 @@ impl ErrorTrackingAspect {
 
 #[async_trait]
 impl Aspect for ErrorTrackingAspect {
-    async fn before(&self, _operation: &str) -> crate::errors::Result<()> {
+    async fn before(&self, _operation: &str) -> crate::aop::traits::AopResult<()> {
         // No action needed before operation
         Ok(())
     }
 
-    async fn after(&self, operation: &str, result: &crate::errors::Result<()>) -> crate::errors::Result<()> {
+    async fn after(&self, operation: &str, result: &crate::aop::traits::AopResult<()>) -> crate::aop::traits::AopResult<()> {
         // Check if the operation failed
         if let Err(error) = result {
             let current_count = self.error_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -132,7 +132,7 @@ impl Aspect for ErrorTrackingAspect {
         Ok(())
     }
 
-    async fn on_error(&self, operation: &str, error: &AopError) -> crate::errors::Result<()> {
+    async fn on_error(&self, operation: &str, error: &AopError) -> crate::aop::traits::AopResult<()> {
         let current_count = self.error_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         
         let mut log_context = LogContext::new();

@@ -1,11 +1,7 @@
 //! Error type definitions and utilities
 
-use crate::errors::{LoquatError, Result};
 use std::collections::HashMap;
 use uuid::Uuid;
-
-/// Result type alias for AOP operations
-pub type AopResult<T> = std::result::Result<T, crate::errors::AopError>;
 
 /// Error context information for debugging and monitoring
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -49,14 +45,20 @@ impl ErrorContext {
     
     /// Set component
     pub fn with_component(mut self, component: &str) -> Self {
-        self.component = Some(component.to_string());
+        self.component = component.to_string();
+        self
+    }
+    
+    /// Set operation
+    pub fn with_operation(mut self, operation: &str) -> Self {
+        self.operation = Some(operation.to_string());
         self
     }
     
     /// Add metadata
-    pub fn with_metadata<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Result<Self> {
+    pub fn with_metadata<K: Into<String>, V: serde::Serialize>(mut self, key: K, value: V) -> Result<Self, Box<dyn std::error::Error>> {
         let serialized = serde_json::to_value(value)
-            .map_err(|e| LoquatError::Serialization(e.to_string()))?;
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         self.metadata.insert(key.into(), serialized);
         Ok(self)
     }
@@ -98,25 +100,25 @@ impl std::fmt::Display for ErrorSeverity {
 /// Enhanced error with context
 #[derive(Debug)]
 pub struct ContextualError {
-    pub error: LoquatError,
+    pub error: String,
     pub context: ErrorContext,
 }
 
 impl ContextualError {
     /// Create a new contextual error
-    pub fn new(error: LoquatError, context: ErrorContext) -> Self {
+    pub fn new(error: String, context: ErrorContext) -> Self {
         Self { error, context }
     }
     
     /// Create from error with basic context
-    pub fn from_error(error: LoquatError, component: &str, severity: ErrorSeverity) -> Self {
+    pub fn from_error(error: String, component: &str, severity: ErrorSeverity) -> Self {
         let context = ErrorContext::new(component, severity);
         Self::new(error, context)
     }
     
     /// Create from error with operation context
     pub fn from_error_with_operation(
-        error: LoquatError,
+        error: String,
         component: &str,
         operation: &str,
         severity: ErrorSeverity,
@@ -137,11 +139,7 @@ impl std::fmt::Display for ContextualError {
     }
 }
 
-impl std::error::Error for ContextualError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static>> {
-        Some(&self.error)
-    }
-}
+impl std::error::Error for ContextualError {}
 
 /// Error reporting utilities
 pub struct ErrorReporter;
@@ -187,7 +185,7 @@ impl ErrorReporter {
 /// Trait for adding context to errors
 pub trait ErrorContextExt<T> {
     /// Add error context
-    fn with_context(self, component: &str, severity: ErrorSeverity) -> Result<T>;
+    fn with_context(self, component: &str, severity: ErrorSeverity) -> std::result::Result<T, Box<dyn std::error::Error>>;
     
     /// Add error context with operation
     fn with_context_operation(
@@ -195,18 +193,18 @@ pub trait ErrorContextExt<T> {
         component: &str,
         operation: &str,
         severity: ErrorSeverity,
-    ) -> Result<T>;
+    ) -> std::result::Result<T, Box<dyn std::error::Error>>;
 }
 
-impl<T, E> ErrorContextExt<T> for Result<T>
+impl<T, E> ErrorContextExt<T> for std::result::Result<T, E>
 where
-    E: Into<LoquatError>,
+    E: std::error::Error + Send + Sync + 'static,
 {
-    fn with_context(self, component: &str, severity: ErrorSeverity) -> Result<T> {
+    fn with_context(self, component: &str, severity: ErrorSeverity) -> std::result::Result<T, Box<dyn std::error::Error>> {
         self.map_err(|e| {
-            let contextual_error = ContextualError::from_error(e.into(), component, severity);
+            let contextual_error = ContextualError::from_error(e.to_string(), component, severity);
             ErrorReporter::report(&contextual_error);
-            LoquatError::Unknown(contextual_error.to_string())
+            Box::new(contextual_error) as Box<dyn std::error::Error>
         })
     }
     
@@ -215,16 +213,16 @@ where
         component: &str,
         operation: &str,
         severity: ErrorSeverity,
-    ) -> Result<T> {
+    ) -> std::result::Result<T, Box<dyn std::error::Error>> {
         self.map_err(|e| {
             let contextual_error = ContextualError::from_error_with_operation(
-                e.into(),
+                e.to_string(),
                 component,
                 operation,
                 severity,
             );
             ErrorReporter::report(&contextual_error);
-            LoquatError::Unknown(contextual_error.to_string())
+            Box::new(contextual_error) as Box<dyn std::error::Error>
         })
     }
 }

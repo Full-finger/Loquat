@@ -1,0 +1,36 @@
+# Loquat Framework - Test Environment Configuration
+
+[general]
+environment = "test"
+name = "Loquat Framework (Test)"
+
+[logging]
+level = "Info"
+format = "json"
+output = "file"
+file_path = "./logs/test.log"
+enable_colors = false
+
+[plugins]
+enabled = true
+plugin_dir = "./plugins"
+auto_load = true
+enable_hot_reload = false
+hot_reload_interval = 5
+
+[adapters]
+enabled = true
+adapter_dir = "./adapters"
+auto_load = true
+enable_hot_reload = false
+hot_reload_interval = 10
+
+[engine]
+auto_route = true
+auto_create_channels = true
+auto_initialize = true
+
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 3000

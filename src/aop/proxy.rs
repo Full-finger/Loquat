@@ -37,14 +37,19 @@ impl<T> AopProxy<T> {
         R: Send,
     {
         for aspect in &self.aspects {
-            aspect.before(operation).await?;
+            aspect.before(operation).await
+                .map_err(|e| crate::errors::Error::Aop(e))?;
         }
 
         let result = f(&self.target);
 
         for aspect in &self.aspects {
-            let unit_result: Result<()> = result.as_ref().map(|_| ()).map_err(|e| crate::errors::LoquatError::Aop(crate::errors::AopError::ExecutionFailed(e.to_string())));
-            aspect.after(operation, &unit_result).await?;
+            let unit_result: crate::aop::traits::AopResult<()> = match &result {
+                Ok(_) => Ok(()),
+                Err(e) => Err(crate::errors::AopError::ExecutionFailed(e.to_string())),
+            };
+            aspect.after(operation, &unit_result).await
+                .map_err(|e| crate::errors::Error::Aop(e))?;
         }
 
         result
@@ -66,9 +71,9 @@ where
 {
     type Output = T;
 
-    fn execute_with_aspects<F, R>(&self, aspects: &[std::sync::Arc<dyn Aspect>], operation: &str, f: F) -> Result<R>
+    fn execute_with_aspects<F, R>(&self, aspects: &[std::sync::Arc<dyn Aspect>], operation: &str, f: F) -> crate::aop::traits::AopResult<R>
     where
-        F: FnOnce() -> Result<R> + Send,
+        F: FnOnce() -> crate::aop::traits::AopResult<R> + Send,
         R: Send,
     {
         let future = async {
@@ -79,7 +84,10 @@ where
             let result = f();
 
             for aspect in aspects {
-                let unit_result: Result<()> = result.as_ref().map(|_| ()).map_err(|e| crate::errors::LoquatError::Aop(crate::errors::AopError::ExecutionFailed(e.to_string())));
+                let unit_result: crate::aop::traits::AopResult<()> = match &result {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(crate::errors::AopError::ExecutionFailed(e.to_string())),
+                };
                 aspect.after(operation, &unit_result).await?;
             }
 

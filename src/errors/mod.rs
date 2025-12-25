@@ -6,14 +6,17 @@ pub mod types;
 
 pub use types::*;
 
-/// Re-export commonly used error types
-pub use types::{LoquatError, LoquatResult, AopError, AopResult};
+/// Re-export AOP error types from types module
+pub use types::{ErrorContext, ContextualError, ErrorSeverity, ErrorContextExt};
 
 /// Main error type for Loquat framework
-pub type LoquatError = crate::errors::Error;
+pub type LoquatError = Error;
 
-/// Result type alias for convenience (1 parameter)
-pub type Result<T> = std::result::Result<T, LoquatError>;
+/// Result type alias for convenience
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// AOP Result type alias
+pub type AopResult<T> = std::result::Result<T, AopError>;
 
 /// Adapter related errors
 #[derive(Error, Debug, Clone)]

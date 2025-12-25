@@ -48,7 +48,8 @@ impl AopManager {
     {
         // Execute before advice for all aspects
         for aspect in &self.aspects {
-            aspect.before(operation).await?;
+            aspect.before(operation).await
+                .map_err(|e| crate::errors::Error::Aop(e))?;
         }
 
         // Execute target function
@@ -56,8 +57,12 @@ impl AopManager {
 
         // Execute after advice for all aspects
         for aspect in &self.aspects {
-            let unit_result: Result<()> = result.as_ref().map(|_| ()).map_err(|e| crate::errors::LoquatError::Aop(crate::errors::AopError::ExecutionFailed(e.to_string())));
-            aspect.after(operation, &unit_result).await?;
+            let unit_result: crate::aop::traits::AopResult<()> = match &result {
+                Ok(_) => Ok(()),
+                Err(e) => Err(crate::errors::AopError::ExecutionFailed(e.to_string())),
+            };
+            aspect.after(operation, &unit_result).await
+                .map_err(|e| crate::errors::Error::Aop(e))?;
         }
 
         result

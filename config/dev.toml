@@ -1,0 +1,35 @@
+# Loquat Framework - Development Environment Configuration
+
+[general]
+environment = "dev"
+name = "Loquat Framework (Dev)"
+
+[logging]
+level = "Debug"
+format = "text"
+output = "console"
+enable_colors = true
+
+[plugins]
+enabled = true
+plugin_dir = "./plugins"
+auto_load = true
+enable_hot_reload = true
+hot_reload_interval = 5
+
+[adapters]
+enabled = true
+adapter_dir = "./adapters"
+auto_load = true
+enable_hot_reload = true
+hot_reload_interval = 10
+
+[engine]
+auto_route = true
+auto_create_channels = true
+auto_initialize = true
+
+[web]
+enabled = false
+host = "127.0.0.1"
+port = 8080

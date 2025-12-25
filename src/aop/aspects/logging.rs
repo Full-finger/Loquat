@@ -86,10 +86,11 @@ impl LoggingAspect {
 
 #[async_trait]
 impl Aspect for LoggingAspect where Self: std::fmt::Debug {
-    async fn before(&self, operation: &str) -> crate::errors::AopResult<()> {
+    async fn before(&self, operation: &str) -> crate::aop::traits::AopResult<()> {
         let mut log_context = LogContext::new();
         log_context = log_context
-            .with_metadata("operation", operation)?;
+            .with_metadata("operation", operation)
+            .map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
 
         self.logger.log_with_context(
             self.log_level,
@@ -100,10 +101,11 @@ impl Aspect for LoggingAspect where Self: std::fmt::Debug {
         Ok(())
     }
 
-    async fn after(&self, operation: &str, _result: &Result<()>) -> Result<()> {
+    async fn after(&self, operation: &str, _result: &crate::aop::traits::AopResult<()>) -> crate::aop::traits::AopResult<()> {
         let mut log_context = LogContext::new();
         log_context = log_context
-            .with_metadata("operation", operation)?;
+            .with_metadata("operation", operation)
+            .map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
 
         self.logger.log_with_context(
             self.log_level,
@@ -114,12 +116,15 @@ impl Aspect for LoggingAspect where Self: std::fmt::Debug {
         Ok(())
     }
 
-    async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> Result<()> {
+    async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> crate::aop::traits::AopResult<()> {
         let mut log_context = LogContext::new();
         log_context = log_context
-            .with_metadata("operation", operation)?
-            .with_metadata("error_type", std::any::type_name_of_val(error))?
-            .with_metadata("error_message", error.to_string())?;
+            .with_metadata("operation", operation)
+            .map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?
+            .with_metadata("error_type", std::any::type_name_of_val(error))
+            .map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?
+            .with_metadata("error_message", error.to_string())
+            .map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
 
         self.logger.log_with_context(
             LogLevel::Error,

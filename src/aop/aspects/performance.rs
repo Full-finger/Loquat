@@ -122,22 +122,22 @@ impl PerformanceAspect {
 
 #[async_trait]
 impl Aspect for PerformanceAspect {
-    async fn before(&self, operation: &str) -> Result<()> {
+    async fn before(&self, operation: &str) -> crate::aop::traits::AopResult<()> {
         if !self.enable_metrics {
             return Ok(());
         }
 
         let mut log_context = LogContext::new();
-        log_context = log_context.with_metadata("operation", operation)?;
-        log_context = log_context.with_metadata("phase", "start")?;
+        log_context = log_context.with_metadata("operation", operation).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
+        log_context = log_context.with_metadata("phase", "start").map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
 
         if let Some((vsz, rss)) = self.get_memory_usage() {
-            log_context = log_context.with_metadata("memory_vsz_initial", vsz)?;
-            log_context = log_context.with_metadata("memory_rss_initial", rss)?;
+            log_context = log_context.with_metadata("memory_vsz_initial", vsz).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
+            log_context = log_context.with_metadata("memory_rss_initial", rss).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
         }
 
         if let Some(cpu) = self.get_cpu_usage() {
-            log_context = log_context.with_metadata("cpu_initial", cpu)?;
+            log_context = log_context.with_metadata("cpu_initial", cpu).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
         }
 
         self.logger.log_with_context(
@@ -149,22 +149,22 @@ impl Aspect for PerformanceAspect {
         Ok(())
     }
 
-    async fn after(&self, operation: &str, result: &Result<()>) -> Result<()> {
+    async fn after(&self, operation: &str, result: &crate::aop::traits::AopResult<()>) -> crate::aop::traits::AopResult<()> {
         if !self.enable_metrics {
             return Ok(());
         }
 
         let mut log_context = LogContext::new();
-        log_context = log_context.with_metadata("operation", operation)?;
-        log_context = log_context.with_metadata("success", result.is_ok())?;
+        log_context = log_context.with_metadata("operation", operation).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
+        log_context = log_context.with_metadata("success", result.is_ok()).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
 
         if let Some((vsz, rss)) = self.get_memory_usage() {
-            log_context = log_context.with_metadata("memory_vsz_final", vsz)?;
-            log_context = log_context.with_metadata("memory_rss_final", rss)?;
+            log_context = log_context.with_metadata("memory_vsz_final", vsz).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
+            log_context = log_context.with_metadata("memory_rss_final", rss).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
         }
 
         if let Some(cpu) = self.get_cpu_usage() {
-            log_context = log_context.with_metadata("cpu_final", cpu)?;
+            log_context = log_context.with_metadata("cpu_final", cpu).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
         }
 
         let log_level = if result.is_err() {
@@ -182,11 +182,11 @@ impl Aspect for PerformanceAspect {
         Ok(())
     }
 
-    async fn on_error(&self, operation: &str, error: &AopError) -> Result<()> {
+    async fn on_error(&self, operation: &str, error: &AopError) -> crate::aop::traits::AopResult<()> {
         let mut log_context = LogContext::new();
-        log_context = log_context.with_metadata("operation", operation)?;
-        log_context = log_context.with_metadata("error_type", std::any::type_name_of_val(error))?;
-        log_context = log_context.with_metadata("error_message", error.to_string())?;
+        log_context = log_context.with_metadata("operation", operation).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
+        log_context = log_context.with_metadata("error_type", std::any::type_name_of_val(error)).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
+        log_context = log_context.with_metadata("error_message", error.to_string()).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
 
         self.logger.log_with_context(
             LogLevel::Error,

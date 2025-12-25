@@ -1,0 +1,36 @@
+# Loquat Framework - Production Environment Configuration
+
+[general]
+environment = "prod"
+name = "Loquat Framework (Production)"
+
+[logging]
+level = "Warn"
+format = "json"
+output = "combined"
+file_path = "./logs/loquat.log"
+enable_colors = false
+
+[plugins]
+enabled = true
+plugin_dir = "./plugins"
+auto_load = true
+enable_hot_reload = false
+hot_reload_interval = 60
+
+[adapters]
+enabled = true
+adapter_dir = "./adapters"
+auto_load = true
+enable_hot_reload = false
+hot_reload_interval = 60
+
+[engine]
+auto_route = true
+auto_create_channels = true
+auto_initialize = true
+
+[web]
+enabled = true
+host = "0.0.0.0"
+port = 8080

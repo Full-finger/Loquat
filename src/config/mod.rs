@@ -1,11 +1,19 @@
 //! Configuration management for Loquat framework
 
+pub mod loquat_config;
+
+pub use loquat_config::*;
+pub use crate::plugins::types::PluginConfig;
+pub use crate::adapters::config::AdapterConfig;
+
+// Re-export legacy config structures for backward compatibility
 use crate::errors::{ConfigError, LoquatError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Main configuration structure for the Loquat framework
+/// Legacy main configuration structure for backward compatibility
+#[deprecated(note = "Use loquat_config::LoquatConfig instead")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoquatConfig {
     /// Logging configuration

@@ -57,15 +57,15 @@ impl BaseAspect {
 
 #[async_trait]
 impl Aspect for BaseAspect {
-    async fn before(&self, _operation: &str) -> crate::errors::Result<()> {
+    async fn before(&self, _operation: &str) -> crate::aop::traits::AopResult<()> {
         Ok(())
     }
 
-    async fn after(&self, _operation: &str, _result: &crate::errors::Result<()>) -> crate::errors::Result<()> {
+    async fn after(&self, _operation: &str, _result: &crate::aop::traits::AopResult<()>) -> crate::aop::traits::AopResult<()> {
         Ok(())
     }
 
-    async fn on_error(&self, _operation: &str, _error: &crate::errors::AopError) -> crate::errors::Result<()> {
+    async fn on_error(&self, _operation: &str, _error: &crate::errors::AopError) -> crate::aop::traits::AopResult<()> {
         Ok(())
     }
 

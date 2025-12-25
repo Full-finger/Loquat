@@ -1,0 +1,41 @@
+# Loquat Framework - Default Configuration
+# This file contains default values that can be overridden by environment-specific configs
+
+[general]
+environment = "dev"
+name = "Loquat Framework"
+
+[logging]
+level = "Info"
+format = "text"
+output = "console"
+file_path = "./logs/loquat.log"
+enable_colors = true
+
+[plugins]
+enabled = true
+plugin_dir = "./plugins"
+auto_load = false
+enable_hot_reload = false
+hot_reload_interval = 5
+whitelist = []
+blacklist = []
+
+[adapters]
+enabled = true
+adapter_dir = "./adapters"
+auto_load = false
+enable_hot_reload = false
+hot_reload_interval = 10
+whitelist = []
+blacklist = []
+
+[engine]
+auto_route = true
+auto_create_channels = true
+auto_initialize = true
+
+[web]
+enabled = false
+host = "127.0.0.1"
+port = 8080
