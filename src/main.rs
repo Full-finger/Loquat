@@ -4,7 +4,6 @@
 
 use loquat::config::loquat_config::{LoquatConfig, LoggingConfig, PluginConfig, AdapterConfig};
 use loquat::config::PluginConfig as LegacyPluginConfig;
-use loquat::config::AdapterConfig as LegacyAdapterConfig;
 use loquat::engine::{Engine, StandardEngine};
 use loquat::logging::formatters::{JsonFormatter, TextFormatter};
 use loquat::logging::writers::{ConsoleWriter, FileWriter, CombinedWriter};
@@ -28,9 +27,9 @@ struct LoquatApplication {
 
 impl LoquatApplication {
     /// Create a new Loquat application from configuration
-    fn from_config(config: LoquatConfig) -> Result<Self> {
+    async fn from_config_async(config: LoquatConfig) -> Result<Self> {
         // Initialize logger based on config
-        let logger = Self::create_logger(&config.logging)?;
+        let logger = Self::create_logger_async(&config.logging).await?;
         logger.init()?;
 
         // Initialize plugin manager with config
@@ -51,8 +50,18 @@ impl LoquatApplication {
         })
     }
 
-    /// Create logger based on configuration
-    fn create_logger(logging_config: &LoggingConfig) -> Result<Arc<dyn Logger>> {
+    /// Create a new Loquat application from configuration (sync wrapper)
+    fn from_config(config: LoquatConfig) -> Result<Self> {
+        let rt = tokio::runtime::Handle::try_current()
+            .or_else(|_| tokio::runtime::Runtime::new().map(|rt| rt.handle().clone()))?;
+        
+        rt.block_on(async {
+            Self::from_config_async(config).await
+        })
+    }
+
+    /// Create logger based on configuration (async)
+    async fn create_logger_async(logging_config: &LoggingConfig) -> Result<Arc<dyn Logger>> {
         let formatter: Arc<dyn loquat::logging::traits::LogFormatter> = match logging_config.format.as_str() {
             "json" => Arc::new(JsonFormatter::new()),
             "text" => Arc::new(TextFormatter::detailed()),
@@ -62,19 +71,12 @@ impl LoquatApplication {
         let writer: Arc<dyn loquat::logging::traits::LogWriter> = match logging_config.output.as_str() {
             "file" => {
                 let log_path = PathBuf::from(&logging_config.file_path);
-                // Create parent directories if needed
-                if let Some(parent) = log_path.parent() {
-                    std::fs::create_dir_all(parent).ok();
-                }
-                Arc::new(FileWriter::new(log_path)?)
+                Arc::new(FileWriter::new(log_path).await?)
             },
             "combined" => {
                 let log_path = PathBuf::from(&logging_config.file_path);
-                if let Some(parent) = log_path.parent() {
-                    std::fs::create_dir_all(parent).ok();
-                }
                 let console_writer = Arc::new(ConsoleWriter::new());
-                let file_writer = Arc::new(FileWriter::new(log_path)?);
+                let file_writer = Arc::new(FileWriter::new(log_path).await?);
                 Arc::new(CombinedWriter::new(vec![console_writer, file_writer]))
             },
             _ => Arc::new(ConsoleWriter::new()),

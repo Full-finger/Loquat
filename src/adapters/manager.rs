@@ -523,8 +523,17 @@ impl AdapterHotReloadManager {
                                             .to_string();
 
                                         if manager.is_adapter_loaded(&adapter_name).await {
+                                            let mut log_context = crate::logging::traits::LogContext::new();
+                                            log_context.component = Some("AdapterHotReloadManager".to_string());
+                                            log_context.add("adapter_id", adapter_name.clone());
+                                            
                                             if let Err(e) = manager.reload_adapter(&adapter_name).await {
-                                                eprintln!("Failed to hot reload adapter {}: {}", adapter_name, e);
+                                                // Log hot reload failure through the logger
+                                                let _ = manager.logger.log(
+                                                    crate::logging::traits::LogLevel::Error,
+                                                    &format!("Failed to hot reload adapter {}: {}", adapter_name, e),
+                                                    &log_context,
+                                                );
                                             }
                                         }
 

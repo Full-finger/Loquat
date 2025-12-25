@@ -8,6 +8,7 @@ name = "Loquat Framework (Dev)"
 level = "Debug"
 format = "text"
 output = "console"
+file_path = "./logs/loquat.log"
 enable_colors = true
 
 [plugins]
@@ -16,6 +17,8 @@ plugin_dir = "./plugins"
 auto_load = true
 enable_hot_reload = true
 hot_reload_interval = 5
+whitelist = []
+blacklist = []
 
 [adapters]
 enabled = true
@@ -23,6 +26,8 @@ adapter_dir = "./adapters"
 auto_load = true
 enable_hot_reload = true
 hot_reload_interval = 10
+whitelist = []
+blacklist = []
 
 [engine]
 auto_route = true

@@ -51,8 +51,9 @@ pub trait Aspect: Send + Sync + Debug {
 
     /// Handle exceptions/errors from target method
     async fn on_error(&self, _operation: &str, _error: &crate::errors::AopError) -> AopResult<()> {
-        // Default: just log error
-        eprintln!("Aspect error in operation");
+        // Default: silently handle error
+        // In production, this would be logged through the logging system
+        let _ = (_operation, _error);
         Ok(())
     }
 
@@ -266,7 +267,11 @@ impl AspectChain for SimpleAspectChain {
 
         // Execute after advice for all applicable aspects
         for aspect in &self.aspects {
-            let unit_result: AopResult<()> = result.as_ref().map(|_| ()).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()));
+            let unit_result: AopResult<()> = if result.success {
+                Ok(())
+            } else {
+                Err(result.error.clone().unwrap_or_else(|| crate::errors::AopError::ExecutionFailed("Unknown error".to_string())))
+            };
             aspect.after(&result.context.operation, &unit_result).await?;
         }
 

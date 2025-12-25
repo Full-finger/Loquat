@@ -205,3 +205,9 @@ pub enum Error {
     #[error("Unknown error: {0}")]
     Unknown(String),
 }
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::Io(err.to_string())
+    }
+}

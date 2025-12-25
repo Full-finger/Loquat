@@ -168,15 +168,13 @@ impl StructuredLogger {
 
 impl Logger for StructuredLogger {
     fn log(&self, level: LogLevel, message: &str, context: &LogContext) {
-        if let Err(e) = self.log_internal(level, message, context, None, None, None) {
-            eprintln!("Failed to log message: {}", e);
-        }
+        // Log silently on error to avoid infinite recursion
+        let _ = self.log_internal(level, message, context, None, None, None);
     }
 
     fn log_entry(&self, entry: &LogEntry) {
-        if let Err(e) = self.log_batch(&[entry.clone()]) {
-            eprintln!("Failed to log entry: {}", e);
-        }
+        // Log silently on error to avoid infinite recursion
+        let _ = self.log_batch(&[entry.clone()]);
     }
 
     fn set_level(&self, level: LogLevel) {

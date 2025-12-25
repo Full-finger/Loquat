@@ -103,7 +103,7 @@ impl FileWriter {
         }
 
         // Move current file to backup
-        let base_path = self.file_path.to_string_lossy();
+        let _base_path = self.file_path.to_string_lossy();
         let mut backup_path = self.file_path.clone();
 
         // Find next available backup number

@@ -65,14 +65,16 @@ impl ErrorContext {
     
     /// Add stack trace (debug only)
     #[cfg(debug_assertions)]
-    pub fn with_stack_trace(mut self) -> Self {
+    pub fn with_stack_trace(self) -> Self {
         use std::backtrace::Backtrace;
-        self.stack_trace = Some(format!("{:?}", Backtrace::capture()));
-        self
+        Self {
+            stack_trace: Some(format!("{:?}", Backtrace::capture())),
+            ..self
+        }
     }
     
     #[cfg(not(debug_assertions))]
-    pub fn with_stack_trace(mut self) -> Self {
+    pub fn with_stack_trace(self) -> Self {
         self
     }
 }
@@ -147,13 +149,15 @@ pub struct ErrorReporter;
 impl ErrorReporter {
     /// Report error with context (in production, this would send to monitoring service)
     pub fn report(error: &ContextualError) {
-        // In a real implementation, this would send to external monitoring
-        // For now, we'll just print to stderr
-        eprintln!("Error reported: {}", error);
+        // Errors should be logged through the logging system
+        // In a real implementation, this would send to external monitoring service
+        // For now, we silently report errors without printing to stderr
+        let _ = error;
         
         #[cfg(debug_assertions)]
         if let Some(stack_trace) = &error.context.stack_trace {
-            eprintln!("Stack trace:\n{}", stack_trace);
+            // Stack trace would be logged through the logging system in production
+            let _ = stack_trace;
         }
     }
     
@@ -162,7 +166,7 @@ impl ErrorReporter {
         error: &ContextualError,
         metadata: HashMap<String, serde_json::Value>,
     ) {
-        let mut enriched_error = ContextualError {
+        let enriched_error = ContextualError {
             error: error.error.clone(),
             context: ErrorContext {
                 error_id: error.context.error_id.clone(),

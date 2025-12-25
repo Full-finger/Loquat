@@ -17,6 +17,8 @@ plugin_dir = "./plugins"
 auto_load = true
 enable_hot_reload = false
 hot_reload_interval = 5
+whitelist = []
+blacklist = []
 
 [adapters]
 enabled = true
@@ -24,6 +26,8 @@ adapter_dir = "./adapters"
 auto_load = true
 enable_hot_reload = false
 hot_reload_interval = 10
+whitelist = []
+blacklist = []
 
 [engine]
 auto_route = true
