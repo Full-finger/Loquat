@@ -7,7 +7,6 @@ pub mod traits;
 pub mod registry;
 pub mod loader;
 pub mod manager;
-pub mod plugin_manager;
 
 // Export all types
 pub use types::PluginInfo;
@@ -21,6 +20,6 @@ pub use traits::*;
 pub use registry::*;
 pub use loader::*;
 
-// Export plugin_manager (new module without namespace conflict)
-pub use plugin_manager::PluginManager;
-pub use plugin_manager::HotReloadManager;
+// Export plugin_manager (from manager module)
+pub use manager::PluginManager;
+pub use manager::HotReloadManager;

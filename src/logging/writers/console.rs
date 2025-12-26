@@ -4,7 +4,7 @@ use crate::errors::{LoggingError, Result};
 use crate::logging::traits::LogWriter;
 use async_trait::async_trait;
 use std::io::{self, Write};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 /// Console writer for output to stdout/stderr
 #[derive(Debug)]

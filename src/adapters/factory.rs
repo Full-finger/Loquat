@@ -169,7 +169,25 @@ mod tests {
             Ok(Box::new(MockAdapter { config }))
         }
 
-        fn validate_config(&self, _config: AdapterConfig) -> Result<()> {
+        fn validate_config(&self, config: AdapterConfig) -> Result<()> {
+            // Call the default trait implementation
+            if config.adapter_type != self.adapter_type() {
+                return Err(LoquatError::Config(
+                    ConfigError::InvalidFormat(
+                        format!("Invalid adapter type: expected {}, got {}",
+                                self.adapter_type(), config.adapter_type)
+                    )
+                ));
+            }
+
+            if !config.enabled {
+                return Err(LoquatError::Config(
+                    ConfigError::InvalidFormat(
+                        format!("Adapter {} is disabled", config.adapter_id)
+                    )
+                ));
+            }
+
             Ok(())
         }
     }

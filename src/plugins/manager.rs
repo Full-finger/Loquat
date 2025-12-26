@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+#[derive(Clone)]
 pub struct PluginManager {
     registry: Arc<PluginRegistry>,
     loader: Arc<CompositePluginLoader>,

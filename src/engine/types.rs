@@ -138,7 +138,7 @@ pub struct EngineState {
 }
 
 /// Engine status
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EngineStatus {
     /// Engine is idle
     Idle,

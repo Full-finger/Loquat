@@ -10,7 +10,6 @@ use crate::logging::traits::{LogContext, LogLevel, Logger};
 use crate::routers::{Router, StandardRouter};
 use crate::streams::Stream;
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 /// Standard Loquat Engine - core coordinator
@@ -18,8 +17,6 @@ pub struct StandardEngine {
     config: EngineConfig,
     stats: EngineStats,
     state: Arc<tokio::sync::RwLock<EngineState>>,
-    // Atomic status for sync methods: 0=Idle, 1=Processing, 2=Stopped
-    status_atomic: Arc<AtomicU8>,
     router: Arc<StandardRouter>,
     channel_manager: Arc<StandardChannelManager>,
     logger: Arc<dyn Logger>,
@@ -36,10 +33,6 @@ impl std::fmt::Debug for StandardEngine {
 }
 
 impl StandardEngine {
-    const STATUS_IDLE: u8 = 0;
-    const STATUS_PROCESSING: u8 = 1;
-    const STATUS_STOPPED: u8 = 2;
-
     pub fn new(logger: Arc<dyn Logger>) -> Self {
         let logger_clone = logger.clone();
         Self {
@@ -49,7 +42,6 @@ impl StandardEngine {
                 status: EngineStatus::Idle,
                 last_error: None,
             })),
-            status_atomic: Arc::new(AtomicU8::new(Self::STATUS_IDLE)),
             router: Arc::new(StandardRouter::new(logger_clone.clone())),
             channel_manager: Arc::new(StandardChannelManager::new(logger_clone)),
             logger,
@@ -65,7 +57,6 @@ impl StandardEngine {
                 status: EngineStatus::Idle,
                 last_error: None,
             })),
-            status_atomic: Arc::new(AtomicU8::new(Self::STATUS_IDLE)),
             router: Arc::new(StandardRouter::new(logger_clone.clone())),
             channel_manager: Arc::new(StandardChannelManager::new(logger_clone)),
             logger,
@@ -176,16 +167,17 @@ impl Engine for StandardEngine {
     }
 
     fn state(&self) -> EngineState {
-        // Use atomic status for sync read
-        let status_code = self.status_atomic.load(Ordering::Relaxed);
-        let status = match status_code {
-            Self::STATUS_PROCESSING => EngineStatus::Processing,
-            Self::STATUS_STOPPED => EngineStatus::Stopped,
-            _ => EngineStatus::Idle,
-        };
-        EngineState {
-            status,
-            last_error: None,
+        // Try to acquire read lock without blocking
+        // In async context, this will fail gracefully
+        match self.state.try_read() {
+            Ok(guard) => EngineState {
+                status: guard.status,
+                last_error: guard.last_error.clone(),
+            },
+            Err(_) => EngineState {
+                status: EngineStatus::Idle,
+                last_error: Some("Unable to acquire state lock".to_string()),
+            },
         }
     }
 
@@ -213,7 +205,6 @@ impl Engine for StandardEngine {
         
         state.status = EngineStatus::Processing;
         state.last_error = None;
-        self.status_atomic.store(Self::STATUS_PROCESSING, Ordering::SeqCst);
         drop(state);
         
         let mut log_context = LogContext::new();
@@ -226,7 +217,6 @@ impl Engine for StandardEngine {
     async fn stop(&mut self) -> Result<()> {
         let mut state = self.state.write().await;
         state.status = EngineStatus::Stopped;
-        self.status_atomic.store(Self::STATUS_STOPPED, Ordering::SeqCst);
         drop(state);
         
         let mut log_context = LogContext::new();
@@ -250,7 +240,6 @@ impl Engine for StandardEngine {
         
         let mut state = self.state.write().await;
         state.status = EngineStatus::Idle;
-        self.status_atomic.store(Self::STATUS_IDLE, Ordering::SeqCst);
         drop(state);
         
         Ok(result)
@@ -261,7 +250,12 @@ impl Engine for StandardEngine {
     }
 
     fn is_running(&self) -> bool {
-        self.status_atomic.load(Ordering::Relaxed) == Self::STATUS_PROCESSING
+        // Try to acquire read lock without blocking
+        // In async context, this will fail gracefully
+        match self.state.try_read() {
+            Ok(guard) => matches!(guard.status, EngineStatus::Processing),
+            Err(_) => false, // Lock is held, assume not running to avoid blocking
+        }
     }
 }
 

@@ -15,8 +15,9 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 axum = "0.7"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["trace"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
 atty = "0.2"
 tempfile = "3.8"
 toml = "0.8"
 regex = "1.10"
+merge = "0.2.0"

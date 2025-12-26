@@ -3,12 +3,13 @@
 use crate::errors::{LoggingError, Result};
 use crate::logging::traits::{LogEntry, LogLevel, LogContext, LogFormatter, LogWriter, Logger};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Structured logger implementation
 pub struct StructuredLogger {
     formatter: Arc<dyn LogFormatter>,
     writer: Arc<dyn LogWriter>,
-    min_level: std::sync::RwLock<LogLevel>,
+    min_level: RwLock<LogLevel>,
     initialized: std::sync::atomic::AtomicBool,
 }
 
@@ -18,7 +19,7 @@ impl StructuredLogger {
         Self {
             formatter,
             writer,
-            min_level: std::sync::RwLock::new(LogLevel::Info),
+            min_level: RwLock::new(LogLevel::Info),
             initialized: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -32,7 +33,7 @@ impl StructuredLogger {
         Self {
             formatter,
             writer,
-            min_level: std::sync::RwLock::new(level),
+            min_level: RwLock::new(level),
             initialized: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -76,8 +77,8 @@ impl StructuredLogger {
         entry
     }
 
-    /// Internal log method
-    fn log_internal(
+    /// Internal log method (async version)
+    async fn log_internal(
         &self,
         level: LogLevel,
         message: &str,
@@ -89,7 +90,7 @@ impl StructuredLogger {
         self.ensure_initialized()?;
 
         // Check log level
-        let min_level = *self.min_level.read().unwrap();
+        let min_level = *self.min_level.read().await;
         if !level.should_log(min_level) {
             return Ok(());
         }
@@ -105,7 +106,7 @@ impl StructuredLogger {
     }
 
     /// Log with location information (from macros)
-    pub fn log_with_location(
+    pub async fn log_with_location(
         &self,
         level: LogLevel,
         message: &str,
@@ -114,11 +115,11 @@ impl StructuredLogger {
         file: &str,
         line: u32,
     ) -> Result<()> {
-        self.log_internal(level, message, context, Some(module_path), Some(file), Some(line))
+        self.log_internal(level, message, context, Some(module_path), Some(file), Some(line)).await
     }
 
-    /// Batch log multiple entries
-    pub fn log_batch(&self, entries: &[LogEntry]) -> Result<()> {
+    /// Batch log multiple entries (async version)
+    pub async fn log_batch(&self, entries: &[LogEntry]) -> Result<()> {
         self.ensure_initialized()?;
 
         if entries.is_empty() {
@@ -126,7 +127,7 @@ impl StructuredLogger {
         }
 
         // Filter entries by level
-        let min_level = *self.min_level.read().unwrap();
+        let min_level = *self.min_level.read().await;
         let filtered_entries: Vec<LogEntry> = entries
             .iter()
             .filter(|entry| entry.level.should_log(min_level))
@@ -148,45 +149,104 @@ impl StructuredLogger {
         Ok(())
     }
 
+    /// Synchronous version of log_batch for use in sync trait implementation
+    fn log_batch_sync(&self, entries: &[LogEntry]) -> Result<()> {
+        self.ensure_initialized()?;
+
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        // Filter entries by level using try_read
+        let min_level = match self.min_level.try_read() {
+            Ok(guard) => *guard,
+            Err(_) => LogLevel::Info, // Fallback if lock is held
+        };
+
+        let filtered_entries: Vec<LogEntry> = entries
+            .iter()
+            .filter(|entry| entry.level.should_log(min_level))
+            .cloned()
+            .collect();
+
+        if filtered_entries.is_empty() {
+            return Ok(());
+        }
+
+        // Format batch
+        let formatted_entries = self.formatter.format_batch(&filtered_entries);
+
+        // Write batch
+        for formatted in formatted_entries {
+            self.writer.write(&formatted)?;
+        }
+
+        Ok(())
+    }
+
     /// Get current log level
-    pub fn current_level(&self) -> LogLevel {
-        *self.min_level.read().unwrap()
+    pub async fn current_level(&self) -> LogLevel {
+        *self.min_level.read().await
     }
 
     /// Set log level atomically
-    pub fn set_level_atomic(&self, level: LogLevel) {
-        let mut min_level = self.min_level.write().unwrap();
+    pub async fn set_level_atomic(&self, level: LogLevel) {
+        let mut min_level = self.min_level.write().await;
         *min_level = level;
     }
 
     /// Check if a level is enabled
-    pub fn is_level_enabled(&self, level: LogLevel) -> bool {
-        let min_level = *self.min_level.read().unwrap();
+    pub async fn is_level_enabled(&self, level: LogLevel) -> bool {
+        let min_level = *self.min_level.read().await;
         level.should_log(min_level)
     }
 }
 
 impl Logger for StructuredLogger {
     fn log(&self, level: LogLevel, message: &str, context: &LogContext) {
-        // Log silently on error to avoid infinite recursion
-        let _ = self.log_internal(level, message, context, None, None, None);
+        // Use try_read to avoid blocking in async context
+        let should_log = match self.min_level.try_read() {
+            Ok(guard) => level.should_log(*guard),
+            Err(_) => true, // Default to logging if lock is held
+        };
+
+        if !should_log {
+            return;
+        }
+
+        // Create log entry and write synchronously
+        let entry = self.create_log_entry(level, message, context, None, None, None);
+        let formatted = self.formatter.format(&entry);
+        let _ = self.writer.write(&formatted);
     }
 
     fn log_entry(&self, entry: &LogEntry) {
-        // Log silently on error to avoid infinite recursion
-        let _ = self.log_batch(&[entry.clone()]);
+        // Use the synchronous batch logging
+        let _ = self.log_batch_sync(&[entry.clone()]);
     }
 
     fn set_level(&self, level: LogLevel) {
-        self.set_level_atomic(level);
+        // Use try_write to avoid blocking
+        if let Ok(mut guard) = self.min_level.try_write() {
+            *guard = level;
+        }
+        // Silently fail if lock is held - better than blocking
     }
 
     fn get_level(&self) -> LogLevel {
-        self.current_level()
+        // Use try_read to avoid blocking
+        match self.min_level.try_read() {
+            Ok(guard) => *guard,
+            Err(_) => LogLevel::Info, // Fallback default
+        }
     }
 
     fn is_enabled(&self, level: LogLevel) -> bool {
-        self.is_level_enabled(level)
+        // Use try_read to avoid blocking
+        match self.min_level.try_read() {
+            Ok(guard) => level.should_log(*guard),
+            Err(_) => true, // Fallback: assume enabled
+        }
     }
 
     fn init(&self) -> Result<()> {
@@ -333,18 +393,18 @@ mod tests {
     use crate::logging::writers::ConsoleWriter;
     use tempfile::tempdir;
 
-    #[test]
-    fn test_structured_logger_creation() {
+    #[tokio::test]
+    async fn test_structured_logger_creation() {
         let formatter = Arc::new(JsonFormatter::new());
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
 
         assert!(!logger.is_initialized());
-        assert_eq!(logger.current_level(), LogLevel::Info);
+        assert_eq!(logger.current_level().await, LogLevel::Info);
     }
 
-    #[test]
-    fn test_logger_level_management() {
+    #[tokio::test]
+    async fn test_logger_level_management() {
         let formatter = Arc::new(JsonFormatter::new());
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
@@ -385,8 +445,8 @@ mod tests {
         assert!(file_path.exists());
     }
 
-    #[test]
-    fn test_log_with_location() {
+    #[tokio::test]
+    async fn test_log_with_location() {
         let formatter = Arc::new(JsonFormatter::new());
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
@@ -400,13 +460,13 @@ mod tests {
             "test_module",
             "test_file.rs",
             42,
-        );
+        ).await;
 
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_batch_logging() {
+    #[tokio::test]
+    async fn test_batch_logging() {
         let formatter = Arc::new(JsonFormatter::new());
         let writer = Arc::new(ConsoleWriter::new());
         let logger = StructuredLogger::new(formatter, writer);
@@ -417,7 +477,7 @@ mod tests {
             LogEntry::new(LogLevel::Debug, "Message 2".to_string(), LogContext::new()),
         ];
 
-        let result = logger.log_batch(&entries);
+        let result = logger.log_batch(&entries).await;
         assert!(result.is_ok());
     }
 }

@@ -1,13 +1,29 @@
 //! Web service module for Loquat framework
 
+mod types;
+mod traits;
+mod handlers;
+
 use crate::errors::{Result, WebError};
 use crate::logging::traits::Logger;
 use std::sync::Arc;
+use tokio::net::TcpListener;
+use axum::{
+    Router,
+    routing::{get, post},
+};
+use tower_http::cors::{CorsLayer, Any};
+
+use types::*;
+use traits::*;
 
 /// Main web service structure
 pub struct WebService {
     config: WebServiceConfig,
     logger: Option<Arc<dyn Logger>>,
+    app_state: Option<AppState>,
+    running: Arc<std::sync::atomic::AtomicBool>,
+    listener_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl WebService {
@@ -16,6 +32,9 @@ impl WebService {
         Self {
             config: WebServiceConfig::default(),
             logger: None,
+            app_state: None,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            listener_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -24,26 +43,96 @@ impl WebService {
         Self {
             config,
             logger: None,
+            app_state: None,
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            listener_handle: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
-    /// Set the logger for the web service
+    /// Set logger for web service
     pub fn with_logger(mut self, logger: Arc<dyn Logger>) -> Self {
         self.logger = Some(logger);
         self
     }
 
+    /// Set app state for web service
+    pub fn with_app_state(mut self, app_state: AppState) -> Self {
+        self.app_state = Some(app_state);
+        self
+    }
+
+    /// Create router with all routes
+    fn create_router(&self) -> Router {
+        let app_state = self.app_state.as_ref().expect("App state must be set").clone();
+
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any);
+
+        Router::new()
+            .route("/", get(handlers::welcome))
+            .route("/health", get(handlers::health_check))
+            .route("/api/plugins", get(handlers::list_plugins))
+            .route("/api/plugins/:name", get(handlers::get_plugin))
+            .route("/api/plugins/reload", post(handlers::reload_plugins))
+            .route("/api/adapters", get(handlers::list_adapters))
+            .route("/api/adapters/:name", get(handlers::get_adapter))
+            .route("/api/adapters/reload", post(handlers::reload_adapters))
+            .route("/api/reload", post(handlers::reload_all))
+            .route("/api/config", get(handlers::get_config))
+            .layer(cors)
+            .with_state(app_state)
+    }
+
     /// Start the web service
     pub async fn start(&self) -> Result<()> {
-        if let Some(logger) = &self.logger {
-            logger.info(&format!("Starting web service on {}:{}", self.config.host, self.config.port));
+        if self.app_state.is_none() {
+            return Err(WebError::Startup("App state is not set".to_string()).into());
         }
 
-        // In a real implementation, this would start an actual web server
-        // For now, we'll just log that we would start
+        let addr = format!("{}:{}", self.config.host, self.config.port);
+        let listener = TcpListener::bind(&addr).await.map_err(|e| {
+            WebError::Startup(format!("Failed to bind to {}: {}", addr, e))
+        })?;
+
+        let running = Arc::clone(&self.running);
+        running.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        if let Some(logger) = &self.logger {
+            logger.info(&format!("Starting web service on {}", addr));
+        }
+
+        let router = self.create_router();
         
-        println!("Web service would start on {}:{}", self.config.host, self.config.port);
-        
+        // Graceful shutdown signal
+        let logger_for_shutdown = self.logger.clone();
+        let shutdown_signal = async move {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to setup Ctrl+C handler");
+            
+            if let Some(logger) = &logger_for_shutdown {
+                logger.info("Web service received shutdown signal");
+            }
+        };
+
+        // Spawn server in a task
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown_signal)
+                .await
+                .map_err(|e| eprintln!("Web server error: {}", e));
+        });
+
+        // Store the handle
+        let mut listener_handle = self.listener_handle.lock().await;
+        *listener_handle = Some(handle);
+
+        if let Some(logger) = &self.logger {
+            logger.info(&format!("Web service is running on {}", addr));
+        }
+
         Ok(())
     }
 
@@ -53,10 +142,49 @@ impl WebService {
             logger.info("Stopping web service");
         }
 
-        // In a real implementation, this would gracefully stop the web server
-        println!("Web service would stop");
-        
+        let running = Arc::clone(&self.running);
+        running.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Wait for the listener handle to finish
+        let mut listener_handle = self.listener_handle.lock().await;
+        if let Some(handle) = listener_handle.take() {
+            let _ = handle.await;
+        }
+
+        if let Some(logger) = &self.logger {
+            logger.info("Web service stopped");
+        }
+
         Ok(())
+    }
+
+    /// Check if the web service is running
+    pub fn is_running(&self) -> bool {
+        self.running.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Get the web service address
+    pub fn address(&self) -> String {
+        format!("{}:{}", self.config.host, self.config.port)
+    }
+}
+
+#[async_trait::async_trait]
+impl WebServiceTrait for WebService {
+    async fn start(&self) -> Result<()> {
+        self.start().await
+    }
+
+    async fn stop(&self) -> Result<()> {
+        self.stop().await
+    }
+
+    fn is_running(&self) -> bool {
+        self.is_running()
+    }
+
+    fn address(&self) -> String {
+        self.address()
     }
 }
 
@@ -65,6 +193,8 @@ impl std::fmt::Debug for WebService {
         f.debug_struct("WebService")
             .field("config", &self.config)
             .field("logger", &self.logger.as_ref().map(|_| "Logger present"))
+            .field("app_state", &self.app_state.as_ref().map(|_| "AppState present"))
+            .field("running", &self.is_running())
             .finish()
     }
 }
@@ -80,22 +210,16 @@ impl Default for WebService {
 pub struct WebServiceConfig {
     /// Server host
     pub host: String,
-    
     /// Server port
     pub port: u16,
-    
     /// Whether to enable HTTPS
     pub https: bool,
-    
     /// Request timeout in seconds
     pub request_timeout: u64,
-    
     /// Maximum request body size in bytes
     pub max_request_size: usize,
-    
     /// Whether to enable CORS
     pub enable_cors: bool,
-    
     /// Allowed CORS origins
     pub cors_origins: Vec<String>,
 }
@@ -119,16 +243,12 @@ impl Default for WebServiceConfig {
 pub struct Request {
     /// HTTP method
     pub method: HttpMethod,
-    
     /// Request path
     pub path: String,
-    
     /// Request headers
     pub headers: std::collections::HashMap<String, String>,
-    
     /// Request body
     pub body: Option<Vec<u8>>,
-    
     /// Query parameters
     pub query: std::collections::HashMap<String, String>,
 }
@@ -169,10 +289,8 @@ impl Request {
 pub struct Response {
     /// HTTP status code
     pub status: HttpStatus,
-    
     /// Response headers
     pub headers: std::collections::HashMap<String, String>,
-    
     /// Response body
     pub body: Option<Vec<u8>>,
 }
@@ -266,7 +384,7 @@ impl HttpMethod {
 }
 
 /// HTTP status codes
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HttpStatus {
     Continue = 100,
     SwitchingProtocols = 101,
@@ -336,71 +454,7 @@ pub enum HttpStatus {
 impl HttpStatus {
     /// Get the status code as a number
     pub fn as_u16(&self) -> u16 {
-        match self {
-            HttpStatus::Continue => 100,
-            HttpStatus::SwitchingProtocols => 101,
-            HttpStatus::Processing => 102,
-            HttpStatus::EarlyHints => 103,
-            
-            HttpStatus::Ok => 200,
-            HttpStatus::Created => 201,
-            HttpStatus::Accepted => 202,
-            HttpStatus::NonAuthoritativeInformation => 203,
-            HttpStatus::NoContent => 204,
-            HttpStatus::ResetContent => 205,
-            HttpStatus::PartialContent => 206,
-            
-            HttpStatus::MultipleChoices => 300,
-            HttpStatus::MovedPermanently => 301,
-            HttpStatus::Found => 302,
-            HttpStatus::SeeOther => 303,
-            HttpStatus::NotModified => 304,
-            HttpStatus::UseProxy => 305,
-            HttpStatus::TemporaryRedirect => 307,
-            HttpStatus::PermanentRedirect => 308,
-            
-            HttpStatus::BadRequest => 400,
-            HttpStatus::Unauthorized => 401,
-            HttpStatus::PaymentRequired => 402,
-            HttpStatus::Forbidden => 403,
-            HttpStatus::NotFound => 404,
-            HttpStatus::MethodNotAllowed => 405,
-            HttpStatus::NotAcceptable => 406,
-            HttpStatus::ProxyAuthenticationRequired => 407,
-            HttpStatus::RequestTimeout => 408,
-            HttpStatus::Conflict => 409,
-            HttpStatus::Gone => 410,
-            HttpStatus::LengthRequired => 411,
-            HttpStatus::PreconditionFailed => 412,
-            HttpStatus::PayloadTooLarge => 413,
-            HttpStatus::UriTooLong => 414,
-            HttpStatus::UnsupportedMediaType => 415,
-            HttpStatus::RangeNotSatisfiable => 416,
-            HttpStatus::ExpectationFailed => 417,
-            HttpStatus::ImATeapot => 418,
-            HttpStatus::MisdirectedRequest => 421,
-            HttpStatus::UnprocessableEntity => 422,
-            HttpStatus::Locked => 423,
-            HttpStatus::FailedDependency => 424,
-            HttpStatus::TooEarly => 425,
-            HttpStatus::UpgradeRequired => 426,
-            HttpStatus::PreconditionRequired => 428,
-            HttpStatus::TooManyRequests => 429,
-            HttpStatus::RequestHeaderFieldsTooLarge => 431,
-            HttpStatus::UnavailableForLegalReasons => 451,
-            
-            HttpStatus::InternalServerError => 500,
-            HttpStatus::NotImplemented => 501,
-            HttpStatus::BadGateway => 502,
-            HttpStatus::ServiceUnavailable => 503,
-            HttpStatus::GatewayTimeout => 504,
-            HttpStatus::HttpVersionNotSupported => 505,
-            HttpStatus::VariantAlsoNegotiates => 506,
-            HttpStatus::InsufficientStorage => 507,
-            HttpStatus::LoopDetected => 508,
-            HttpStatus::NotExtended => 510,
-            HttpStatus::NetworkAuthenticationRequired => 511,
-        }
+        *self as u16
     }
 
     /// Get the reason phrase
@@ -567,5 +621,6 @@ mod tests {
         assert_eq!(service.config.host, "127.0.0.1");
         assert_eq!(service.config.port, 8080);
         assert!(service.logger.is_none());
+        assert!(!service.is_running());
     }
 }

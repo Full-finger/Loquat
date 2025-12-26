@@ -1,0 +1,630 @@
+    Checking loquat v0.1.0 (C:\Users\gyh20\Desktop\Rust\Loquat)
+warning: unused imports: `AopError` and `LoquatError`
+ --> src\aop\traits.rs:4:29
+  |
+4 | use crate::errors::{Result, LoquatError, AopError};
+  |                             ^^^^^^^^^^^  ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `LogEntry`
+ --> src\logging\formatters\mod.rs:9:30
+  |
+9 | use crate::logging::traits::{LogEntry, LogFormatter};
+  |                              ^^^^^^^^
+
+warning: unused import: `self`
+ --> src\logging\writers\file.rs:6:15
+  |
+6 | use std::fs::{self, File, OpenOptions};
+  |               ^^^^
+
+warning: unused import: `tokio::io as async_io`
+  --> src\logging\writers\file.rs:11:5
+   |
+11 | use tokio::io as async_io;
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: ambiguous glob re-exports
+  --> src\logging\mod.rs:12:9
+   |
+12 | pub use logger::*;
+   |         ^^^^^^^^^ the name `LoggerFactory` in the type namespace is first re-exported here
+13 | pub use traits::*;
+   |         --------- but the name `LoggerFactory` in the type namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: unused import: `WebError`
+ --> src\web\traits.rs:3:29
+  |
+3 | use crate::errors::{Result, WebError};
+  |                             ^^^^^^^^
+
+warning: unused import: `http::StatusCode`
+ --> src\web\handlers.rs:5:5
+  |
+5 |     http::StatusCode,
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> src\web\handlers.rs:9:5
+  |
+9 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::plugins::PluginManager`
+  --> src\web\handlers.rs:11:5
+   |
+11 | use crate::plugins::PluginManager;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::adapters::AdapterManager`
+  --> src\web\handlers.rs:12:5
+   |
+12 | use crate::adapters::AdapterManager;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::config::loquat_config::LoquatConfig`
+  --> src\web\handlers.rs:13:5
+   |
+13 | use crate::config::loquat_config::LoquatConfig;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tower::ServiceBuilder`
+  --> src\web\mod.rs:16:5
+   |
+16 | use tower::ServiceBuilder;
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `types::*`
+  --> src\web\mod.rs:18:5
+   |
+18 | use types::*;
+   |     ^^^^^^^^
+
+warning: unused import: `package::*`
+  --> src\events\mod.rs:18:9
+   |
+18 | pub use package::*;
+   |         ^^^^^^^^^^
+
+warning: unused import: `event_enum::*`
+  --> src\events\mod.rs:26:9
+   |
+26 | pub use event_enum::*;
+   |         ^^^^^^^^^^^^^
+
+warning: unused import: `crate::events::EventEnum`
+ --> src\adapters\traits.rs:4:5
+  |
+4 | use crate::events::EventEnum;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `LoquatError` and `Result`
+ --> src\adapters\traits.rs:5:21
+  |
+5 | use crate::errors::{LoquatError, Result};
+  |                     ^^^^^^^^^^^  ^^^^^^
+
+warning: unused import: `LoquatError`
+ --> src\adapters\converter.rs:4:21
+  |
+4 | use crate::errors::{LoquatError, Result};
+  |                     ^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> src\adapters\types.rs:6:5
+  |
+6 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::logging::traits::Logger`
+ --> src\channels\channel.rs:5:5
+  |
+5 | use crate::logging::traits::Logger;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::events::Package`
+ --> src\engine\types.rs:4:5
+  |
+4 | use crate::events::Package;
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::logging::traits::LogLevel`
+ --> src\engine\types.rs:5:5
+  |
+5 | use crate::logging::traits::LogLevel;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ProcessingContext`
+ --> src\engine\traits.rs:5:68
+  |
+5 | use crate::engine::types::{EngineConfig, EngineStats, EngineState, ProcessingContext};
+  |                                                                    ^^^^^^^^^^^^^^^^^
+
+warning: ambiguous glob re-exports
+  --> src\lib.rs:22:9
+   |
+22 | pub use aop::*;
+   |         ^^^^^^ the name `traits` in the type namespace is first re-exported here
+...
+36 | pub use engine::*;
+   |         --------- but the name `traits` in the type namespace is also re-exported here
+
+warning: ambiguous glob re-exports
+  --> src\lib.rs:22:9
+   |
+22 | pub use aop::*;
+   |         ^^^^^^ the name `AopResult` in the type namespace is first re-exported here
+23 | pub use config::*;
+24 | pub use errors::*;
+   |         --------- but the name `AopResult` in the type namespace is also re-exported here
+
+warning: ambiguous glob re-exports
+  --> src\lib.rs:23:9
+   |
+23 | pub use config::*;
+   |         ^^^^^^^^^ the name `AdapterConfig` in the type namespace is first re-exported here
+...
+28 | pub use adapters::*;
+   |         ----------- but the name `AdapterConfig` in the type namespace is also re-exported here
+
+warning: ambiguous glob re-exports
+  --> src\lib.rs:23:9
+   |
+23 | pub use config::*;
+   |         ^^^^^^^^^ the name `EngineConfig` in the type namespace is first re-exported here
+...
+36 | pub use engine::*;
+   |         --------- but the name `EngineConfig` in the type namespace is also re-exported here
+
+warning: ambiguous glob re-exports
+  --> src\lib.rs:24:9
+   |
+24 | pub use errors::*;
+   |         ^^^^^^^^^ the name `types` in the type namespace is first re-exported here
+...
+36 | pub use engine::*;
+   |         --------- but the name `types` in the type namespace is also re-exported here
+
+warning: ambiguous glob re-exports
+  --> src\lib.rs:28:9
+   |
+28 | pub use adapters::*;
+   |         ^^^^^^^^^^^ the name `manager` in the type namespace is first re-exported here
+...
+35 | pub use channel_manager::*;
+   |         ------------------ but the name `manager` in the type namespace is also re-exported here
+
+warning: use of deprecated struct `config::LoquatConfig`: Use loquat_config::LoquatConfig instead
+  --> src\config\mod.rs:30:18
+   |
+30 | impl Default for LoquatConfig {
+   |                  ^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated struct `config::LoquatConfig`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:256:6
+    |
+256 | impl LoquatConfig {
+    |      ^^^^^^^^^^^^
+
+warning: use of deprecated struct `config::LoquatConfig`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:370:13
+    |
+370 |     config: LoquatConfig,
+    |             ^^^^^^^^^^^^
+
+warning: use of deprecated struct `config::LoquatConfig`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:318:37
+    |
+318 |     pub fn merge(&mut self, other: &LoquatConfig) {
+    |                                     ^^^^^^^^^^^^
+
+warning: use of deprecated struct `config::LoquatConfig`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:377:21
+    |
+377 |             config: LoquatConfig::default(),
+    |                     ^^^^^^^^^^^^
+
+warning: use of deprecated struct `config::LoquatConfig`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:406:27
+    |
+406 |     pub fn build(self) -> LoquatConfig {
+    |                           ^^^^^^^^^^^^
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src\web\mod.rs:104:20
+    |
+104 |             logger.info(&format!("Starting web service on {}", addr), &Default::default());
+    |                    ^^^^                                               ------------------- unexpected argument #2 of type `&_`
+    |
+note: method defined here
+   --> src\logging\traits.rs:241:8
+    |
+241 |     fn info(&self, message: &str) {
+    |        ^^^^
+help: remove the extra argument
+    |
+104 -             logger.info(&format!("Starting web service on {}", addr), &Default::default());
+104 +             logger.info(&format!("Starting web service on {}", addr));
+    |
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src\web\mod.rs:117:24
+    |
+117 |                 logger.info("Web service received shutdown signal", &Default::default());
+    |                        ^^^^                                         ------------------- unexpected argument #2 of type `&_`
+    |
+note: method defined here
+   --> src\logging\traits.rs:241:8
+    |
+241 |     fn info(&self, message: &str) {
+    |        ^^^^
+help: remove the extra argument
+    |
+117 -                 logger.info("Web service received shutdown signal", &Default::default());
+117 +                 logger.info("Web service received shutdown signal");
+    |
+
+error[E0308]: mismatched types
+   --> src\web\mod.rs:131:33
+    |
+131 |         *listener_handle = Some(handle);
+    |                            ---- ^^^^^^ expected `JoinHandle<()>`, found `JoinHandle<Result<(), ()>>`
+    |                            |
+    |                            arguments to this enum variant are incorrect
+    |
+    = note: expected struct `tokio::task::JoinHandle<()>`
+               found struct `tokio::task::JoinHandle<std::result::Result<(), ()>>`
+help: the type constructed contains `tokio::task::JoinHandle<std::result::Result<(), ()>>` due to the type of the argument passed
+   --> src\web\mod.rs:131:28
+    |
+131 |         *listener_handle = Some(handle);
+    |                            ^^^^^------^
+    |                                 |
+    |                                 this argument influences the type of `Some`
+note: tuple variant defined here
+   --> C:\Users\gyh20\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:597:5
+    |
+597 |     Some(#[stable(feature = "rust1", since = "1.0.0")] T),
+    |     ^^^^
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src\web\mod.rs:134:20
+    |
+134 |             logger.info(&format!("Web service is running on {}", addr), &Default::default());
+    |                    ^^^^                                                 ------------------- unexpected argument #2 of type `&_`
+    |
+note: method defined here
+   --> src\logging\traits.rs:241:8
+    |
+241 |     fn info(&self, message: &str) {
+    |        ^^^^
+help: remove the extra argument
+    |
+134 -             logger.info(&format!("Web service is running on {}", addr), &Default::default());
+134 +             logger.info(&format!("Web service is running on {}", addr));
+    |
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src\web\mod.rs:143:20
+    |
+143 |             logger.info("Stopping web service", &Default::default());
+    |                    ^^^^                         ------------------- unexpected argument #2 of type `&_`
+    |
+note: method defined here
+   --> src\logging\traits.rs:241:8
+    |
+241 |     fn info(&self, message: &str) {
+    |        ^^^^
+help: remove the extra argument
+    |
+143 -             logger.info("Stopping web service", &Default::default());
+143 +             logger.info("Stopping web service");
+    |
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src\web\mod.rs:156:20
+    |
+156 |             logger.info("Web service stopped", &Default::default());
+    |                    ^^^^                        ------------------- unexpected argument #2 of type `&_`
+    |
+note: method defined here
+   --> src\logging\traits.rs:241:8
+    |
+241 |     fn info(&self, message: &str) {
+    |        ^^^^
+help: remove the extra argument
+    |
+156 -             logger.info("Web service stopped", &Default::default());
+156 +             logger.info("Web service stopped");
+    |
+
+warning: value assigned to `reloaded_count` is never read
+   --> src\web\handlers.rs:120:17
+    |
+120 |         let mut reloaded_count = 0;
+    |                 ^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` on by default
+
+warning: value assigned to `reloaded_count` is never read
+   --> src\web\handlers.rs:209:17
+    |
+209 |         let mut reloaded_count = 0;
+    |                 ^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+  --> src\config\mod.rs:33:13
+   |
+33 |             logging: LoggingConfig::default(),
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+  --> src\config\mod.rs:34:13
+   |
+34 |             aop: AopConfig::default(),
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+  --> src\config\mod.rs:35:13
+   |
+35 |             web: WebConfig::default(),
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::custom`: Use loquat_config::LoquatConfig instead
+  --> src\config\mod.rs:36:13
+   |
+36 |             custom: HashMap::new(),
+   |             ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::custom`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:298:15
+    |
+298 |         match self.custom.get(key) {
+    |               ^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::custom`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:313:9
+    |
+313 |         self.custom.insert(key.to_string(), json_value);
+    |         ^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:322:12
+    |
+322 |         if other.logging.level != LoggingConfig::default().level {
+    |            ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:323:13
+    |
+323 |             self.logging.level = other.logging.level.clone();
+    |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:323:34
+    |
+323 |             self.logging.level = other.logging.level.clone();
+    |                                  ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:325:12
+    |
+325 |         if other.logging.format != LoggingConfig::default().format {
+    |            ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:326:13
+    |
+326 |             self.logging.format = other.logging.format.clone();
+    |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:326:35
+    |
+326 |             self.logging.format = other.logging.format.clone();
+    |                                   ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:328:12
+    |
+328 |         if other.logging.colored != LoggingConfig::default().colored {
+    |            ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:329:13
+    |
+329 |             self.logging.colored = other.logging.colored;
+    |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:329:36
+    |
+329 |             self.logging.colored = other.logging.colored;
+    |                                    ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:333:12
+    |
+333 |         if other.logging.file.is_some() {
+    |            ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:334:13
+    |
+334 |             self.logging.file = other.logging.file.clone();
+    |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:334:33
+    |
+334 |             self.logging.file = other.logging.file.clone();
+    |                                 ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:338:12
+    |
+338 |         if other.logging.console.is_some() {
+    |            ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:339:13
+    |
+339 |             self.logging.console = other.logging.console.clone();
+    |             ^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:339:36
+    |
+339 |             self.logging.console = other.logging.console.clone();
+    |                                    ^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:343:12
+    |
+343 |         if other.aop.enabled != AopConfig::default().enabled {
+    |            ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:344:13
+    |
+344 |             self.aop.enabled = other.aop.enabled;
+    |             ^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:344:32
+    |
+344 |             self.aop.enabled = other.aop.enabled;
+    |                                ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:346:13
+    |
+346 |         if !other.aop.default_aspects.is_empty() {
+    |             ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:347:13
+    |
+347 |             self.aop.default_aspects = other.aop.default_aspects.clone();
+    |             ^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:347:40
+    |
+347 |             self.aop.default_aspects = other.aop.default_aspects.clone();
+    |                                        ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:351:12
+    |
+351 |         if other.web.host != WebConfig::default().host {
+    |            ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:352:13
+    |
+352 |             self.web.host = other.web.host.clone();
+    |             ^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:352:29
+    |
+352 |             self.web.host = other.web.host.clone();
+    |                             ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:354:12
+    |
+354 |         if other.web.port != WebConfig::default().port {
+    |            ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:355:13
+    |
+355 |             self.web.port = other.web.port;
+    |             ^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:355:29
+    |
+355 |             self.web.port = other.web.port;
+    |                             ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:357:12
+    |
+357 |         if other.web.https != WebConfig::default().https {
+    |            ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:358:13
+    |
+358 |             self.web.https = other.web.https;
+    |             ^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:358:30
+    |
+358 |             self.web.https = other.web.https;
+    |                              ^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::custom`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:362:30
+    |
+362 |         for (key, value) in &other.custom {
+    |                              ^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::custom`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:363:13
+    |
+363 |             self.custom.insert(key.clone(), value.clone());
+    |             ^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::logging`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:383:9
+    |
+383 |         self.config.logging = config;
+    |         ^^^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::aop`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:389:9
+    |
+389 |         self.config.aop = config;
+    |         ^^^^^^^^^^^^^^^
+
+warning: use of deprecated field `config::LoquatConfig::web`: Use loquat_config::LoquatConfig instead
+   --> src\config\mod.rs:395:9
+    |
+395 |         self.config.web = config;
+    |         ^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src\logging\writers\file.rs:230:17
+    |
+230 |             let mut writer = self.writer.lock().unwrap();
+    |                 ----^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `adapter_name`
+   --> src\adapters\manager.rs:233:13
+    |
+233 |         let adapter_name = path
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_adapter_name`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+Some errors have detailed explanations: E0061, E0308.
+For more information about an error, try `rustc --explain E0061`.
+warning: `loquat` (lib) generated 80 warnings
+error: could not compile `loquat` (lib) due to 6 previous errors; 80 warnings emitted

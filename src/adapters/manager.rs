@@ -33,6 +33,7 @@ impl AdapterLoadResult {
     }
 }
 
+#[derive(Clone)]
 pub struct AdapterManager {
     config: AdapterManagerConfig,
     registry: Arc<AdapterFactoryRegistry>,
@@ -572,9 +573,10 @@ mod tests {
         config.whitelist = vec!["qq".to_string()];
         config.blacklist = vec!["telegram".to_string()];
 
-        assert!(config.should_load("qq"));
-        assert!(config.should_load("wechat"));
-        assert!(!config.should_load("telegram"));
+        // When whitelist is set, only whitelisted adapters load (except those in blacklist)
+        assert!(config.should_load("qq")); // In whitelist
+        assert!(!config.should_load("wechat")); // Not in whitelist
+        assert!(!config.should_load("telegram")); // In blacklist
     }
 
     #[tokio::test]

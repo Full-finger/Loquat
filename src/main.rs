@@ -2,9 +2,9 @@
 //! 
 //! Provides one-click startup with configuration file support
 
-use loquat::config::loquat_config::{LoquatConfig, LoggingConfig, PluginConfig, AdapterConfig};
-use loquat::config::PluginConfig as LegacyPluginConfig;
+use loquat::config::LoquatConfig;
 use loquat::engine::{Engine, StandardEngine};
+use loquat::config::loquat_config::{LoggingConfig, AdapterConfig};
 use loquat::logging::formatters::{JsonFormatter, TextFormatter};
 use loquat::logging::writers::{ConsoleWriter, FileWriter, CombinedWriter};
 use loquat::logging::traits::{Logger, LogLevel};
@@ -33,8 +33,7 @@ impl LoquatApplication {
         logger.init()?;
 
         // Initialize plugin manager with config
-        let plugin_config = Self::convert_plugin_config(&config.plugins);
-        let plugin_manager = Arc::new(PluginManager::new(plugin_config));
+        let plugin_manager = Arc::new(PluginManager::new(config.plugins.clone()));
 
         // Initialize adapter manager with config
         let adapter_config = Self::convert_adapter_config(&config.adapters);
@@ -73,19 +72,6 @@ impl LoquatApplication {
         };
 
         Ok(Arc::new(loquat::logging::StructuredLogger::new(formatter, writer)))
-    }
-
-    /// Convert new PluginConfig to legacy PluginConfig
-    fn convert_plugin_config(config: &PluginConfig) -> LegacyPluginConfig {
-        LegacyPluginConfig {
-            plugin_dir: config.plugin_dir.clone(),
-            auto_load: config.auto_load,
-            enable_hot_reload: config.enable_hot_reload,
-            hot_reload_interval: config.hot_reload_interval,
-            whitelist: config.whitelist.clone(),
-            blacklist: config.blacklist.clone(),
-            enabled: config.enabled,
-        }
     }
 
     /// Convert new AdapterConfig to legacy AdapterManagerConfig

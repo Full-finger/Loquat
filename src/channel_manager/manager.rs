@@ -75,16 +75,14 @@ impl StandardChannelManager {
     }
     
     /// Update stats on channel creation
-    async fn stats_created(&self) {
+    async fn stats_created(&self, count: usize) {
         let mut stats = self.stats.write().await;
-        let count = self.channels.read().await.len();
         stats.record_created(count);
     }
     
     /// Update stats on channel removal
-    async fn stats_removed(&self) {
+    async fn stats_removed(&self, count: usize) {
         let mut stats = self.stats.write().await;
-        let count = self.channels.read().await.len();
         stats.record_removed(count);
     }
 }
@@ -138,7 +136,7 @@ impl ChannelManager for StandardChannelManager {
         self.logger.log(LogLevel::Info, &message, &context);
         
         // Update stats
-        self.stats_created().await;
+        self.stats_created(channels.len()).await;
         
         Ok(stream)
     }
@@ -158,7 +156,7 @@ impl ChannelManager for StandardChannelManager {
             self.logger.log(LogLevel::Info, &message, &context);
             
             // Update stats
-            self.stats_removed().await;
+            self.stats_removed(channels.len()).await;
             
             Ok(())
         } else {
@@ -245,7 +243,7 @@ impl ChannelManager for StandardChannelManager {
             let context = LogContext::new().with_component("ChannelManager");
             self.logger.log(LogLevel::Info, &message, &context);
             
-            self.stats_removed().await;
+            self.stats_removed(channels.len()).await;
         }
         
         Ok(removed_count)

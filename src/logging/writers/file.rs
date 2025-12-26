@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 use tokio::fs as async_fs;
 use tokio::io as async_io;
 
@@ -81,9 +81,9 @@ impl FileWriter {
     }
 
     /// Check if file rotation is needed
-    fn needs_rotation(&self) -> bool {
+    async fn needs_rotation(&self) -> bool {
         if let Some(config) = &self.rotation_config {
-            let current_size = *self.current_size.lock().unwrap();
+            let current_size = *self.current_size.lock().await;
             current_size >= config.max_file_size
         } else {
             false
@@ -97,7 +97,7 @@ impl FileWriter {
 
         // Close current file
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock().await;
             writer.flush()
                 .map_err(|e| crate::errors::LoquatError::Io(e.to_string()))?;
         }
@@ -153,10 +153,10 @@ impl FileWriter {
 
         // Update writer and reset size
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock().await;
             *writer = BufWriter::new(new_file);
         }
-        *self.current_size.lock().unwrap() = 0;
+        *self.current_size.lock().await = 0;
 
         Ok(())
     }
@@ -164,18 +164,18 @@ impl FileWriter {
     /// Write to file with rotation check
     async fn write_with_rotation(&self, message: &str) -> Result<()> {
         // Check if rotation is needed
-        if self.needs_rotation() {
+        if self.needs_rotation().await {
             self.rotate_file().await?;
         }
 
         // Write the message
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock().await;
             writeln!(writer, "{}", message)
                 .map_err(|e| LoggingError::WriteError(e.to_string()))?;
             
             // Update size (approximately)
-            *self.current_size.lock().unwrap() += message.len() as u64 + 1; // +1 for newline
+            *self.current_size.lock().await += message.len() as u64 + 1; // +1 for newline
             
             writer.flush()
                 .map_err(|e| crate::errors::LoquatError::Io(e.to_string()))?;
@@ -185,8 +185,8 @@ impl FileWriter {
     }
 
     /// Get current file size
-    pub fn current_size(&self) -> u64 {
-        *self.current_size.lock().unwrap()
+    pub async fn current_size(&self) -> u64 {
+        *self.current_size.lock().await
     }
 
     /// Get the file path
@@ -217,7 +217,7 @@ impl LogWriter for FileWriter {
 
     /// Async flush implementation
     async fn flush_async(&self) -> Result<()> {
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self.writer.lock().await;
         writer.flush()
             .map_err(|e| crate::errors::LoquatError::Io(e.to_string()))?;
         Ok(())
@@ -227,7 +227,7 @@ impl LogWriter for FileWriter {
     async fn close_async(&self) -> Result<()> {
         self.flush_async().await?;
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock().await;
             let _ = writer.get_ref().flush();
         }
         Ok(())
@@ -269,17 +269,17 @@ impl EnhancedFileWriter {
 
     /// Force sync to disk
     pub async fn sync(&self) -> Result<()> {
-        let writer = self.base.writer.lock().unwrap();
+        let writer = self.base.writer.lock().await;
         writer.get_ref().sync_all()
             .map_err(|e| crate::errors::LoquatError::Io(e.to_string()))?;
-        *self.last_sync.lock().unwrap() = std::time::Instant::now();
+        *self.last_sync.lock().await = std::time::Instant::now();
         Ok(())
     }
 
     /// Check if periodic sync is needed
-    fn should_sync(&self) -> bool {
+    async fn should_sync(&self) -> bool {
         if let Some(interval) = self.sync_interval {
-            let last_sync = *self.last_sync.lock().unwrap();
+            let last_sync = *self.last_sync.lock().await;
             last_sync.elapsed() >= interval
         } else {
             false
@@ -290,7 +290,7 @@ impl EnhancedFileWriter {
     async fn write_enhanced(&self, message: &str) -> Result<()> {
         self.base.write_with_rotation(message).await?;
 
-        if self.should_sync() {
+        if self.should_sync().await {
             self.sync().await?;
         }
 

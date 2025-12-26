@@ -240,9 +240,9 @@ mod tests {
     fn test_json_formatter_with_request_info() {
         let formatter = JsonFormatter::new();
         let request_info = crate::logging::traits::RequestInfo::new("GET", "/api/test");
-        let mut context = LogContext::new();
-        context.component = Some("api".to_string());
-        context.add("correlation_id", "req-123".to_string());
+        let context = LogContext::new()
+            .with_component("api")
+            .with_correlation_id("req-123".to_string());
         let entry = LogEntry::new(
             LogLevel::Info,
             "Request processed".to_string(),

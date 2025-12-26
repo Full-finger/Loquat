@@ -1,13 +1,14 @@
 # Loquat Framework - AI Coding Guidelines
 
 ## Project Overview
-Loquat is a Rust-based framework for building robot/agent services with clean architecture principles. It features a 9-stage pipeline architecture, AOP (Aspect-Oriented Programming), comprehensive logging, and hot-reload capabilities for plugins and adapters.
+Loquat is a Rust-based framework for building robot/agent services with clean architecture principles. It features a 9-stage pipeline architecture, AOP (Aspect-Oriented Programming), comprehensive logging, hot-reload capabilities for plugins and adapters, and a built-in RESTful Web API.
 
 **Key Characteristics:**
 - **Rust Edition 2024**: Modern Rust with latest features
 - **Windows-First Development**: Primary development on Windows with batch scripts for automation
 - **Chinese Documentation**: Chinese README and configuration examples
 - **Multi-Environment Support**: dev/test/prod configurations with easy switching
+- **Web API**: Built-in RESTful API for management and monitoring
 
 ## Architecture Overview
 
@@ -77,6 +78,12 @@ enabled = true
 auto_load = true
 enable_hot_reload = true
 hot_reload_interval = 10
+
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+enable_cors = true
 ```
 
 ## Worker System
@@ -138,6 +145,14 @@ pub struct PluginManager {
 }
 ```
 
+**Important**: PluginManager must implement `Clone` trait to work with the web service:
+```rust
+#[derive(Clone)]
+pub struct PluginManager {
+    // fields...
+}
+```
+
 ### Plugin Lifecycle
 1. **Discovery**: Scan plugin directory for `.dll`, `.so`, `.dylib`, `.py`, `.js`, `.mjs`, `.ts` files
 2. **Loading**: Load plugin via CompositePluginLoader, check whitelist/blacklist
@@ -171,6 +186,14 @@ Similar to plugins, adapters:
 - Convert external events to `Package` via `Adapter` trait
 - Managed by AdapterManager (similar to PluginManager)
 - Auto-load from `adapters/` directory
+
+**Important**: AdapterManager must implement `Clone` trait to work with the web service:
+```rust
+#[derive(Clone)]
+pub struct AdapterManager {
+    // fields...
+}
+```
 
 ## AOP (Aspect-Oriented Programming)
 
@@ -260,6 +283,350 @@ Uses AtomicU8 for thread-safe status checks:
 
 This allows `is_running()` to be synchronous while other methods are async.
 
+## Web Service System
+
+### Overview
+Loquat provides a built-in RESTful Web API using Axum framework for management and monitoring. The web service runs concurrently with the main engine and provides endpoints for:
+- Health checks
+- Plugin management (list, reload)
+- Adapter management (list, reload)
+- Configuration viewing
+- System status monitoring
+
+### Web Service Configuration
+```toml
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+enable_cors = true
+```
+
+### AppState
+The web service shares application state through `AppState`:
+```rust
+#[derive(Clone)]
+pub struct AppState {
+    pub plugin_manager: Arc<PluginManager>,
+    pub adapter_manager: Arc<AdapterManager>,
+    pub logger: Arc<dyn Logger>,
+    pub config: LoquatConfig,
+    pub start_time: SystemTime,
+}
+```
+
+**Important**: All managers and the logger must be clonable to work with AppState across HTTP requests.
+
+### Web Service Implementation
+
+#### Creating a Web Service
+```rust
+use loquat::web::WebService;
+
+// Create with default config
+let web_service = WebService::new();
+
+// Create with custom config
+let config = WebServiceConfig {
+    host: "0.0.0.0".to_string(),
+    port: 3000,
+    ..Default::default()
+};
+let web_service = WebService::with_config(config);
+
+// Set logger and app state
+let app_state = AppState {
+    plugin_manager: Arc::clone(&plugin_manager),
+    adapter_manager: Arc::clone(&adapter_manager),
+    logger: Arc::clone(&logger),
+    config: config.clone(),
+    start_time: SystemTime::now(),
+};
+
+let web_service = WebService::new()
+    .with_logger(Arc::clone(&logger))
+    .with_app_state(app_state);
+```
+
+#### Starting and Stopping
+```rust
+// Start the web service (non-blocking)
+web_service.start().await?;
+
+// Stop the web service
+web_service.stop().await?;
+
+// Check if running
+if web_service.is_running() {
+    println!("Service is running on {}", web_service.address());
+}
+```
+
+#### Graceful Shutdown
+The web service implements graceful shutdown on Ctrl+C:
+```rust
+// Shutdown is handled automatically by tokio::signal::ctrl_c()
+// The service will:
+// 1. Stop accepting new connections
+// 2. Wait for in-flight requests to complete
+// 3. Clean up resources
+```
+
+### API Endpoints
+
+#### Root Endpoint
+```
+GET /
+```
+Returns welcome message.
+
+#### Health Check
+```
+GET /health
+```
+Returns service health status:
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy",
+    "version": "0.1.0",
+    "environment": "dev",
+    "uptime": 12345,
+    "plugins_enabled": true,
+    "adapters_enabled": true
+  },
+  "error": null,
+  "timestamp": "2024-01-01T00:00:00Z"
+}
+```
+
+#### Plugin Management
+```
+GET /api/plugins
+```
+List all loaded plugins:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "name": "my_plugin",
+      "plugin_type": "Worker",
+      "status": "active",
+      "version": "1.0.0",
+      "author": null,
+      "description": null
+    }
+  ],
+  "error": null,
+  "timestamp": "2024-01-01T00:00:00Z"
+}
+```
+
+```
+GET /api/plugins/:name
+```
+Get specific plugin information.
+
+```
+POST /api/plugins/reload
+```
+Reload all plugins:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Plugins reloaded successfully",
+    "plugins_reloaded": 5,
+    "adapters_reloaded": 0
+  },
+  "error": null,
+  "timestamp": "2024-01-01T00:00:00Z"
+}
+```
+
+#### Adapter Management
+```
+GET /api/adapters
+```
+List all loaded adapters:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "name": "telegram_adapter",
+      "status": "active",
+      "version": null,
+      "description": null
+    }
+  ],
+  "error": null,
+  "timestamp": "2024-01-01T00:00:00Z"
+}
+```
+
+```
+GET /api/adapters/:name
+```
+Get specific adapter information.
+
+```
+POST /api/adapters/reload
+```
+Reload all adapters.
+
+#### Bulk Reload
+```
+POST /api/reload
+```
+Reload both plugins and adapters.
+
+#### Configuration
+```
+GET /api/config
+```
+Get current configuration (sanitized):
+```json
+{
+  "success": true,
+  "data": {
+    "environment": "dev",
+    "name": "Loquat Framework (Dev)",
+    "log_level": "Debug",
+    "log_format": "text",
+    "log_output": "console",
+    "plugins_enabled": true,
+    "adapters_enabled": true,
+    "web_enabled": true,
+    "web_host": "127.0.0.1",
+    "web_port": 8080
+  },
+  "error": null,
+  "timestamp": "2024-01-01T00:00:00Z"
+}
+```
+
+### CORS Support
+The web service includes built-in CORS support:
+```rust
+let cors = CorsLayer::new()
+    .allow_origin(Any)
+    .allow_methods(Any)
+    .allow_headers(Any);
+```
+
+This allows the API to be accessed from web browsers without CORS errors.
+
+### HTTP Types
+
+#### HTTP Method
+```rust
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Patch,
+    Head,
+    Options,
+}
+
+impl HttpMethod {
+    pub fn as_str(&self) -> &'static str { /* ... */ }
+    pub fn from_str(method: &str) -> Option<Self> { /* ... */ }
+}
+```
+
+#### HTTP Status
+```rust
+pub enum HttpStatus {
+    Ok = 200,
+    Created = 201,
+    NotFound = 404,
+    InternalServerError = 500,
+    // ... many more
+}
+
+impl HttpStatus {
+    pub fn as_u16(&self) -> u16 { /* ... */ }
+    pub fn reason_phrase(&self) -> &'static str { /* ... */ }
+    pub fn is_success(&self) -> bool { /* ... */ }
+    pub fn is_error(&self) -> bool { /* ... */ }
+}
+```
+
+#### Request/Response
+```rust
+pub struct Request {
+    pub method: HttpMethod,
+    pub path: String,
+    pub headers: HashMap<String, String>,
+    pub body: Option<Vec<u8>>,
+    pub query: HashMap<String, String>,
+}
+
+pub struct Response {
+    pub status: HttpStatus,
+    pub headers: HashMap<String, String>,
+    pub body: Option<Vec<u8>>,
+}
+
+impl Response {
+    pub fn json<T: Serialize>(status: HttpStatus, data: &T) -> Result<Self>;
+    pub fn text(status: HttpStatus, text: &str) -> Self;
+    pub fn html(status: HttpStatus, html: &str) -> Self;
+}
+```
+
+### Integrating Web Service into Main Application
+```rust
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Load configuration
+    let config = LoquatConfig::from_environment("config", "dev")?;
+    
+    // Initialize logger
+    let logger = Arc::new(create_logger(&config.logging)?);
+    
+    // Initialize plugin manager
+    let plugin_manager = Arc::new(PluginManager::new(config.plugins.clone())?);
+    
+    // Initialize adapter manager
+    let adapter_manager = Arc::new(AdapterManager::new(config.adapters.clone())?);
+    
+    // Start web service
+    if config.web.enabled {
+        let app_state = AppState {
+            plugin_manager: Arc::clone(&plugin_manager),
+            adapter_manager: Arc::clone(&adapter_manager),
+            logger: Arc::clone(&logger),
+            config: config.clone(),
+            start_time: SystemTime::now(),
+        };
+        
+        let web_service = WebService::with_config(WebServiceConfig {
+            host: config.web.host.clone(),
+            port: config.web.port,
+            enable_cors: config.web.enable_cors,
+            ..Default::default()
+        })
+        .with_logger(Arc::clone(&logger))
+        .with_app_state(app_state);
+        
+        // Start web service in background
+        tokio::spawn(async move {
+            let _ = web_service.start().await;
+        });
+    }
+    
+    // Continue with main application logic...
+    
+    Ok(())
+}
+```
+
 ## Development Workflow
 
 ### Windows Quick Start
@@ -324,11 +691,13 @@ cargo run --example basic_usage
 - `traits.rs` for behavior definitions
 - `types.rs` for data structures
 - `standard_*.rs` for implementations (e.g., `standard_pool.rs`)
+- `handlers.rs` for HTTP request handlers (web module)
 
 ### Concurrency Patterns
 - **Shared State**: `Arc<RwLock<T>>` for mutable state
 - **Status Flags**: `AtomicU8` for simple status checks
 - **Async Coordination**: Use `tokio::sync` primitives
+- **Clone Requirement**: Managers used in AppState must implement `Clone`
 
 ### Error Handling
 ```rust
@@ -339,6 +708,7 @@ pub enum LoquatError {
     Plugin(PluginError),
     Adapter(AdapterError),
     Io(std::io::Error),
+    Web(WebError),
     Unknown(String),
 }
 
@@ -380,7 +750,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 ```toml
 axum = "0.7"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["trace"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
 ```
 
 ### Utilities
@@ -398,9 +768,26 @@ tempfile = "3.8"
 ### Web Services
 Use `axum` for HTTP endpoints:
 ```rust
+use axum::{
+    Router,
+    routing::{get, post},
+    extract::Path,
+    Json,
+};
+
+// Define route handler
+async fn get_plugin(
+    State(app_state): State<AppState>,
+    Path(name): Path<String>,
+) -> Json<ApiResponse<PluginInfo>> {
+    // Handler logic
+}
+
+// Create router
 let app = Router::new()
+    .route("/api/plugins/:name", get(get_plugin))
     .route("/health", get(health_check))
-    .route("/packages", post(handle_package));
+    .with_state(app_state);
 ```
 
 ### External Logging
@@ -546,6 +933,38 @@ async fn main() -> loquat::Result<()> {
 }
 ```
 
+### Custom API Handler
+```rust
+use axum::{Json, State};
+use loquat::web::types::{ApiResponse, PluginInfo};
+
+async fn custom_handler(
+    State(app_state): State<AppState>,
+) -> Json<ApiResponse<PluginInfo>> {
+    let plugins = app_state.plugin_manager.get_all_plugins();
+    
+    match plugins {
+        Ok(plugin_list) => {
+            let plugin_infos: Vec<PluginInfo> = plugin_list.iter()
+                .map(|p| PluginInfo {
+                    name: p.name().to_string(),
+                    plugin_type: format!("{:?}", p.plugin_type()),
+                    status: "active".to_string(),
+                    version: Some(p.version().to_string()),
+                    author: None,
+                    description: None,
+                })
+                .collect();
+            
+            Json(ApiResponse::success(plugin_infos))
+        }
+        Err(e) => {
+            Json(ApiResponse::<PluginInfo>::error(e.to_string()))
+        }
+    }
+}
+```
+
 ## Testing Guidelines
 
 ### Unit Tests
@@ -608,6 +1027,11 @@ Loquat/
 │   ├── pools/          # Pool implementations
 │   ├── routers/        # Routing logic
 │   ├── streams/        # Stream processing
+│   ├── web/            # Web service (NEW)
+│   │   ├── mod.rs      # Web service implementation
+│   │   ├── types.rs    # API types
+│   │   ├── traits.rs   # Web service traits
+│   │   └── handlers.rs # HTTP handlers
 │   └── workers/        # Worker system
 ├── plugins/            # Auto-created plugin directory
 ├── adapters/           # Auto-created adapter directory
@@ -623,6 +1047,7 @@ Loquat/
 - Implement efficient `matches()` logic for workers
 - Use batch processing in `handle_batch()` when possible
 - Cache frequently accessed data
+- Use `Arc` for managers shared with web service
 
 ### Error Handling
 - Always use `?` for error propagation
@@ -635,12 +1060,21 @@ Loquat/
 - Prefer atomic operations for simple flags
 - Be aware of deadlocks when acquiring multiple locks
 - Use tokio primitives for async coordination
+- Ensure managers implement `Clone` for web service use
 
 ### Logging
 - Always create `LogContext` with component name
 - Add relevant metadata to log context
 - Use appropriate log levels (Trace/Debug/Info/Warn/Error)
 - Avoid logging in performance-critical loops
+
+### Web Service
+- Implement `Clone` for managers used in `AppState`
+- Use CORS for browser-based clients
+- Implement graceful shutdown handling
+- Return consistent JSON responses using `ApiResponse<T>`
+- Use HTTP status codes appropriately
+- Validate all input data
 
 ## Git Repository
 - **Remote**: https://github.com/Full-finger/Loquat.git
@@ -652,3 +1086,6 @@ Loquat/
 - Chinese documentation is available in README.md
 - Framework is designed for extensibility and modularity
 - Follow SOLID principles throughout the codebase
+- Web service provides management and monitoring capabilities
+- CORS is enabled for cross-origin requests
+- Graceful shutdown is implemented for clean termination

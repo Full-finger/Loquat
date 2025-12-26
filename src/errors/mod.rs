@@ -87,6 +87,9 @@ pub enum AopError {
 /// Web service related errors
 #[derive(Error, Debug, Clone)]
 pub enum WebError {
+    #[error("Startup error: {0}")]
+    Startup(String),
+
     #[error("Request handling failed: {0}")]
     RequestHandling(String),
 
@@ -108,6 +111,9 @@ pub enum ConfigError {
 
     #[error("Missing required configuration: {0}")]
     MissingRequired(String),
+
+    #[error("Configuration validation failed: {0}")]
+    ValidationError(String),
 }
 
 /// Plugin related errors
