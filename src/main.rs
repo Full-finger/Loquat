@@ -27,9 +27,9 @@ struct LoquatApplication {
 
 impl LoquatApplication {
     /// Create a new Loquat application from configuration
-    async fn from_config_async(config: LoquatConfig) -> Result<Self> {
+    async fn from_config(config: LoquatConfig) -> Result<Self> {
         // Initialize logger based on config
-        let logger = Self::create_logger_async(&config.logging).await?;
+        let logger = Self::create_logger(&config.logging).await?;
         logger.init()?;
 
         // Initialize plugin manager with config
@@ -50,18 +50,8 @@ impl LoquatApplication {
         })
     }
 
-    /// Create a new Loquat application from configuration (sync wrapper)
-    fn from_config(config: LoquatConfig) -> Result<Self> {
-        let rt = tokio::runtime::Handle::try_current()
-            .or_else(|_| tokio::runtime::Runtime::new().map(|rt| rt.handle().clone()))?;
-        
-        rt.block_on(async {
-            Self::from_config_async(config).await
-        })
-    }
-
-    /// Create logger based on configuration (async)
-    async fn create_logger_async(logging_config: &LoggingConfig) -> Result<Arc<dyn Logger>> {
+    /// Create logger based on configuration
+    async fn create_logger(logging_config: &LoggingConfig) -> Result<Arc<dyn Logger>> {
         let formatter: Arc<dyn loquat::logging::traits::LogFormatter> = match logging_config.format.as_str() {
             "json" => Arc::new(JsonFormatter::new()),
             "text" => Arc::new(TextFormatter::detailed()),
@@ -300,7 +290,7 @@ impl LoquatApplication {
         }
 
         // Stop engine
-        engine.stop().await;
+        let _ = engine.stop().await;
 
         // Log shutdown complete
         self.logger.log(
@@ -354,16 +344,17 @@ fn parse_args() -> (String, bool) {
     (environment, rebuild)
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Parse command line arguments
     let (environment, rebuild) = parse_args();
 
     // Print banner
     println!();
-    println!("╔════════════════════════════════════════════════════════════╗");
+    println!("╔══════════════════════════════════════════════════════════╗");
     println!("║                    Loquat Framework                        ║");
     println!("║             One-Click Startup System                       ║");
-    println!("╚════════════════════════════════════════════════════════════╝");
+    println!("╚══════════════════════════════════════════════════════════╝");
     println!();
     println!("Environment: {}", environment);
     println!();
@@ -390,13 +381,10 @@ fn main() -> Result<()> {
     println!();
 
     // Create application
-    let mut app = LoquatApplication::from_config(config)?;
+    let mut app = LoquatApplication::from_config(config).await?;
 
     // Run application
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        app.run().await;
-    });
+    app.run().await;
 
     Ok(())
 }
