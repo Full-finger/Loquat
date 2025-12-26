@@ -17,6 +17,9 @@ use tower_http::cors::{CorsLayer, Any};
 use types::*;
 use traits::*;
 
+// Re-export AppState for external use
+pub use traits::AppState;
+
 /// Main web service structure
 pub struct WebService {
     config: WebServiceConfig,

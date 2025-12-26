@@ -10,6 +10,7 @@ use loquat::logging::writers::{ConsoleWriter, FileWriter, CombinedWriter};
 use loquat::logging::traits::{Logger, LogLevel};
 use loquat::plugins::{PluginManager, HotReloadManager};
 use loquat::adapters::{AdapterManager, AdapterHotReloadManager};
+use loquat::web::{WebService, WebServiceConfig, AppState};
 use loquat::errors::Result;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +23,7 @@ struct LoquatApplication {
     adapter_manager: Arc<AdapterManager>,
     hot_reload_manager: Option<Arc<HotReloadManager>>,
     adapter_hot_reload_manager: Option<Arc<AdapterHotReloadManager>>,
+    web_service: Option<Arc<WebService>>,
     logger: Arc<dyn Logger>,
 }
 
@@ -45,6 +47,7 @@ impl LoquatApplication {
             adapter_manager,
             hot_reload_manager: None,
             adapter_hot_reload_manager: None,
+            web_service: None,
             logger,
         })
     }
@@ -167,6 +170,51 @@ impl LoquatApplication {
             }
         }
 
+        // Start web service if enabled
+        if self.config.web.enabled {
+            self.logger.log(
+                LogLevel::Info,
+                "Starting web service...",
+                &Default::default(),
+            );
+
+            let web_config = WebServiceConfig {
+                host: self.config.web.host.clone(),
+                port: self.config.web.port,
+                ..Default::default()
+            };
+
+            let app_state = AppState {
+                plugin_manager: Some((*self.plugin_manager).clone()),
+                adapter_manager: Some((*self.adapter_manager).clone()),
+                logger: self.logger.clone(),
+                config: self.config.clone(),
+                start_time: std::time::Instant::now(),
+            };
+
+            let web_service = Arc::new(
+                WebService::with_config(web_config)
+                    .with_logger(self.logger.clone())
+                    .with_app_state(app_state)
+            );
+
+            if let Err(e) = web_service.start().await {
+                self.logger.log(
+                    LogLevel::Error,
+                    &format!("Failed to start web service: {}", e),
+                    &Default::default(),
+                );
+            } else {
+                self.web_service = Some(web_service);
+                self.logger.log(
+                    LogLevel::Info,
+                    &format!("Web service running on http://{}:{}",
+                        self.config.web.host, self.config.web.port),
+                    &Default::default(),
+                );
+            }
+        }
+
         // Start adapter hot reload if enabled
         if self.config.adapters.enabled && self.config.adapters.enable_hot_reload {
             self.logger.log(
@@ -255,6 +303,16 @@ impl LoquatApplication {
             "Received shutdown signal...",
             &Default::default(),
         );
+
+        // Stop web service if running
+        if let Some(web_service) = &self.web_service {
+            let _ = web_service.stop().await;
+            self.logger.log(
+                LogLevel::Info,
+                "Web service stopped",
+                &Default::default(),
+            );
+        }
 
         // Stop hot reload if running
         if let Some(hot_reload) = &self.hot_reload_manager {
