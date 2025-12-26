@@ -3,8 +3,6 @@
 pub mod loquat_config;
 
 pub use loquat_config::*;
-pub use crate::plugins::types::PluginConfig;
-pub use crate::adapters::config::AdapterConfig;
 
 // Re-export legacy config structures for backward compatibility
 use crate::errors::{ConfigError, LoquatError, Result};

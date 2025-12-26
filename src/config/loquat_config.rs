@@ -119,6 +119,24 @@ impl Default for PluginConfig {
     }
 }
 
+impl PluginConfig {
+    /// Check if plugin should be loaded based on whitelist/blacklist
+    pub fn should_load(&self, plugin_name: &str) -> bool {
+        // Check blacklist first
+        if self.blacklist.contains(&plugin_name.to_string()) {
+            return false;
+        }
+        
+        // If whitelist is empty, load all
+        if self.whitelist.is_empty() {
+            return true;
+        }
+        
+        // Check whitelist
+        self.whitelist.contains(&plugin_name.to_string())
+    }
+}
+
 /// Adapter configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdapterConfig {
@@ -149,6 +167,24 @@ impl Default for AdapterConfig {
             whitelist: Vec::new(),
             blacklist: Vec::new(),
         }
+    }
+}
+
+impl AdapterConfig {
+    /// Check if adapter should be loaded based on whitelist/blacklist
+    pub fn should_load(&self, adapter_name: &str) -> bool {
+        // Check blacklist first
+        if self.blacklist.contains(&adapter_name.to_string()) {
+            return false;
+        }
+        
+        // If whitelist is empty, load all
+        if self.whitelist.is_empty() {
+            return true;
+        }
+        
+        // Check whitelist
+        self.whitelist.contains(&adapter_name.to_string())
     }
 }
 

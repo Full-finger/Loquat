@@ -183,99 +183,6 @@ impl PluginInfo {
     }
 }
 
-/// Plugin configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginConfig {
-    /// Plugin directory
-    pub plugin_dir: String,
-    
-    /// Auto-load plugins on startup
-    pub auto_load: bool,
-    
-    /// Enable hot-reload
-    pub enable_hot_reload: bool,
-    
-    /// Hot-reload interval in seconds
-    pub hot_reload_interval: u64,
-    
-    /// Whitelist of plugins to load (empty = all)
-    pub whitelist: Vec<String>,
-    
-    /// Blacklist of plugins to skip
-    pub blacklist: Vec<String>,
-}
-
-impl Default for PluginConfig {
-    fn default() -> Self {
-        Self {
-            plugin_dir: "./plugins".to_string(),
-            auto_load: true,
-            enable_hot_reload: true,
-            hot_reload_interval: 5,
-            whitelist: Vec::new(),
-            blacklist: Vec::new(),
-        }
-    }
-}
-
-impl PluginConfig {
-    /// Create a new plugin config
-    pub fn new() -> Self {
-        Self::default()
-    }
-    
-    /// Set plugin directory
-    pub fn with_plugin_dir(mut self, dir: &str) -> Self {
-        self.plugin_dir = dir.to_string();
-        self
-    }
-    
-    /// Enable or disable auto-load
-    pub fn with_auto_load(mut self, enabled: bool) -> Self {
-        self.auto_load = enabled;
-        self
-    }
-    
-    /// Enable or disable hot-reload
-    pub fn with_hot_reload(mut self, enabled: bool) -> Self {
-        self.enable_hot_reload = enabled;
-        self
-    }
-    
-    /// Set hot-reload interval
-    pub fn with_hot_reload_interval(mut self, seconds: u64) -> Self {
-        self.hot_reload_interval = seconds;
-        self
-    }
-    
-    /// Add to whitelist
-    pub fn with_whitelist(mut self, plugins: Vec<String>) -> Self {
-        self.whitelist = plugins;
-        self
-    }
-    
-    /// Add to blacklist
-    pub fn with_blacklist(mut self, plugins: Vec<String>) -> Self {
-        self.blacklist = plugins;
-        self
-    }
-    
-    /// Check if plugin should be loaded
-    pub fn should_load(&self, plugin_name: &str) -> bool {
-        // Check blacklist first
-        if self.blacklist.contains(&plugin_name.to_string()) {
-            return false;
-        }
-        
-        // If whitelist is empty, load all
-        if self.whitelist.is_empty() {
-            return true;
-        }
-        
-        // Check whitelist
-        self.whitelist.contains(&plugin_name.to_string())
-    }
-}
 
 /// Plugin load result
 #[derive(Debug, Clone)]
@@ -360,32 +267,6 @@ mod tests {
         assert_eq!(metadata.description, Some("Test plugin".to_string()));
         assert_eq!(metadata.author, Some("Test Author".to_string()));
         assert!(metadata.dependencies.contains(&"dep1".to_string()));
-    }
-
-    #[test]
-    fn test_plugin_config_default() {
-        let config = PluginConfig::default();
-        assert_eq!(config.plugin_dir, "./plugins");
-        assert!(config.auto_load);
-        assert!(config.enable_hot_reload);
-        assert_eq!(config.hot_reload_interval, 5);
-    }
-
-    #[test]
-    fn test_plugin_config_should_load() {
-        let config = PluginConfig::new()
-            .with_whitelist(vec!["plugin1".to_string()])
-            .with_blacklist(vec!["plugin2".to_string()]);
-
-        assert!(config.should_load("plugin1")); // In whitelist
-        assert!(!config.should_load("plugin2")); // In blacklist
-        assert!(!config.should_load("plugin3")); // Not in whitelist
-    }
-
-    #[test]
-    fn test_plugin_config_all_whitelist() {
-        let config = PluginConfig::new();
-        assert!(config.should_load("any_plugin")); // Empty whitelist = all
     }
 
     #[test]

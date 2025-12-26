@@ -4,7 +4,8 @@ use crate::errors::{PluginError, Result};
 use crate::plugins::loader::{CompositePluginLoader, PluginLoader};
 use crate::plugins::registry::PluginRegistry;
 use crate::plugins::traits::Plugin;
-use crate::plugins::types::{PluginConfig, PluginInfo, PluginLoadResult, PluginStatus};
+use crate::plugins::types::{PluginInfo, PluginLoadResult, PluginStatus};
+use crate::config::loquat_config::PluginConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -338,6 +339,7 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_manager_with_config() {
         let config = PluginConfig {
+            enabled: true,
             plugin_dir: "./plugins".to_string(),
             auto_load: false,
             enable_hot_reload: false,

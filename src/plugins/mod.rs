@@ -10,7 +10,6 @@ pub mod manager;
 pub mod plugin_manager;
 
 // Export all types
-pub use types::PluginConfig;
 pub use types::PluginInfo;
 pub use types::PluginLoadResult;
 pub use types::PluginStatus;

@@ -1,95 +1,20 @@
 //! Adapter manager for managing adapter lifecycle
 
 use crate::adapters::factory::{AdapterFactoryRegistry, AdapterFactory};
-use crate::adapters::config::AdapterConfig;
+use crate::adapters::config::AdapterConfig as AdapterInstanceConfig;
 use crate::adapters::status::AdapterStatus;
 use crate::adapters::{Adapter};
 use crate::adapters::types::{AdapterInfo, AdapterStatistics};
 use crate::logging::traits::{LogContext, LogLevel, Logger};
 use crate::errors::{AdapterError, Result};
-use serde::{Deserialize, Serialize};
+use crate::config::loquat_config::AdapterConfig as ManagerConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-/// Adapter configuration for AdapterManager
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdapterManagerConfig {
-    pub adapter_dir: String,
-    pub auto_load: bool,
-    pub enable_hot_reload: bool,
-    pub hot_reload_interval: u64,
-    pub whitelist: Vec<String>,
-    pub blacklist: Vec<String>,
-    pub adapters: HashMap<String, AdapterConfig>,
-}
-
-impl Default for AdapterManagerConfig {
-    fn default() -> Self {
-        Self {
-            adapter_dir: "./adapters".to_string(),
-            auto_load: true,
-            enable_hot_reload: true,
-            hot_reload_interval: 10,
-            whitelist: Vec::new(),
-            blacklist: Vec::new(),
-            adapters: HashMap::new(),
-        }
-    }
-}
-
-impl AdapterManagerConfig {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_adapter_dir(mut self, dir: &str) -> Self {
-        self.adapter_dir = dir.to_string();
-        self
-    }
-
-    pub fn with_auto_load(mut self, enabled: bool) -> Self {
-        self.auto_load = enabled;
-        self
-    }
-
-    pub fn with_hot_reload(mut self, enabled: bool) -> Self {
-        self.enable_hot_reload = enabled;
-        self
-    }
-
-    pub fn with_hot_reload_interval(mut self, seconds: u64) -> Self {
-        self.hot_reload_interval = seconds;
-        self
-    }
-
-    pub fn with_whitelist(mut self, list: Vec<String>) -> Self {
-        self.whitelist = list;
-        self
-    }
-
-    pub fn with_blacklist(mut self, list: Vec<String>) -> Self {
-        self.blacklist = list;
-        self
-    }
-
-    pub fn with_adapter(mut self, adapter_id: &str, config: AdapterConfig) -> Self {
-        self.adapters.insert(adapter_id.to_string(), config);
-        self
-    }
-
-    pub fn should_load(&self, adapter_id: &str) -> bool {
-        if self.blacklist.contains(&adapter_id.to_string()) {
-            return false;
-        }
-        if self.whitelist.is_empty() {
-            return true;
-        }
-        self.whitelist.contains(&adapter_id.to_string())
-    }
-}
+pub type AdapterManagerConfig = ManagerConfig;
 
 #[derive(Debug, Clone)]
 pub struct AdapterLoadResult {
@@ -284,14 +209,14 @@ impl AdapterManager {
         }
     }
 
-    pub fn load_adapter_config(&self, path: &PathBuf) -> Result<AdapterConfig> {
+    pub fn load_adapter_config(&self, path: &PathBuf) -> Result<AdapterInstanceConfig> {
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             if ext == "json" {
                 let content = std::fs::read_to_string(&path).map_err(|e| {
                     AdapterError::ConfigLoadFailed(format!("Failed to read adapter config: {}", e))
                 })?;
 
-                return serde_json::from_str::<AdapterConfig>(&content).map_err(|e| {
+                return serde_json::from_str::<AdapterInstanceConfig>(&content).map_err(|e| {
                     AdapterError::ConfigLoadFailed(format!("Failed to parse JSON config: {}", e))
                 }).map_err(|e| e.into());
             } else if ext == "yaml" || ext == "yml" {
@@ -303,7 +228,7 @@ impl AdapterManager {
         self.create_default_config(&path)
     }
 
-    pub fn create_default_config(&self, path: &PathBuf) -> Result<AdapterConfig> {
+    pub fn create_default_config(&self, path: &PathBuf) -> Result<AdapterInstanceConfig> {
         let adapter_name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -326,7 +251,7 @@ impl AdapterManager {
             "unknown"
         };
 
-        Ok(AdapterConfig::new(
+        Ok(AdapterInstanceConfig::new(
             adapter_type,
             &adapter_id,
             "ws://localhost:8080",
@@ -565,11 +490,11 @@ impl AdapterHotReloadManager {
 
 #[derive(Debug)]
 pub struct MockAdapter {
-    config: AdapterConfig,
+    config: AdapterInstanceConfig,
 }
 
 impl MockAdapter {
-    pub fn new(config: AdapterConfig) -> Self {
+    pub fn new(config: AdapterInstanceConfig) -> Self {
         Self { config }
     }
 }
@@ -588,7 +513,7 @@ impl Adapter for MockAdapter {
         &self.config.adapter_id
     }
 
-    fn config(&self) -> AdapterConfig {
+    fn config(&self) -> AdapterInstanceConfig {
         self.config.clone()
     }
 
@@ -622,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn test_adapter_manager_creation() {
         let logger = create_test_logger();
-        let config = AdapterManagerConfig::new();
+        let config = AdapterManagerConfig::default();
         let manager = AdapterManager::new(config, logger);
 
         assert_eq!(manager.adapter_count().await, 0);
@@ -631,7 +556,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adapter_config_default() {
-        let config = AdapterManagerConfig::new();
+        let config = AdapterManagerConfig::default();
 
         assert_eq!(config.adapter_dir, "./adapters");
         assert!(config.auto_load);
@@ -642,28 +567,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_adapter_config_builder() {
-        let config = AdapterManagerConfig::new()
-            .with_adapter_dir("/custom/adapters")
-            .with_auto_load(false)
-            .with_hot_reload(true)
-            .with_hot_reload_interval(30)
-                .with_whitelist(vec!["qq".to_string()])
-                .with_blacklist(vec!["telegram".to_string()]);
-
-        assert_eq!(config.adapter_dir, "/custom/adapters");
-        assert!(!config.auto_load);
-        assert!(config.enable_hot_reload);
-        assert_eq!(config.hot_reload_interval, 30);
-        assert_eq!(config.whitelist, vec!["qq"]);
-        assert_eq!(config.blacklist, vec!["telegram"]);
-    }
-
-    #[tokio::test]
     async fn test_adapter_config_should_load() {
-        let config = AdapterManagerConfig::new()
-            .with_whitelist(vec!["qq".to_string()])
-            .with_blacklist(vec!["telegram".to_string()]);
+        let mut config = AdapterManagerConfig::default();
+        config.whitelist = vec!["qq".to_string()];
+        config.blacklist = vec!["telegram".to_string()];
 
         assert!(config.should_load("qq"));
         assert!(config.should_load("wechat"));
@@ -672,7 +579,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adapter_config_should_load_all() {
-        let config = AdapterManagerConfig::new();
+        let config = AdapterManagerConfig::default();
 
         assert!(config.should_load("qq"));
         assert!(config.should_load("wechat"));

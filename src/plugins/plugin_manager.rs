@@ -1,10 +1,11 @@
 //! Plugin manager for managing plugin lifecycle
 
+use crate::config::loquat_config::PluginConfig;
 use crate::errors::{PluginError, Result};
 use crate::plugins::loader::{CompositePluginLoader, PluginLoader};
 use crate::plugins::registry::PluginRegistry;
 use crate::plugins::traits::Plugin;
-use crate::plugins::types::{PluginConfig, PluginInfo, PluginLoadResult, PluginStatus};
+use crate::plugins::types::{PluginInfo, PluginLoadResult, PluginStatus};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,33 +50,21 @@ impl PluginManager {
     }
 
     pub async fn load_plugin(&self, path: PathBuf) -> Result<PluginLoadResult> {
-        if !self.config.blacklist.is_empty() {
-            let plugin_name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| PluginError::LoadFailed("Invalid plugin path".to_string()))?;
-            if self.config.blacklist.contains(&plugin_name.to_string()) {
-                return Ok(PluginLoadResult {
-                    plugin_name: plugin_name.to_string(),
-                    success: false,
-                    error: Some("Plugin is blacklisted".to_string()),
-                });
-            }
+        // Use should_load to check if plugin should be loaded
+        let plugin_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| PluginError::LoadFailed("Invalid plugin path".to_string()))?;
+        
+        if !self.config.should_load(&plugin_name) {
+            return Ok(PluginLoadResult {
+                plugin_name: plugin_name.to_string(),
+                success: false,
+                error: Some("Plugin is not enabled or is filtered".to_string()),
+            });
         }
 
         let plugin = self.loader.load_plugin(&path).await?;
-
-        if !self.config.whitelist.is_empty() {
-            let plugin_name = plugin.name();
-            if !self.config.whitelist.contains(&plugin_name.to_string()) {
-                return Ok(PluginLoadResult {
-                    plugin_name: plugin_name.to_string(),
-                    success: false,
-                    error: Some("Plugin is not whitelisted".to_string()),
-                });
-            }
-        }
-
         let plugin_name = plugin.name().to_string();
         let plugin_version = plugin.version().to_string();
         let plugin_type = plugin.plugin_type();
@@ -337,14 +326,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_plugin_manager_with_config() {
-        let config = PluginConfig {
-            plugin_dir: "./plugins".to_string(),
-            auto_load: false,
-            enable_hot_reload: false,
-            hot_reload_interval: 1,
-            whitelist: vec![],
-            blacklist: vec!["test".to_string()],
-        };
+        let mut config = PluginConfig::default();
+        config.plugin_dir = "./plugins".to_string();
         let manager = PluginManager::new(config);
         assert_eq!(manager.config().plugin_dir, "./plugins");
     }

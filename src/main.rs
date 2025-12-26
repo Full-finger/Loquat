@@ -94,13 +94,13 @@ impl LoquatApplication {
             hot_reload_interval: config.hot_reload_interval,
             whitelist: config.whitelist.clone(),
             blacklist: config.blacklist.clone(),
+            enabled: config.enabled,
         }
     }
 
     /// Convert new AdapterConfig to legacy AdapterManagerConfig
     fn convert_adapter_config(config: &AdapterConfig) -> loquat::adapters::AdapterManagerConfig {
         use loquat::adapters::AdapterManagerConfig;
-        use std::collections::HashMap;
 
         AdapterManagerConfig {
             adapter_dir: config.adapter_dir.clone(),
@@ -109,7 +109,7 @@ impl LoquatApplication {
             hot_reload_interval: config.hot_reload_interval,
             whitelist: config.whitelist.clone(),
             blacklist: config.blacklist.clone(),
-            adapters: HashMap::new(),
+            enabled: config.enabled,
         }
     }
 

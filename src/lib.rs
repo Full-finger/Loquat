@@ -41,6 +41,7 @@ pub mod prelude {
     pub use crate::logging::{Logger, LogLevel, LogContext};
     pub use crate::errors::{LoquatError, Result};
     pub use crate::events::{Event, EventMetadata, EventSource, Package};
-    pub use crate::plugins::{Plugin, PluginManager, PluginType, PluginConfig};
+    pub use crate::plugins::{Plugin, PluginManager, PluginType};
+    pub use crate::config::loquat_config::PluginConfig;
     pub use crate::engine::{Engine, EngineConfig, EngineStats, EngineState};
 }
