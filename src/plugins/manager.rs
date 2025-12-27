@@ -6,6 +6,7 @@ use crate::plugins::registry::PluginRegistry;
 use crate::plugins::traits::Plugin;
 use crate::plugins::types::{PluginInfo, PluginLoadResult, PluginStatus};
 use crate::config::loquat_config::PluginConfig;
+use crate::utils::LruCache;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -272,8 +273,8 @@ impl HotReloadManager {
 
         tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval_duration);
-            let mut last_modifications: std::collections::HashMap<String, std::time::SystemTime> =
-                std::collections::HashMap::new();
+            let mut last_modifications: LruCache<String, std::time::SystemTime> =
+                LruCache::with_default_capacity();
 
             loop {
                 let is_running = *running_flag.read().await;
@@ -288,8 +289,8 @@ impl HotReloadManager {
                         let path_str = path.to_string_lossy().to_string();
                         if let Ok(metadata) = path.metadata() {
                             if let Ok(modified) = metadata.modified() {
-                                if let Some(last_modified) = last_modifications.get(&path_str).copied() {
-                                    if modified > last_modified {
+                                if let Some(last_modified) = last_modifications.get_peek(&path_str) {
+                                    if modified > *last_modified {
                                         let plugin_name = path
                                             .file_stem()
                                             .and_then(|s| s.to_str())

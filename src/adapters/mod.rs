@@ -14,6 +14,7 @@ pub mod console_adapter;
 pub mod console_factory;
 pub mod echo_adapter;
 pub mod echo_factory;
+pub mod state_manager;
 
 pub use traits::*;
 pub use config::*;

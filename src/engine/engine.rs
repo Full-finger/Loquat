@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Standard Loquat Engine - core coordinator
+#[derive(Clone)]
 pub struct StandardEngine {
     config: EngineConfig,
     stats: EngineStats,

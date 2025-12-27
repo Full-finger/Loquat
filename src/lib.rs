@@ -18,6 +18,8 @@ pub mod routers;
 pub mod plugins;
 pub mod channel_manager;
 pub mod engine;
+pub mod shutdown;
+pub mod utils;
 
 pub use aop::*;
 pub use config::*;
@@ -34,6 +36,7 @@ pub use routers::*;
 pub use plugins::*;
 pub use channel_manager::*;
 pub use engine::*;
+pub use shutdown::*;
 
 /// Re-export common types for convenience
 pub mod prelude {

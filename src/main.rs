@@ -12,6 +12,7 @@ use loquat::plugins::{PluginManager, HotReloadManager};
 use loquat::adapters::{AdapterManager, AdapterHotReloadManager};
 use loquat::web::{WebService, WebServiceConfig, AppState};
 use loquat::errors::Result;
+use loquat::shutdown::{ShutdownCoordinator, ShutdownStage, ShutdownOrder};
 use std::sync::Arc;
 use std::time::Duration;
 use std::path::PathBuf;
@@ -25,6 +26,7 @@ struct LoquatApplication {
     adapter_hot_reload_manager: Option<Arc<AdapterHotReloadManager>>,
     web_service: Option<Arc<WebService>>,
     logger: Arc<dyn Logger>,
+    shutdown_coordinator: Arc<ShutdownCoordinator>,
 }
 
 impl LoquatApplication {
@@ -41,6 +43,14 @@ impl LoquatApplication {
         let adapter_config = Self::convert_adapter_config(&config.adapters);
         let adapter_manager = Arc::new(AdapterManager::new(adapter_config, logger.clone()));
 
+        // Create shutdown coordinator with default order
+        let shutdown_coordinator = Arc::new(
+            ShutdownCoordinator::with_order(
+                logger.clone(),
+                ShutdownOrder::default()
+            )
+        );
+
         Ok(Self {
             config,
             plugin_manager,
@@ -49,6 +59,7 @@ impl LoquatApplication {
             adapter_hot_reload_manager: None,
             web_service: None,
             logger,
+            shutdown_coordinator,
         })
     }
 
@@ -111,6 +122,18 @@ impl LoquatApplication {
             );
             return;
         }
+
+        // Register engine shutdown handler
+        let engine_for_shutdown = engine.clone();
+        self.shutdown_coordinator.register_handler(
+            ShutdownStage::Engine,
+            move || {
+                let mut engine_clone = engine_for_shutdown.clone();
+                Box::pin(async move {
+                    engine_clone.stop().await
+                })
+            }
+        ).await;
 
         // Auto-load adapters if enabled
         if self.config.adapters.enabled && self.config.adapters.auto_load {
@@ -205,6 +228,18 @@ impl LoquatApplication {
                     &Default::default(),
                 );
             } else {
+                // Register web service shutdown handler
+                let web_service_for_shutdown = web_service.clone();
+                self.shutdown_coordinator.register_handler(
+                    ShutdownStage::WebService,
+                    move || {
+                        let web_clone = web_service_for_shutdown.clone();
+                        Box::pin(async move {
+                            web_clone.stop().await
+                        })
+                    }
+                ).await;
+
                 self.web_service = Some(web_service);
                 self.logger.log(
                     LogLevel::Info,
@@ -235,6 +270,18 @@ impl LoquatApplication {
                     &Default::default(),
                 );
             } else {
+                // Register adapter hot reload shutdown handler
+                let adapter_hot_reload_for_shutdown = adapter_hot_reload_manager.clone();
+                self.shutdown_coordinator.register_handler(
+                    ShutdownStage::AdapterHotReload,
+                    move || {
+                        let adapter_clone = adapter_hot_reload_for_shutdown.clone();
+                        Box::pin(async move {
+                            adapter_clone.stop().await
+                        })
+                    }
+                ).await;
+
                 self.adapter_hot_reload_manager = Some(adapter_hot_reload_manager);
             }
         }
@@ -259,6 +306,18 @@ impl LoquatApplication {
                     &Default::default(),
                 );
             } else {
+                // Register plugin hot reload shutdown handler
+                let hot_reload_for_shutdown = hot_reload_manager.clone();
+                self.shutdown_coordinator.register_handler(
+                    ShutdownStage::PluginHotReload,
+                    move || {
+                        let plugin_clone = hot_reload_for_shutdown.clone();
+                        Box::pin(async move {
+                            plugin_clone.stop().await
+                        })
+                    }
+                ).await;
+
                 self.hot_reload_manager = Some(hot_reload_manager);
             }
         }
@@ -304,37 +363,68 @@ impl LoquatApplication {
             &Default::default(),
         );
 
-        // Stop web service if running
-        if let Some(web_service) = &self.web_service {
-            let _ = web_service.stop().await;
-            self.logger.log(
-                LogLevel::Info,
-                "Web service stopped",
-                &Default::default(),
-            );
-        }
+        // Execute graceful shutdown
+        self.logger.log(
+            LogLevel::Info,
+            "Starting graceful shutdown...",
+            &Default::default(),
+        );
 
-        // Stop hot reload if running
-        if let Some(hot_reload) = &self.hot_reload_manager {
-            let _ = hot_reload.stop().await;
-            self.logger.log(
-                LogLevel::Info,
-                "Plugin hot reload stopped",
-                &Default::default(),
-            );
-        }
+        match self.shutdown_coordinator.shutdown().await {
+            Ok(results) => {
+                // Log shutdown results
+                for result in &results {
+                    match result {
+                        loquat::shutdown::ShutdownStageResult::Success { stage, duration_ms } => {
+                            self.logger.log(
+                                LogLevel::Info,
+                                &format!("Shutdown stage {:?} completed in {}ms", stage, duration_ms),
+                                &Default::default(),
+                            );
+                        }
+                        loquat::shutdown::ShutdownStageResult::FailedContinue { stage, error, duration_ms } => {
+                            self.logger.log(
+                                LogLevel::Warn,
+                                &format!("Shutdown stage {:?} failed after {}ms (continuing): {}", stage, duration_ms, error),
+                                &Default::default(),
+                            );
+                        }
+                        loquat::shutdown::ShutdownStageResult::FailedAbort { stage, error, duration_ms } => {
+                            self.logger.log(
+                                LogLevel::Error,
+                                &format!("Shutdown stage {:?} failed after {}ms (aborting): {}", stage, duration_ms, error),
+                                &Default::default(),
+                            );
+                        }
+                        loquat::shutdown::ShutdownStageResult::Timeout { stage, timeout_ms } => {
+                            self.logger.log(
+                                LogLevel::Error,
+                                &format!("Shutdown stage {:?} timed out after {}ms", stage, timeout_ms),
+                                &Default::default(),
+                            );
+                        }
+                    }
+                }
 
-        if let Some(adapter_hot_reload) = &self.adapter_hot_reload_manager {
-            let _ = adapter_hot_reload.stop().await;
-            self.logger.log(
-                LogLevel::Info,
-                "Adapter hot reload stopped",
-                &Default::default(),
-            );
-        }
+                // Log overall shutdown status
+                let status = self.shutdown_coordinator.status().await;
+                let duration = self.shutdown_coordinator.duration_ms().await;
 
-        // Stop engine
-        let _ = engine.stop().await;
+                self.logger.log(
+                    LogLevel::Info,
+                    &format!("Graceful shutdown completed in {}ms. Status: {:?}", 
+                        duration.unwrap_or(0), status),
+                    &Default::default(),
+                );
+            }
+            Err(e) => {
+                self.logger.log(
+                    LogLevel::Error,
+                    &format!("Shutdown coordinator failed: {}", e),
+                    &Default::default(),
+                );
+            }
+        }
 
         // Log shutdown complete
         self.logger.log(

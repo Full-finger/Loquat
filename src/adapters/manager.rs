@@ -5,9 +5,11 @@ use crate::adapters::config::AdapterConfig as AdapterInstanceConfig;
 use crate::adapters::status::AdapterStatus;
 use crate::adapters::{Adapter};
 use crate::adapters::types::{AdapterInfo, AdapterStatistics};
+use crate::adapters::state_manager::AdapterStateManager;
 use crate::logging::traits::{LogContext, LogLevel, Logger};
 use crate::errors::{AdapterError, Result};
 use crate::config::loquat_config::AdapterConfig as ManagerConfig;
+use crate::utils::LruCache;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -424,8 +426,8 @@ impl AdapterHotReloadManager {
 
         tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval_duration);
-            let mut last_modifications: HashMap<String, std::time::SystemTime> =
-                HashMap::new();
+            let mut last_modifications: LruCache<String, std::time::SystemTime> =
+                LruCache::with_default_capacity();
 
             loop {
                 let is_running = *running_flag.read().await;
@@ -440,7 +442,7 @@ impl AdapterHotReloadManager {
                         let path_str = path.to_string_lossy().to_string();
                         if let Ok(metadata) = path.metadata() {
                             if let Ok(modified) = metadata.modified() {
-                                if let Some(last_modified) = last_modifications.get(&path_str) {
+                                if let Some(last_modified) = last_modifications.get_peek(&path_str) {
                                     if modified > *last_modified {
                                         let adapter_name = path
                                             .file_stem()
