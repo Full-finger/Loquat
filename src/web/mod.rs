@@ -18,7 +18,7 @@ use types::*;
 use traits::*;
 
 // Re-export AppState for external use
-pub use traits::AppState;
+pub use traits::{AppState, ErrorTracker};
 
 /// Main web service structure
 pub struct WebService {

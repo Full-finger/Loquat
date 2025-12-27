@@ -9,7 +9,7 @@ use crate::adapters::state_manager::AdapterStateManager;
 use crate::logging::traits::{LogContext, LogLevel, Logger};
 use crate::errors::{AdapterError, Result};
 use crate::config::loquat_config::AdapterConfig as ManagerConfig;
-use crate::utils::LruCache;
+use crate::utils::{LruCache, HotReloadHistory, VersionData};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -201,10 +201,26 @@ impl AdapterManager {
                 &log_context,
             );
 
+            // Create adapter using factory
+            let adapter = self.registry.create(config.clone())
+                .map_err(|e| {
+                    self.logger.log(
+                        LogLevel::Error,
+                        &format!("Failed to create adapter {}: {}", config.adapter_id, e),
+                        &log_context,
+                    );
+                    e
+                })?;
+
             let mut adapters = self.adapters.write().await;
-            let adapter = Arc::new(MockAdapter::new(config.clone()));
-            adapters.push(adapter);
+            adapters.push(Arc::from(adapter));
             drop(adapters);
+
+            self.logger.log(
+                LogLevel::Info,
+                &format!("Adapter {} loaded successfully", config.adapter_id),
+                &log_context,
+            );
 
             Ok(AdapterLoadResult::success(config.adapter_id.clone()))
         } else {
@@ -399,6 +415,7 @@ pub struct AdapterHotReloadManager {
     manager: Arc<AdapterManager>,
     interval: Duration,
     running: Arc<RwLock<bool>>,
+    history: Arc<HotReloadHistory>,
 }
 
 impl AdapterHotReloadManager {
@@ -407,7 +424,13 @@ impl AdapterHotReloadManager {
             manager,
             interval,
             running: Arc::new(RwLock::new(false)),
+            history: Arc::new(HotReloadHistory::with_default_capacity()),
         }
+    }
+
+    /// Get the hot reload history
+    pub fn history(&self) -> Arc<HotReloadHistory> {
+        self.history.clone()
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -423,6 +446,7 @@ impl AdapterHotReloadManager {
         let manager = Arc::clone(&self.manager);
         let running_flag = Arc::clone(&self.running);
         let interval_duration = self.interval;
+        let history = self.history.clone();
 
         tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval_duration);
@@ -455,11 +479,58 @@ impl AdapterHotReloadManager {
                                             log_context.component = Some("AdapterHotReloadManager".to_string());
                                             log_context.add("adapter_id", adapter_name.clone());
                                             
-                                            if let Err(e) = manager.reload_adapter(&adapter_name).await {
-                                                // Log hot reload failure through the logger
+                                            // Get version info before reload for rollback
+                                            let previous_version = manager.get_adapter_info(&adapter_name).await
+                                                .map(|info| VersionData {
+                                                    version: info.version.clone(),
+                                                    hash: None,
+                                                    timestamp: std::time::SystemTime::now(),
+                                                });
+
+                                            // Attempt reload with retry mechanism
+                                            let mut success = false;
+                                            let mut error_msg = None;
+
+                                            for attempt in 0..3 {
+                                                match manager.reload_adapter(&adapter_name).await {
+                                                    Ok(_) => {
+                                                        success = true;
+                                                        break;
+                                                    }
+                                                    Err(e) => {
+                                                        error_msg = Some(e.to_string());
+                                                        if attempt < 2 {
+                                                            tokio::time::sleep(Duration::from_millis(100 * (attempt + 1) as u64)).await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Clone error_msg for logging after recording
+                                            let error_msg_for_log = error_msg.clone();
+
+                                            // Record reload attempt in history
+                                            history.record_reload(
+                                                &adapter_name,
+                                                path.clone(),
+                                                success,
+                                                error_msg,
+                                                previous_version,
+                                            ).await;
+
+                                            // Log result
+                                            if success {
+                                                let _ = manager.logger.log(
+                                                    crate::logging::traits::LogLevel::Info,
+                                                    &format!("Adapter {} hot reloaded successfully", adapter_name),
+                                                    &log_context,
+                                                );
+                                            } else {
                                                 let _ = manager.logger.log(
                                                     crate::logging::traits::LogLevel::Error,
-                                                    &format!("Failed to hot reload adapter {}: {}", adapter_name, e),
+                                                    &format!("Adapter {} hot reload failed after retries: {}", 
+                                                        adapter_name, 
+                                                        error_msg_for_log.unwrap_or_else(|| "Unknown error".to_string())),
                                                     &log_context,
                                                 );
                                             }
@@ -491,51 +562,6 @@ impl AdapterHotReloadManager {
     }
 }
 
-#[derive(Debug)]
-pub struct MockAdapter {
-    config: AdapterInstanceConfig,
-}
-
-impl MockAdapter {
-    pub fn new(config: AdapterInstanceConfig) -> Self {
-        Self { config }
-    }
-}
-
-#[async_trait::async_trait]
-impl Adapter for MockAdapter {
-    fn name(&self) -> &str {
-        "MockAdapter"
-    }
-
-    fn version(&self) -> &str {
-        "1.0.0"
-    }
-
-    fn adapter_id(&self) -> &str {
-        &self.config.adapter_id
-    }
-
-    fn config(&self) -> AdapterInstanceConfig {
-        self.config.clone()
-    }
-
-    fn status(&self) -> AdapterStatus {
-        AdapterStatus::Running
-    }
-
-    fn is_running(&self) -> bool {
-        true
-    }
-
-    fn is_connected(&self) -> bool {
-        true
-    }
-
-    fn statistics(&self) -> AdapterStatistics {
-        AdapterStatistics::default()
-    }
-}
 
 #[cfg(test)]
 mod tests {

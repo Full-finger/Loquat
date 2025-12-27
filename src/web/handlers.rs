@@ -2,15 +2,10 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     Json,
 };
 use serde::Deserialize;
-use std::sync::Arc;
-
-use crate::plugins::PluginManager;
-use crate::adapters::AdapterManager;
-use crate::config::loquat_config::LoquatConfig;
+use crate::engine::traits::Engine;
 
 use super::types::*;
 use super::traits::AppState;
@@ -19,16 +14,149 @@ use super::traits::AppState;
 pub async fn health_check(State(state): State<AppState>) -> Json<ApiResponse<HealthResponse>> {
     let uptime = state.start_time.elapsed().as_secs();
     
+    // Determine overall status based on subsystems
+    let overall_status = determine_overall_status(&state).await;
+    
+    // Get engine status
+    let engine_status = if let Some(engine) = &state.engine {
+        format!("{:?}", engine.state())
+    } else {
+        "unknown".to_string()
+    };
+    
+    // Get plugin subsystem status
+    let plugin_status = if let Some(plugin_manager) = &state.plugin_manager {
+        let plugins = plugin_manager.list_plugin_infos();
+        let active = plugins.iter().filter(|p| p.status.is_active()).count();
+        let inactive = plugins.iter().filter(|p| 
+            matches!(p.status, 
+                crate::plugins::types::PluginStatus::Unloaded |
+                crate::plugins::types::PluginStatus::Disabled)
+        ).count();
+        let error_count = plugins.iter().filter(|p| matches!(p.status, crate::plugins::types::PluginStatus::Error { .. })).count();
+        
+        PluginSubsystemStatus {
+            enabled: state.config.plugins.enabled,
+            total: plugins.len(),
+            active,
+            inactive,
+            error: error_count,
+        }
+    } else {
+        PluginSubsystemStatus {
+            enabled: false,
+            total: 0,
+            active: 0,
+            inactive: 0,
+            error: 0,
+        }
+    };
+    
+    // Get adapter subsystem status
+    let adapter_status = if let Some(adapter_manager) = &state.adapter_manager {
+        let adapters = adapter_manager.list_adapter_infos().await;
+        let active = adapters.iter().filter(|a| a.status.is_active()).count();
+        let inactive = adapters.iter().filter(|a| 
+            matches!(a.status, 
+                crate::adapters::status::AdapterStatus::Uninitialized | 
+                crate::adapters::status::AdapterStatus::Initializing |
+                crate::adapters::status::AdapterStatus::Stopped)
+        ).count();
+        let error_count = adapters.iter().filter(|a| a.status.is_error()).count();
+        
+        AdapterSubsystemStatus {
+            enabled: state.config.adapters.enabled,
+            total: adapters.len(),
+            active,
+            inactive,
+            error: error_count,
+        }
+    } else {
+        AdapterSubsystemStatus {
+            enabled: false,
+            total: 0,
+            active: 0,
+            inactive: 0,
+            error: 0,
+        }
+    };
+    
+    // Get web subsystem status
+    let is_web_running = state.web_running.load(std::sync::atomic::Ordering::SeqCst);
+    let web_status = WebSubsystemStatus {
+        enabled: state.config.web.enabled,
+        running: is_web_running,
+        host: state.config.web.host.clone(),
+        port: state.config.web.port,
+    };
+    
+    // Get logging subsystem status
+    let logging_status = LoggingSubsystemStatus {
+        level: state.config.logging.level.clone(),
+        format: state.config.logging.format.clone(),
+        output: state.config.logging.output.clone(),
+    };
+    
+    // Get error statistics
+    let error_stats = state.error_tracker.get_stats();
+    
     let response = HealthResponse {
-        status: "healthy".to_string(),
+        status: overall_status,
         version: env!("CARGO_PKG_VERSION").to_string(),
         environment: state.config.general.environment.clone(),
         uptime,
-        plugins_enabled: state.config.plugins.enabled,
-        adapters_enabled: state.config.adapters.enabled,
+        engine_status,
+        subsystems: SubsystemStatus {
+            plugins: plugin_status,
+            adapters: adapter_status,
+            web: web_status,
+            logging: logging_status,
+        },
+        errors: error_stats,
     };
 
     Json(ApiResponse::success(response))
+}
+
+/// Determine overall system health status
+async fn determine_overall_status(state: &AppState) -> String {
+    let mut issues = 0;
+    
+    // Check engine
+    if let Some(engine) = &state.engine {
+        let engine_state = engine.state();
+        if matches!(engine_state.status, crate::engine::types::EngineStatus::Error) {
+            issues += 1;
+        }
+    }
+    
+    // Check plugins
+    if let Some(plugin_manager) = &state.plugin_manager {
+        let plugins = plugin_manager.list_plugin_infos();
+        if plugins.iter().any(|p| matches!(p.status, crate::plugins::types::PluginStatus::Error { .. })) {
+            issues += 1;
+        }
+    }
+    
+    // Check adapters
+    if let Some(adapter_manager) = &state.adapter_manager {
+        let adapters = adapter_manager.list_adapter_infos().await;
+        if adapters.iter().any(|a| a.status.is_error()) {
+            issues += 1;
+        }
+    }
+    
+    // Check critical errors
+    let error_stats = state.error_tracker.get_stats();
+    if error_stats.critical > 0 {
+        return "critical".to_string();
+    }
+    
+    match issues {
+        0 => "healthy".to_string(),
+        1..=2 => "degraded".to_string(),
+        _ => "unhealthy".to_string(),
+    }
 }
 
 /// Welcome page handler

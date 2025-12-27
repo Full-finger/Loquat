@@ -40,7 +40,7 @@ impl StandardEngine {
             config: EngineConfig::new(),
             stats: EngineStats::new(),
             state: Arc::new(tokio::sync::RwLock::new(EngineState {
-                status: EngineStatus::Idle,
+                status: EngineStatus::Stopped,
                 last_error: None,
             })),
             router: Arc::new(StandardRouter::new(logger_clone.clone())),
@@ -55,7 +55,7 @@ impl StandardEngine {
             config,
             stats: EngineStats::new(),
             state: Arc::new(tokio::sync::RwLock::new(EngineState {
-                status: EngineStatus::Idle,
+                status: EngineStatus::Stopped,
                 last_error: None,
             })),
             router: Arc::new(StandardRouter::new(logger_clone.clone())),
@@ -176,7 +176,7 @@ impl Engine for StandardEngine {
                 last_error: guard.last_error.clone(),
             },
             Err(_) => EngineState {
-                status: EngineStatus::Idle,
+                status: EngineStatus::Stopped,
                 last_error: Some("Unable to acquire state lock".to_string()),
             },
         }
@@ -196,21 +196,29 @@ impl Engine for StandardEngine {
     async fn start(&mut self) -> Result<()> {
         let mut state = self.state.write().await;
         
-        if state.status.is_running() {
-            let message = "Engine is already running";
+        if state.status.is_running() || state.status.is_transitioning() {
+            let message = "Engine is already running or starting";
             let mut log_context = LogContext::new();
             log_context.component = Some("Engine".to_string());
             self.logger.log(LogLevel::Warn, message, &log_context);
             return Err(LoquatError::Unknown(message.to_string()));
         }
         
-        state.status = EngineStatus::Processing;
+        // Transition to starting state
+        state.status = EngineStatus::Starting;
         state.last_error = None;
         drop(state);
         
         let mut log_context = LogContext::new();
         log_context.component = Some("Engine".to_string());
-        self.logger.log(LogLevel::Info, "Engine started", &log_context);
+        self.logger.log(LogLevel::Info, "Engine starting...", &log_context);
+        
+        // Transition to running state
+        let mut state = self.state.write().await;
+        state.status = EngineStatus::Running;
+        drop(state);
+        
+        self.logger.log(LogLevel::Info, "Engine started and ready to process", &log_context);
         
         Ok(())
     }
@@ -228,6 +236,14 @@ impl Engine for StandardEngine {
     }
 
     async fn process(&mut self, package: Package) -> Result<Package> {
+        // Check if engine is running before processing
+        {
+            let state = self.state.read().await;
+            if !state.status.is_running() {
+                return Err(LoquatError::Unknown("Engine is not running".to_string()));
+            }
+        }
+        
         let start_time = std::time::Instant::now();
         
         let context = self.get_processing_context(&package).await?;
@@ -239,9 +255,8 @@ impl Engine for StandardEngine {
         stats.update_avg_time(duration_ms);
         self.stats = stats;
         
-        let mut state = self.state.write().await;
-        state.status = EngineStatus::Idle;
-        drop(state);
+        // Note: We do NOT change engine status here
+        // Engine status is controlled by start/stop, not by individual package processing
         
         Ok(result)
     }
@@ -254,7 +269,7 @@ impl Engine for StandardEngine {
         // Try to acquire read lock without blocking
         // In async context, this will fail gracefully
         match self.state.try_read() {
-            Ok(guard) => matches!(guard.status, EngineStatus::Processing),
+            Ok(guard) => guard.status.is_running(),
             Err(_) => false, // Lock is held, assume not running to avoid blocking
         }
     }

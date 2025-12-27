@@ -43,6 +43,11 @@ impl LoquatApplication {
         let adapter_config = Self::convert_adapter_config(&config.adapters);
         let adapter_manager = Arc::new(AdapterManager::new(adapter_config, logger.clone()));
 
+        // Register built-in adapter factories
+        use loquat::adapters::{ConsoleAdapterFactory, EchoAdapterFactory};
+        adapter_manager.register_factory(Box::new(ConsoleAdapterFactory))?;
+        adapter_manager.register_factory(Box::new(EchoAdapterFactory))?;
+
         // Create shutdown coordinator with default order
         let shutdown_coordinator = Arc::new(
             ShutdownCoordinator::with_order(
@@ -207,16 +212,21 @@ impl LoquatApplication {
                 ..Default::default()
             };
 
+            let web_running = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
             let app_state = AppState {
                 plugin_manager: Some((*self.plugin_manager).clone()),
                 adapter_manager: Some((*self.adapter_manager).clone()),
+                engine: Some(engine.clone()),
                 logger: self.logger.clone(),
                 config: self.config.clone(),
                 start_time: std::time::Instant::now(),
+                error_tracker: loquat::web::ErrorTracker::new(),
+                web_running: Arc::clone(&web_running),
             };
 
             let web_service = Arc::new(
-                WebService::with_config(web_config)
+                WebService::with_config(web_config.clone())
                     .with_logger(self.logger.clone())
                     .with_app_state(app_state)
             );
@@ -228,6 +238,8 @@ impl LoquatApplication {
                     &Default::default(),
                 );
             } else {
+                web_running.store(true, std::sync::atomic::Ordering::SeqCst);
+                
                 // Register web service shutdown handler
                 let web_service_for_shutdown = web_service.clone();
                 self.shutdown_coordinator.register_handler(

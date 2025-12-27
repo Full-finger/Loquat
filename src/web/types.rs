@@ -49,10 +49,92 @@ pub struct HealthResponse {
     pub environment: String,
     /// Uptime in seconds
     pub uptime: u64,
-    /// Plugin system status
-    pub plugins_enabled: bool,
-    /// Adapter system status
-    pub adapters_enabled: bool,
+    /// Engine status
+    pub engine_status: String,
+    /// Subsystem statuses
+    pub subsystems: SubsystemStatus,
+    /// Error statistics
+    pub errors: ErrorStats,
+}
+
+/// Subsystem status details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubsystemStatus {
+    /// Plugin system
+    pub plugins: PluginSubsystemStatus,
+    /// Adapter system
+    pub adapters: AdapterSubsystemStatus,
+    /// Web service
+    pub web: WebSubsystemStatus,
+    /// Logging system
+    pub logging: LoggingSubsystemStatus,
+}
+
+/// Plugin subsystem status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginSubsystemStatus {
+    /// Enabled flag
+    pub enabled: bool,
+    /// Total plugins loaded
+    pub total: usize,
+    /// Active plugins count
+    pub active: usize,
+    /// Inactive plugins count
+    pub inactive: usize,
+    /// Error plugins count
+    pub error: usize,
+}
+
+/// Adapter subsystem status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterSubsystemStatus {
+    /// Enabled flag
+    pub enabled: bool,
+    /// Total adapters loaded
+    pub total: usize,
+    /// Active adapters count
+    pub active: usize,
+    /// Inactive adapters count
+    pub inactive: usize,
+    /// Error adapters count
+    pub error: usize,
+}
+
+/// Web subsystem status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSubsystemStatus {
+    /// Enabled flag
+    pub enabled: bool,
+    /// Running status
+    pub running: bool,
+    /// Host
+    pub host: String,
+    /// Port
+    pub port: u16,
+}
+
+/// Logging subsystem status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingSubsystemStatus {
+    /// Log level
+    pub level: String,
+    /// Log format
+    pub format: String,
+    /// Log output
+    pub output: String,
+}
+
+/// Error statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorStats {
+    /// Total error count
+    pub total: u64,
+    /// Critical error count
+    pub critical: u64,
+    /// Last error timestamp (if any)
+    pub last_error: Option<DateTime<Utc>>,
+    /// Last critical error timestamp (if any)
+    pub last_critical: Option<DateTime<Utc>>,
 }
 
 /// Plugin information for API

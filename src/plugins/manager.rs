@@ -6,7 +6,7 @@ use crate::plugins::registry::PluginRegistry;
 use crate::plugins::traits::Plugin;
 use crate::plugins::types::{PluginInfo, PluginLoadResult, PluginStatus};
 use crate::config::loquat_config::PluginConfig;
-use crate::utils::LruCache;
+use crate::utils::{LruCache, HotReloadHistory, VersionData};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -245,6 +245,7 @@ pub struct HotReloadManager {
     manager: Arc<PluginManager>,
     interval: Duration,
     running: Arc<RwLock<bool>>,
+    history: Arc<HotReloadHistory>,
 }
 
 impl HotReloadManager {
@@ -253,7 +254,13 @@ impl HotReloadManager {
             manager,
             interval,
             running: Arc::new(RwLock::new(false)),
+            history: Arc::new(HotReloadHistory::with_default_capacity()),
         }
+    }
+
+    /// Get the hot reload history
+    pub fn history(&self) -> Arc<HotReloadHistory> {
+        self.history.clone()
     }
 
     pub async fn start(&self) -> Result<()> {
@@ -270,6 +277,7 @@ impl HotReloadManager {
         let manager = Arc::clone(&self.manager);
         let running_flag = Arc::clone(&self.running);
         let interval_duration = self.interval;
+        let history = self.history.clone();
 
         tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval_duration);
@@ -298,7 +306,41 @@ impl HotReloadManager {
                                             .to_string();
 
                                         if manager.is_plugin_loaded(&plugin_name) {
-                                            let _ = manager.reload_plugin(&plugin_name).await;
+                                            // Get version info before reload for rollback
+                                            let previous_version = manager.get_plugin_info(&plugin_name)
+                                                .map(|info| VersionData {
+                                                    version: info.metadata.version.clone(),
+                                                    hash: None, // Could be computed if needed
+                                                    timestamp: std::time::SystemTime::now(),
+                                                });
+
+                                            // Attempt reload with retry mechanism
+                                            let mut success = false;
+                                            let mut error_msg = None;
+
+                                            for attempt in 0..3 {
+                                                match manager.reload_plugin(&plugin_name).await {
+                                                    Ok(_) => {
+                                                        success = true;
+                                                        break;
+                                                    }
+                                                    Err(e) => {
+                                                        error_msg = Some(e.to_string());
+                                                        if attempt < 2 {
+                                                            tokio::time::sleep(Duration::from_millis(100 * (attempt + 1) as u64)).await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Record reload attempt in history
+                                            history.record_reload(
+                                                &plugin_name,
+                                                path.clone(),
+                                                success,
+                                                error_msg,
+                                                previous_version,
+                                            ).await;
                                         }
 
                                         last_modifications.insert(path_str, modified);

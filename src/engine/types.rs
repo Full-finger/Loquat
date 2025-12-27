@@ -140,20 +140,27 @@ pub struct EngineState {
 /// Engine status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EngineStatus {
-    /// Engine is idle
-    Idle,
-    /// Engine is processing
-    Processing,
-    /// Engine is stopped
+    /// Engine is not started
     Stopped,
-    /// Engine has error
+    /// Engine is starting up
+    Starting,
+    /// Engine is running and ready to process
+    Running,
+    /// Engine is shutting down
+    Stopping,
+    /// Engine encountered an error
     Error,
 }
 
 impl EngineStatus {
-    /// Check if engine is running
+    /// Check if engine is running (can process packages)
     pub fn is_running(&self) -> bool {
-        matches!(self, EngineStatus::Processing)
+        matches!(self, EngineStatus::Running)
+    }
+
+    /// Check if engine is in a transitional state
+    pub fn is_transitioning(&self) -> bool {
+        matches!(self, EngineStatus::Starting | EngineStatus::Stopping)
     }
 }
 
@@ -226,10 +233,15 @@ mod tests {
 
     #[test]
     fn test_engine_status() {
-        assert!(EngineStatus::Idle.is_running() == false);
-        assert!(EngineStatus::Processing.is_running() == true);
         assert!(EngineStatus::Stopped.is_running() == false);
+        assert!(EngineStatus::Starting.is_running() == false);
+        assert!(EngineStatus::Running.is_running() == true);
+        assert!(EngineStatus::Stopping.is_running() == false);
         assert!(EngineStatus::Error.is_running() == false);
+
+        assert!(EngineStatus::Starting.is_transitioning() == true);
+        assert!(EngineStatus::Stopping.is_transitioning() == true);
+        assert!(EngineStatus::Running.is_transitioning() == false);
     }
 
     #[test]
