@@ -20,6 +20,7 @@ pub mod channel_manager;
 pub mod engine;
 pub mod shutdown;
 pub mod utils;
+pub mod cli;
 
 pub use aop::*;
 pub use config::*;

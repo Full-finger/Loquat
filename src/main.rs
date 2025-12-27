@@ -4,6 +4,7 @@
 
 use loquat::config::LoquatConfig;
 use loquat::engine::{Engine, StandardEngine};
+use loquat::cli::PluginCli;
 use loquat::config::loquat_config::{LoggingConfig, AdapterConfig};
 use loquat::logging::formatters::{JsonFormatter, TextFormatter};
 use loquat::logging::writers::{ConsoleWriter, FileWriter, CombinedWriter};
@@ -463,8 +464,28 @@ impl LoquatApplication {
 }
 
 /// Parse command line arguments
-fn parse_args() -> (String, bool) {
+enum Command {
+    Run { environment: String, rebuild: bool },
+    PluginCreate { args: Vec<String> },
+    PluginInteractive,
+}
+
+fn parse_args() -> Command {
     let args: Vec<String> = std::env::args().collect();
+    
+    // Check for plugin command
+    if args.len() >= 2 && args[1] == "plugin" {
+        if args.len() >= 3 && args[2] == "create" {
+            // Plugin create with arguments
+            let plugin_args: Vec<String> = args.iter().skip(2).cloned().collect();
+            return Command::PluginCreate { args: plugin_args };
+        } else {
+            // Interactive plugin creation
+            return Command::PluginInteractive;
+        }
+    }
+    
+    // Default: run application
     let mut environment = "dev".to_string();
     let mut rebuild = false;
 
@@ -487,13 +508,47 @@ fn parse_args() -> (String, bool) {
         }
     }
 
-    (environment, rebuild)
+    Command::Run { environment, rebuild }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
-    let (environment, rebuild) = parse_args();
+    let command = parse_args();
+    
+    // Handle different commands
+    let (environment, rebuild) = match command {
+        Command::PluginCreate { args } => {
+            // Run plugin template generator
+            println!();
+            println!("╔══════════════════════════════════════════════════════════╗");
+            println!("║              Loquat Plugin Template Generator              ║");
+            println!("╚══════════════════════════════════════════════════════════╝");
+            println!();
+            
+            let mut cli = PluginCli::new();
+            if let Err(e) = cli.run_from_args(args) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            
+            return Ok(());
+        }
+        Command::PluginInteractive => {
+            // Run interactive plugin creator
+            let mut cli = PluginCli::new();
+            if let Err(e) = cli.run_interactive() {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            
+            return Ok(());
+        }
+        Command::Run { environment, rebuild } => {
+            // Continue with normal application startup
+            (environment, rebuild)
+        }
+    };
 
     // Print banner
     println!();
