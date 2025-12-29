@@ -21,6 +21,7 @@ pub mod engine;
 pub mod shutdown;
 pub mod utils;
 pub mod cli;
+pub mod repl;
 
 pub use aop::*;
 pub use config::*;

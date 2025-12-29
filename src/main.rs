@@ -6,6 +6,7 @@ use loquat::config::LoquatConfig;
 use loquat::engine::{Engine, StandardEngine};
 use loquat::cli::PluginCli;
 use loquat::config::loquat_config::{LoggingConfig, AdapterConfig};
+use loquat::repl::{ReplEngine, ReplContext};
 use loquat::logging::formatters::{JsonFormatter, TextFormatter};
 use loquat::logging::writers::{ConsoleWriter, FileWriter, CombinedWriter};
 use loquat::logging::traits::{Logger, LogLevel};
@@ -465,7 +466,7 @@ impl LoquatApplication {
 
 /// Parse command line arguments
 enum Command {
-    Run { environment: String, rebuild: bool },
+    Run { environment: String, rebuild: bool, repl: bool },
     PluginCreate { args: Vec<String> },
     PluginInteractive,
 }
@@ -488,6 +489,7 @@ fn parse_args() -> Command {
     // Default: run application
     let mut environment = "dev".to_string();
     let mut rebuild = false;
+    let mut repl = false;
 
     for i in 1..args.len() {
         match args[i].as_str() {
@@ -499,6 +501,9 @@ fn parse_args() -> Command {
             "--rebuild" => {
                 rebuild = true;
             }
+            "--repl" => {
+                repl = true;
+            }
             _ => {
                 // Check if it's an environment name (no flag)
                 if !args[i].starts_with("--") {
@@ -508,7 +513,7 @@ fn parse_args() -> Command {
         }
     }
 
-    Command::Run { environment, rebuild }
+    Command::Run { environment, rebuild, repl }
 }
 
 #[tokio::main]
@@ -517,7 +522,7 @@ async fn main() -> Result<()> {
     let command = parse_args();
     
     // Handle different commands
-    let (environment, rebuild) = match command {
+    let (environment, rebuild, repl) = match command {
         Command::PluginCreate { args } => {
             // Run plugin template generator
             println!();
@@ -544,9 +549,9 @@ async fn main() -> Result<()> {
             
             return Ok(());
         }
-        Command::Run { environment, rebuild } => {
+        Command::Run { environment, rebuild, repl } => {
             // Continue with normal application startup
-            (environment, rebuild)
+            (environment, rebuild, repl)
         }
     };
 
@@ -582,10 +587,38 @@ async fn main() -> Result<()> {
     println!();
 
     // Create application
-    let mut app = LoquatApplication::from_config(config).await?;
+    let mut app = LoquatApplication::from_config(config.clone()).await?;
 
-    // Run application
-    app.run().await;
+    // Check if REPL mode is requested
+    if repl {
+        println!();
+        println!("Starting REPL mode...");
+        println!("Note: Logs are being written to {}", config.logging.file_path);
+        println!("Use the 'logs' command to view logs.");
+        println!();
+        
+        // Create REPL context
+        let repl_context = ReplContext {
+            plugin_manager: Some(app.plugin_manager()),
+            adapter_manager: Some(app.adapter_manager()),
+            engine: None, // Engine will be added when available
+            logger: app.logger(),
+            config: config.clone(),
+            start_time: std::time::Instant::now(),
+        };
+        
+        // Create and run REPL
+        let mut repl_engine = ReplEngine::new(repl_context);
+        repl_engine.register_default_commands();
+        
+        // Run REPL
+        if let Err(e) = repl_engine.run().await {
+            eprintln!("REPL error: {}", e);
+        }
+    } else {
+        // Run normal application
+        app.run().await;
+    }
 
     Ok(())
 }

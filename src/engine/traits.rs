@@ -72,7 +72,7 @@ mod tests {
         async fn start(&mut self) -> Result<()> {
             self.running = true;
             self.state = EngineState {
-                status: crate::engine::types::EngineStatus::Processing,
+                status: crate::engine::types::EngineStatus::Running,
                 last_error: None,
             };
             Ok(())
@@ -81,7 +81,7 @@ mod tests {
         async fn stop(&mut self) -> Result<()> {
             self.running = false;
             self.state = EngineState {
-                status: crate::engine::types::EngineStatus::Idle,
+                status: crate::engine::types::EngineStatus::Stopped,
                 last_error: None,
             };
             Ok(())
@@ -110,7 +110,7 @@ mod tests {
             config: EngineConfig::new(),
             stats: EngineStats::new(),
             state: EngineState {
-                status: crate::engine::types::EngineStatus::Idle,
+                status: crate::engine::types::EngineStatus::Stopped,
                 last_error: None,
             },
             running: false,
