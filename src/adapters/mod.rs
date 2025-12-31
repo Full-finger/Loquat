@@ -14,6 +14,8 @@ pub mod console_adapter;
 pub mod console_factory;
 pub mod echo_adapter;
 pub mod echo_factory;
+pub mod mock_test_adapter;
+pub mod mock_test_factory;
 pub mod state_manager;
 
 pub use traits::*;
@@ -27,3 +29,5 @@ pub use console_adapter::*;
 pub use console_factory::*;
 pub use echo_adapter::*;
 pub use echo_factory::*;
+pub use mock_test_adapter::*;
+pub use mock_test_factory::*;

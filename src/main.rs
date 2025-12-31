@@ -46,9 +46,10 @@ impl LoquatApplication {
         let adapter_manager = Arc::new(AdapterManager::new(adapter_config, logger.clone()));
 
         // Register built-in adapter factories
-        use loquat::adapters::{ConsoleAdapterFactory, EchoAdapterFactory};
+        use loquat::adapters::{ConsoleAdapterFactory, EchoAdapterFactory, MockTestFactory};
         adapter_manager.register_factory(Box::new(ConsoleAdapterFactory))?;
         adapter_manager.register_factory(Box::new(EchoAdapterFactory))?;
+        adapter_manager.register_factory(Box::new(MockTestFactory))?;
 
         // Create shutdown coordinator with default order
         let shutdown_coordinator = Arc::new(
