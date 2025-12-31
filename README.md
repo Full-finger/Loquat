@@ -10,8 +10,13 @@
 - **AOP 支持** - 提供面向切面编程能力，支持日志、错误跟踪和性能监控
 - **多通道支持** - 支持群组、私聊、频道等不同类型的消息通道
 - **可扩展性** - 支持第三方 Worker 在特定阶段注册
-- **结构化日志** - 提供详细的处理日志和上下文信息
+- **结构化日志** - 提供详细的处理日志和上下文信息，支持 JSON 和文本格式
 - **并发安全** - 使用 Arc 和 RwLock 确保多线程安全
+- **Web API 服务** - 内置 RESTful API，支持插件和适配器的远程管理
+- **REPL 模式** - 提供交互式命令行界面，支持运行时管理
+- **优雅关闭** - 分阶段协调关闭机制，确保资源正确释放
+- **热重载** - 支持插件和适配器的自动热重载
+- **插件生成器** - 内置 CLI 工具，快速创建插件模板
 
 ## 快速开始
 
@@ -29,8 +34,23 @@ start.bat prod
 # 重新编译后启动
 start.bat --rebuild
 
+# 启动 REPL 模式
+start.bat --repl
+
 # 组合使用
-start.bat test --rebuild
+start.bat test --rebuild --rebuild
+```
+
+### 插件创建
+
+使用内置的插件生成器快速创建新插件：
+
+```batch
+# 交互式创建插件
+cargo run -- plugin
+
+# 使用命令行参数创建插件
+cargo run -- plugin create --name my_plugin --version 0.1.0 --author "Your Name" --description "My awesome plugin"
 ```
 
 ### 配置文件
@@ -75,6 +95,7 @@ name = "Loquat Framework (Dev)"
 level = "Debug"
 format = "text"
 output = "console"
+file_path = "logs/loquat.log"
 
 [plugins]
 enabled = true
@@ -87,6 +108,11 @@ enabled = true
 auto_load = true
 enable_hot_reload = true
 hot_reload_interval = 10
+
+[web]
+enabled = true
+host = "127.0.0.1"
+port = 8080
 ```
 
 ### 生产环境 (prod.toml)
@@ -100,6 +126,7 @@ name = "Loquat Framework (Production)"
 level = "Warn"
 format = "json"
 output = "combined"
+file_path = "logs/loquat.log"
 
 [plugins]
 enabled = true
@@ -110,6 +137,11 @@ enable_hot_reload = false
 enabled = true
 auto_load = true
 enable_hot_reload = false
+
+[web]
+enabled = true
+host = "0.0.0.0"
+port = 8080
 ```
 
 ## 架构概述
@@ -165,8 +197,26 @@ enable_hot_reload = false
 
 #### Logging（日志系统）
 - 结构化日志系统，支持多种格式（JSON、文本）
-- 支持多种写入器（控制台、文件）
+- 支持多种写入器（控制台、文件、组合）
 - 提供全局日志器和上下文信息
+
+#### Web Service（Web 服务）
+- 基于 Axum 框架的 RESTful API
+- 支持插件和适配器的远程管理
+- 提供 RESTful 接口，包括健康检查、配置查询、插件/适配器管理
+- 支持优雅关闭和信号处理
+
+#### REPL（交互式命令行）
+- 提供交互式命令行界面
+- 支持插件、适配器、配置、日志等管理命令
+- 支持 REPL 历史记录和自动补全
+- 可在运行时动态管理框架
+
+#### Shutdown Coordinator（优雅关闭协调器）
+- 分阶段协调关闭机制
+- 支持超时处理和错误恢复
+- 确保资源正确释放
+- 提供详细的关闭状态和统计信息
 
 ## 项目结构
 
@@ -188,10 +238,22 @@ Loquat/
 │   ├── logging/         # 日志模块
 │   ├── plugins/         # 插件系统
 │   ├── adapters/        # 适配器系统
-│   └── ...
+│   ├── web/             # Web API 服务
+│   ├── repl/            # REPL 交互式界面
+│   ├── cli/             # CLI 工具（插件生成器）
+│   ├── shutdown/        # 优雅关闭协调器
+│   ├── channel_manager/ # 通道管理器
+│   ├── streams/         # 数据流处理
+│   ├── pools/           # 处理池
+│   ├── routers/         # 路由器
+│   ├── workers/         # Worker 注册
+│   ├── events/          # 事件定义
+│   ├── aop/             # AOP 切面编程
+│   └── utils/           # 工具函数
 ├── plugins/             # 插件目录（自动创建）
 ├── adapters/            # 适配器目录（自动创建）
 ├── logs/                # 日志目录（自动创建）
+├── webui/               # Web UI 界面
 ├── start.bat            # Windows启动脚本
 └── Cargo.toml
 ```
@@ -206,13 +268,62 @@ Loquat/
 start.bat dev
 ```
 
-### 2. 启动生产环境
+### 2. 启动 REPL 模式
+
+REPL 模式提供交互式命令行界面，支持运行时管理：
 
 ```batch
-start.bat prod
+start.bat --repl
 ```
 
-### 3. 修改配置后重新启动
+在 REPL 中可用的命令：
+- `help` - 显示帮助信息
+- `status` - 显示系统状态
+- `plugins` - 管理插件
+- `adapters` - 管理适配器
+- `config` - 查看配置
+- `logs` - 查看日志
+- `engine` - 引擎控制
+- `clear` - 清屏
+- `exit` - 退出
+
+### 3. 使用 Web API
+
+启动 Web 服务后，可以通过 HTTP API 管理框架：
+
+```bash
+# 健康检查
+curl http://localhost:8080/health
+
+# 列出所有插件
+curl http://localhost:8080/api/plugins
+
+# 获取特定插件信息
+curl http://localhost:8080/api/plugins/my_plugin
+
+# 重新加载插件
+curl -X POST http://localhost:8080/api/plugins/reload
+
+# 列出所有适配器
+curl http://localhost:8080/api/adapters
+
+# 获取配置
+curl http://localhost:8080/api/config
+```
+
+### 4. 创建新插件
+
+使用插件生成器创建插件模板：
+
+```batch
+# 交互式创建
+cargo run -- plugin
+
+# 使用参数创建
+cargo run -- plugin create --name my_plugin --version 0.1.0
+```
+
+### 5. 修改配置后重新启动
 
 编辑 `config/dev.toml`，然后：
 
@@ -220,7 +331,7 @@ start.bat prod
 start.bat
 ```
 
-### 4. 完整重新编译
+### 6. 完整重新编译
 
 ```batch
 start.bat --rebuild
@@ -231,8 +342,8 @@ start.bat --rebuild
 ### 基本使用
 
 ```rust
+use loquat::config::LoquatConfig;
 use loquat::engine::{Engine, StandardEngine};
-use loquat::events::Package;
 
 #[tokio::main]
 async fn main() -> loquat::Result<()> {
@@ -245,6 +356,117 @@ async fn main() -> loquat::Result<()> {
     Ok(())
 }
 ```
+
+### 创建插件
+
+```rust
+use loquat::plugins::{Plugin, PluginType, PluginHealth};
+use loquat::errors::Result;
+use serde_json::Value;
+
+pub struct MyPlugin {
+    name: String,
+    version: String,
+}
+
+impl MyPlugin {
+    pub fn new() -> Self {
+        Self {
+            name: "MyPlugin".to_string(),
+            version: "0.1.0".to_string(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Plugin for MyPlugin {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn version(&self) -> &str {
+        &self.version
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        PluginType::Processor
+    }
+
+    async fn init(&mut self) -> Result<()> {
+        println!("Plugin initialized");
+        Ok(())
+    }
+
+    async fn load(&mut self) -> Result<()> {
+        println!("Plugin loaded");
+        Ok(())
+    }
+
+    async fn unload(&mut self) -> Result<()> {
+        println!("Plugin unloaded");
+        Ok(())
+    }
+
+    fn health_status(&self) -> PluginHealth {
+        PluginHealth::Healthy
+    }
+
+    async fn update_config(&mut self, config: Value) -> Result<()> {
+        println!("Config updated: {:?}", config);
+        Ok(())
+    }
+}
+
+// 插件导出函数
+#[no_mangle]
+pub extern "C" fn create_plugin() -> *mut dyn Plugin {
+    let plugin = Box::new(MyPlugin::new());
+    Box::into_raw(plugin)
+}
+
+#[no_mangle]
+pub extern "C" fn destroy_plugin(plugin: *mut dyn Plugin) {
+    unsafe {
+        if !plugin.is_null() {
+            let _ = Box::from_raw(plugin);
+        }
+    }
+}
+```
+
+## API 文档
+
+### Web API 端点
+
+| 方法 | 端点 | 描述 |
+|------|------|------|
+| GET | `/` | 欢迎页面 |
+| GET | `/health` | 健康检查 |
+| GET | `/api/plugins` | 列出所有插件 |
+| GET | `/api/plugins/:name` | 获取特定插件信息 |
+| POST | `/api/plugins/reload` | 重新加载所有插件 |
+| GET | `/api/adapters` | 列出所有适配器 |
+| GET | `/api/adapters/:name` | 获取特定适配器信息 |
+| POST | `/api/adapters/reload` | 重新加载所有适配器 |
+| POST | `/api/reload` | 重新加载所有组件 |
+| GET | `/api/config` | 获取当前配置 |
+
+### REPL 命令
+
+| 命令 | 描述 |
+|------|------|
+| `help` | 显示帮助信息 |
+| `status` | 显示系统运行状态 |
+| `plugins` | 列出所有加载的插件 |
+| `plugins reload` | 重新加载所有插件 |
+| `adapters` | 列出所有加载的适配器 |
+| `adapters reload` | 重新加载所有适配器 |
+| `config` | 显示当前配置 |
+| `logs [level]` | 查看日志（可选日志级别） |
+| `engine start` | 启动引擎 |
+| `engine stop` | 停止引擎 |
+| `clear` | 清除屏幕 |
+| `exit` | 退出 REPL |
 
 ## 贡献
 

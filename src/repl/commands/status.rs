@@ -116,38 +116,37 @@ Example:
         // Adapter status
         if let Some(adapter_manager) = &ctx.adapter_manager {
             let adapters = adapter_manager.list_adapter_infos().await;
-            if !adapters.is_empty() {
+            let total = adapters.len();
+            
+            if total > 0 {
                 let active = adapters.iter().filter(|a| a.status.is_active()).count();
                 let errors = adapters.iter().filter(|a| a.status.is_error()).count();
-                let total = adapters.len();
                 
                 println!("  Adapters:    {}", format!("{} loaded", total).cyan());
                 println!("    ├─ Active:  {}", active.to_string().green());
                 println!("    ├─ Errors:  {}", if errors > 0 { errors.to_string().red() } else { "0".to_string().green() });
                 
-                if !adapters.is_empty() {
-                    println!("    └─ Latest:");
-                    for adapter in adapters.iter().take(5) {
-                        let status_symbol = if adapter.status.is_active() {
-                            "✓".green()
-                        } else if adapter.status.is_error() {
-                            "✗".red()
-                        } else {
-                            "○".yellow()
-                        };
-                        println!("       {} {} (v{}) - {}", 
-                            status_symbol, 
-                            adapter.adapter_id, 
-                            adapter.version,
-                            format!("{:?}", adapter.status)
-                        );
-                    }
-                    if adapters.len() > 5 {
-                        println!("       ... and {} more", adapters.len() - 5);
-                    }
+                println!("    └─ Latest:");
+                for adapter in adapters.iter().take(5) {
+                    let status_symbol = if adapter.status.is_active() {
+                        "✓".green()
+                    } else if adapter.status.is_error() {
+                        "✗".red()
+                    } else {
+                        "○".yellow()
+                    };
+                    println!("       {} {} (v{}) - {}", 
+                        status_symbol, 
+                        adapter.adapter_id, 
+                        adapter.version,
+                        format!("{:?}", adapter.status)
+                    );
+                }
+                if adapters.len() > 5 {
+                    println!("       ... and {} more", adapters.len() - 5);
                 }
             } else {
-                println!("  Adapters:    {}", "Error loading adapters".red());
+                println!("  Adapters:    {}", "No adapters loaded".yellow());
             }
             println!();
         } else {

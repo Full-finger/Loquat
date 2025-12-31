@@ -506,7 +506,8 @@ fn parse_args() -> Command {
             }
             _ => {
                 // Check if it's an environment name (no flag)
-                if !args[i].starts_with("--") {
+                // Only set environment if REPL mode is not requested
+                if !args[i].starts_with("--") && !repl {
                     environment = args[i].clone();
                 }
             }
@@ -593,16 +594,92 @@ async fn main() -> Result<()> {
     if repl {
         println!();
         println!("Starting REPL mode...");
+        
+        // For REPL mode, use console writer only to avoid async/block_on conflicts
+        // File writer uses block_on internally which conflicts with async runtime
+        let logger = Arc::new(loquat::logging::StructuredLogger::new(
+            Arc::new(TextFormatter::detailed()),
+            Arc::new(ConsoleWriter::new())
+        ));
+        
+        // Initialize logger using initialize() which doesn't call flush
+        logger.initialize();
+        
         println!("Note: Logs are being written to {}", config.logging.file_path);
         println!("Use the 'logs' command to view logs.");
         println!();
         
-        // Create REPL context
+        // Create and start engine for REPL mode
+        println!("Starting engine...");
+        let mut engine = StandardEngine::new(logger.clone());
+        if let Err(e) = engine.start().await {
+            eprintln!("Failed to start engine: {}", e);
+            return Ok(());
+        }
+        
+        // Auto-load adapters if enabled
+        if config.adapters.enabled && config.adapters.auto_load {
+            println!("Auto-loading adapters...");
+            match app.adapter_manager.auto_load_adapters().await {
+                Ok(results) => {
+                    let loaded = results.iter().filter(|r| r.success).count();
+                    let failed = results.len() - loaded;
+                    println!("Loaded {} adapters ({} failed)", loaded, failed);
+                }
+                Err(e) => {
+                    eprintln!("Failed to auto-load adapters: {}", e);
+                }
+            }
+        }
+        
+        // Auto-load plugins if enabled
+        if config.plugins.enabled && config.plugins.auto_load {
+            println!("Auto-loading plugins...");
+            match app.plugin_manager.auto_load_plugins().await {
+                Ok(results) => {
+                    let loaded = results.iter().filter(|r| r.success).count();
+                    let failed = results.len() - loaded;
+                    println!("Loaded {} plugins ({} failed)", loaded, failed);
+                }
+                Err(e) => {
+                    eprintln!("Failed to auto-load plugins: {}", e);
+                }
+            }
+        }
+        
+        // Start hot reload if enabled
+        let mut hot_reload_manager = None;
+        if config.plugins.enabled && config.plugins.enable_hot_reload {
+            println!("Starting plugin hot reload...");
+            let hot_reload = Arc::new(HotReloadManager::new(
+                app.plugin_manager.clone(),
+                Duration::from_secs(config.plugins.hot_reload_interval),
+            ));
+            if let Err(e) = hot_reload.start().await {
+                eprintln!("Failed to start plugin hot reload: {}", e);
+            } else {
+                hot_reload_manager = Some(hot_reload);
+            }
+        }
+        
+        println!();
+        println!("╔══════════════════════════════════════════════════════════╗");
+        println!("║        Loquat Framework - Interactive Mode             ║");
+        println!("╚══════════════════════════════════════════════════════════╝");
+        println!();
+        println!("Version: {}", std::env!("CARGO_PKG_VERSION"));
+        println!("Environment: {}", config.general.environment);
+        println!();
+        println!("Note: Logs are being written to: {}", config.logging.file_path);
+        println!("Note: Type 'help' for available commands.");
+        println!();
+        
+        // Create REPL context with engine
         let repl_context = ReplContext {
             plugin_manager: Some(app.plugin_manager()),
             adapter_manager: Some(app.adapter_manager()),
-            engine: None, // Engine will be added when available
-            logger: app.logger(),
+            engine: Some(Arc::new(engine)),
+            logger,
             config: config.clone(),
             start_time: std::time::Instant::now(),
         };
