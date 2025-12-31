@@ -167,9 +167,17 @@ impl Engine for StandardEngine {
         self.stats.clone()
     }
 
-    fn state(&self) -> EngineState {
+    async fn state(&self) -> EngineState {
+        let guard = self.state.read().await;
+        EngineState {
+            status: guard.status,
+            last_error: guard.last_error.clone(),
+        }
+    }
+
+    fn try_state(&self) -> EngineState {
         // Try to acquire read lock without blocking
-        // In async context, this will fail gracefully
+        // May return stale data or error state if lock is held
         match self.state.try_read() {
             Ok(guard) => EngineState {
                 status: guard.status,
@@ -177,7 +185,7 @@ impl Engine for StandardEngine {
             },
             Err(_) => EngineState {
                 status: EngineStatus::Stopped,
-                last_error: Some("Unable to acquire state lock".to_string()),
+                last_error: Some("Unable to acquire state lock (non-blocking)".to_string()),
             },
         }
     }

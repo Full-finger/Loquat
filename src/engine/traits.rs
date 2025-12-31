@@ -16,8 +16,13 @@ pub trait Engine: Send + Sync + std::fmt::Debug {
     /// Get engine statistics
     fn stats(&self) -> EngineStats;
     
-    /// Get engine state (synchronous clone)
-    fn state(&self) -> EngineState;
+    /// Get engine state (asynchronous, with proper lock acquisition)
+    async fn state(&self) -> EngineState;
+    
+    /// Try to get engine state without blocking (non-blocking, may return stale data)
+    /// This is deprecated in favor of async state() method
+    #[deprecated(since = "0.1.1", note = "Use async state() method instead for consistent state")]
+    fn try_state(&self) -> EngineState;
     
     /// Set engine configuration
     async fn set_config(&mut self, config: EngineConfig) -> Result<()>;
@@ -60,7 +65,11 @@ mod tests {
             self.stats.clone()
         }
 
-        fn state(&self) -> EngineState {
+        async fn state(&self) -> EngineState {
+            self.state.clone()
+        }
+
+        fn try_state(&self) -> EngineState {
             self.state.clone()
         }
 

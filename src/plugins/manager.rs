@@ -6,11 +6,12 @@ use crate::plugins::registry::PluginRegistry;
 use crate::plugins::traits::Plugin;
 use crate::plugins::types::{PluginInfo, PluginLoadResult, PluginStatus};
 use crate::config::loquat_config::PluginConfig;
-use crate::utils::{LruCache, HotReloadHistory, VersionData};
-use std::path::PathBuf;
+use crate::utils::{LruCache, HotReloadHistory, VersionData, PathValidator};
+use std::path::{PathBuf, Path};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct PluginManager {
@@ -18,24 +19,33 @@ pub struct PluginManager {
     loader: Arc<CompositePluginLoader>,
     config: PluginConfig,
     plugins: Arc<RwLock<Vec<Arc<dyn Plugin>>>>,
+    path_validator: Arc<PathValidator>,
 }
 
 impl PluginManager {
     pub fn new(config: PluginConfig) -> Self {
+        let path_validator = PathValidator::new(&config.plugin_dir)
+            .expect("Failed to initialize path validator");
+        
         Self {
             registry: Arc::new(PluginRegistry::new()),
             loader: Arc::new(CompositePluginLoader::default()),
             config,
             plugins: Arc::new(RwLock::new(Vec::new())),
+            path_validator: Arc::new(path_validator),
         }
     }
 
     pub fn with_loader(config: PluginConfig, loader: CompositePluginLoader) -> Self {
+        let path_validator = PathValidator::new(&config.plugin_dir)
+            .expect("Failed to initialize path validator");
+        
         Self {
             registry: Arc::new(PluginRegistry::new()),
             loader: Arc::new(loader),
             config,
             plugins: Arc::new(RwLock::new(Vec::new())),
+            path_validator: Arc::new(path_validator),
         }
     }
 
@@ -190,6 +200,13 @@ impl PluginManager {
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                     if ["dll", "so", "dylib", "py", "js", "mjs", "ts"].contains(&ext) {
+                        // Validate path to prevent directory traversal attacks
+                        if let Err(e) = self.path_validator.validate_path(&path) {
+                            // Log warning but continue with other plugins
+                            // Note: PluginManager doesn't have a logger, so we skip logging here
+                            // This could be improved by adding a logger to PluginManager
+                            continue;
+                        }
                         plugin_paths.push(path);
                     }
                 }
@@ -244,7 +261,7 @@ impl PluginManager {
 pub struct HotReloadManager {
     manager: Arc<PluginManager>,
     interval: Duration,
-    running: Arc<RwLock<bool>>,
+    cancel_token: CancellationToken,
     history: Arc<HotReloadHistory>,
 }
 
@@ -253,7 +270,7 @@ impl HotReloadManager {
         Self {
             manager,
             interval,
-            running: Arc::new(RwLock::new(false)),
+            cancel_token: CancellationToken::new(),
             history: Arc::new(HotReloadHistory::with_default_capacity()),
         }
     }
@@ -264,18 +281,14 @@ impl HotReloadManager {
     }
 
     pub async fn start(&self) -> Result<()> {
-        let mut running = self.running.write().await;
-        if *running {
+        if self.cancel_token.is_cancelled() {
             return Err(PluginError::HotReloadError(
-                "Hot reload is already running".to_string(),
-            )
-            .into());
+                "Hot reload is already running or was not properly stopped".to_string(),
+            ).into());
         }
-        *running = true;
-        drop(running);
 
         let manager = Arc::clone(&self.manager);
-        let running_flag = Arc::clone(&self.running);
+        let token = self.cancel_token.clone();
         let interval_duration = self.interval;
         let history = self.history.clone();
 
@@ -285,12 +298,15 @@ impl HotReloadManager {
                 LruCache::with_default_capacity();
 
             loop {
-                let is_running = *running_flag.read().await;
-                if !is_running {
-                    break;
+                // Check if cancellation was requested
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        break;
+                    }
+                    _ = interval_timer.tick() => {
+                        // Continue with the reload check
+                    }
                 }
-
-                interval_timer.tick().await;
 
                 if let Ok(plugin_paths) = manager.discover_plugins().await {
                     for path in plugin_paths {
@@ -359,13 +375,12 @@ impl HotReloadManager {
     }
 
     pub async fn stop(&self) -> Result<()> {
-        let mut running = self.running.write().await;
-        *running = false;
+        self.cancel_token.cancel();
         Ok(())
     }
 
     pub async fn is_running(&self) -> bool {
-        *self.running.read().await
+        !self.cancel_token.is_cancelled()
     }
 }
 

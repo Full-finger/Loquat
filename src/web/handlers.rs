@@ -19,7 +19,7 @@ pub async fn health_check(State(state): State<AppState>) -> Json<ApiResponse<Hea
     
     // Get engine status
     let engine_status = if let Some(engine) = &state.engine {
-        format!("{:?}", engine.state())
+        format!("{:?}", engine.state().await)
     } else {
         "unknown".to_string()
     };
@@ -124,7 +124,7 @@ async fn determine_overall_status(state: &AppState) -> String {
     
     // Check engine
     if let Some(engine) = &state.engine {
-        let engine_state = engine.state();
+        let engine_state = engine.state().await;
         if matches!(engine_state.status, crate::engine::types::EngineStatus::Error) {
             issues += 1;
         }

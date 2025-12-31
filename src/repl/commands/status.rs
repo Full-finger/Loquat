@@ -51,7 +51,7 @@ Example:
         
         // Engine status
         if let Some(engine) = &ctx.engine {
-            let state = engine.state();
+            let state = engine.state().await;
             let status_text = format!("{:?}", state.status);
             let status_colored = if state.status == crate::engine::types::EngineStatus::Running {
                 status_text.green()

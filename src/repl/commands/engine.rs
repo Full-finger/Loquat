@@ -99,7 +99,7 @@ impl EngineCommand {
         println!();
         println!("{}", "Starting engine...".cyan());
         
-        let state = engine.state();
+        let state = engine.state().await;
         if state.status == crate::engine::types::EngineStatus::Running {
             println!("{}", "⊗ Engine is already running".yellow());
             println!();
@@ -143,7 +143,7 @@ impl EngineCommand {
         println!("{}", "Engine Status".bold().underline());
         println!();
         
-        let state = engine.state();
+        let state = engine.state().await;
         let status_text = format!("{:?}", state.status);
         let status_colored = if state.status == crate::engine::types::EngineStatus::Running {
             status_text.green()

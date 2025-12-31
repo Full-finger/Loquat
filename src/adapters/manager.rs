@@ -9,12 +9,13 @@ use crate::adapters::state_manager::AdapterStateManager;
 use crate::logging::traits::{LogContext, LogLevel, Logger};
 use crate::errors::{AdapterError, Result};
 use crate::config::loquat_config::AdapterConfig as ManagerConfig;
-use crate::utils::{LruCache, HotReloadHistory, VersionData};
+use crate::utils::{LruCache, HotReloadHistory, VersionData, PathValidator};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 pub type AdapterManagerConfig = ManagerConfig;
 
@@ -41,15 +42,20 @@ pub struct AdapterManager {
     registry: Arc<AdapterFactoryRegistry>,
     adapters: Arc<RwLock<Vec<Arc<dyn Adapter>>>>,
     logger: Arc<dyn Logger>,
+    path_validator: Arc<PathValidator>,
 }
 
 impl AdapterManager {
     pub fn new(config: AdapterManagerConfig, logger: Arc<dyn Logger>) -> Self {
+        let path_validator = PathValidator::new(&config.adapter_dir)
+            .expect("Failed to initialize path validator");
+        
         Self {
             config,
             registry: Arc::new(AdapterFactoryRegistry::new()),
             adapters: Arc::new(RwLock::new(Vec::new())),
             logger,
+            path_validator: Arc::new(path_validator),
         }
     }
 
@@ -58,11 +64,15 @@ impl AdapterManager {
         registry: Arc<AdapterFactoryRegistry>,
         logger: Arc<dyn Logger>,
     ) -> Self {
+        let path_validator = PathValidator::new(&config.adapter_dir)
+            .expect("Failed to initialize path validator");
+        
         Self {
             config,
             registry,
             adapters: Arc::new(RwLock::new(Vec::new())),
             logger,
+            path_validator: Arc::new(path_validator),
         }
     }
 
@@ -156,6 +166,16 @@ impl AdapterManager {
                 if path.is_file() {
                     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                         if ["dll", "so", "dylib", "py", "js", "ts", "json", "yaml"].contains(&ext) {
+                            // Validate path to prevent directory traversal attacks
+                            if let Err(e) = self.path_validator.validate_path(&path) {
+                                self.logger.log(
+                                    LogLevel::Warn,
+                                    &format!("Skipping potentially malicious adapter path: {} - {}", 
+                                        path.display(), e),
+                                    &LogContext::new().with_component("AdapterManager"),
+                                );
+                                continue;
+                            }
                             adapter_paths.push(path);
                         }
                     }
@@ -414,7 +434,7 @@ impl AdapterManager {
 pub struct AdapterHotReloadManager {
     manager: Arc<AdapterManager>,
     interval: Duration,
-    running: Arc<RwLock<bool>>,
+    cancel_token: CancellationToken,
     history: Arc<HotReloadHistory>,
 }
 
@@ -423,7 +443,7 @@ impl AdapterHotReloadManager {
         Self {
             manager,
             interval,
-            running: Arc::new(RwLock::new(false)),
+            cancel_token: CancellationToken::new(),
             history: Arc::new(HotReloadHistory::with_default_capacity()),
         }
     }
@@ -434,17 +454,14 @@ impl AdapterHotReloadManager {
     }
 
     pub async fn start(&self) -> Result<()> {
-        let mut running = self.running.write().await;
-        if *running {
+        if self.cancel_token.is_cancelled() {
             return Err(AdapterError::HotReloadError(
-                "Hot reload is already running".to_string(),
+                "Hot reload is already running or was not properly stopped".to_string(),
             ).into());
         }
-        *running = true;
-        drop(running);
 
         let manager = Arc::clone(&self.manager);
-        let running_flag = Arc::clone(&self.running);
+        let token = self.cancel_token.clone();
         let interval_duration = self.interval;
         let history = self.history.clone();
 
@@ -454,12 +471,15 @@ impl AdapterHotReloadManager {
                 LruCache::with_default_capacity();
 
             loop {
-                let is_running = *running_flag.read().await;
-                if !is_running {
-                    break;
+                // Check if cancellation was requested
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        break;
+                    }
+                    _ = interval_timer.tick() => {
+                        // Continue with reload check
+                    }
                 }
-
-                interval_timer.tick().await;
 
                 if let Ok(adapter_paths) = manager.discover_adapters().await {
                     for path in adapter_paths {
@@ -552,13 +572,12 @@ impl AdapterHotReloadManager {
     }
 
     pub async fn stop(&self) -> Result<()> {
-        let mut running = self.running.write().await;
-        *running = false;
+        self.cancel_token.cancel();
         Ok(())
     }
 
     pub async fn is_running(&self) -> bool {
-        *self.running.read().await
+        !self.cancel_token.is_cancelled()
     }
 }
 
