@@ -1,0 +1,19 @@
+{
+  "adapter_type": "echo",
+  "adapter_id": "echo-001",
+  "enabled": true,
+  "name": "Echo Adapter",
+  "connection": {
+    "conn_type": "echo",
+    "url": "echo://",
+    "timeout": 30,
+    "use_tls": false,
+    "keep_alive": null,
+    "max_reconnect": 0,
+    "params": {}
+  },
+  "heartbeat": null,
+  "retry": null,
+  "platform": {},
+  "extra": {}
+}

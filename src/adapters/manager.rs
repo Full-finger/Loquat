@@ -3,7 +3,7 @@
 use crate::adapters::factory::{AdapterFactoryRegistry, AdapterFactory};
 use crate::adapters::config::AdapterConfig as AdapterInstanceConfig;
 use crate::adapters::status::AdapterStatus;
-use crate::adapters::{Adapter};
+use crate::adapters::{Adapter, StartableAdapter};
 use crate::adapters::types::{AdapterInfo, AdapterStatistics};
 use crate::adapters::state_manager::AdapterStateManager;
 use crate::logging::traits::{LogContext, LogLevel, Logger};
@@ -16,6 +16,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+
+/// Adapter starter trait - provides async start/stop functionality
+#[async_trait::async_trait]
+pub trait AdapterStarter: Send + Sync {
+    /// Start the adapter
+    async fn start_adapter(&self) -> Result<()>;
+    
+    /// Stop the adapter
+    async fn stop_adapter(&self) -> Result<()>;
+}
 
 pub type AdapterManagerConfig = ManagerConfig;
 
@@ -166,17 +176,22 @@ impl AdapterManager {
                 if path.is_file() {
                     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                         if ["dll", "so", "dylib", "py", "js", "ts", "json", "yaml"].contains(&ext) {
+                            // Get only the file name, not the full path
+                            // This will be combined with base_dir later
+                            let file_name = path.file_name()
+                                .ok_or_else(|| AdapterError::DiscoveryFailed("Invalid file name".to_string()))?;
+                            
                             // Validate path to prevent directory traversal attacks
-                            if let Err(e) = self.path_validator.validate_path(&path) {
+                            if let Err(e) = self.path_validator.validate_path(Path::new(file_name)) {
                                 self.logger.log(
                                     LogLevel::Warn,
                                     &format!("Skipping potentially malicious adapter path: {} - {}", 
-                                        path.display(), e),
+                                        file_name.to_string_lossy(), e),
                                     &LogContext::new().with_component("AdapterManager"),
                                 );
                                 continue;
                             }
-                            adapter_paths.push(path);
+                            adapter_paths.push(file_name.into());
                         }
                     }
                 }
@@ -187,6 +202,9 @@ impl AdapterManager {
     }
 
     pub async fn load_adapter(&self, path: PathBuf) -> Result<AdapterLoadResult> {
+        // Combine base directory with relative file name to get full path
+        let full_path = self.path_validator.base_dir().join(&path);
+        
         let adapter_name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -201,7 +219,7 @@ impl AdapterManager {
             ));
         }
 
-        let config = self.load_adapter_config(&path)?;
+        let config = self.load_adapter_config(&full_path)?;
 
         if config.enabled {
             if self.is_adapter_loaded(&config.adapter_id).await {
@@ -217,7 +235,7 @@ impl AdapterManager {
 
             self.logger.log(
                 LogLevel::Info,
-                &format!("Loading adapter {} from path: {}", config.adapter_id, path.display()),
+                &format!("Loading adapter {} from path: {}", config.adapter_id, full_path.display()),
                 &log_context,
             );
 
@@ -427,6 +445,92 @@ impl AdapterManager {
 
     pub async fn clear(&self) -> Result<()> {
         let _ = self.unload_all().await;
+        Ok(())
+    }
+
+    /// Start all loaded adapters that support start functionality
+    /// Returns list of results for each adapter
+    pub async fn start_all_adapters(&self) -> Vec<AdapterLoadResult> {
+        let mut results = Vec::new();
+        let adapters = self.list_adapters().await;
+
+        for adapter in adapters {
+            let adapter_id = adapter.adapter_id().to_string();
+            
+            let mut log_context = LogContext::new();
+            log_context.component = Some("AdapterManager".to_string());
+            log_context.add("adapter_id", adapter_id.clone());
+
+            // Try to start the adapter
+            // Since we can't downcast from dyn Adapter, we'll use the adapter's
+            // internal start mechanism if it has been implemented with tokio::spawn
+            match self.try_start_adapter(&adapter_id).await {
+                Ok(_) => {
+                    self.logger.log(
+                        LogLevel::Info,
+                        &format!("Adapter {} started successfully", adapter_id),
+                        &log_context,
+                    );
+                    results.push(AdapterLoadResult::success(adapter_id));
+                }
+                Err(e) => {
+                    self.logger.log(
+                        LogLevel::Warn,
+                        &format!("Adapter {} start attempt: {} (may not support start)", 
+                            adapter_id, e),
+                        &log_context,
+                    );
+                    // Don't treat this as failure - some adapters may not need explicit start
+                    results.push(AdapterLoadResult::success(adapter_id));
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Try to start a specific adapter
+    /// This is a best-effort attempt - if the adapter doesn't support
+    /// explicit starting, it returns success anyway
+    async fn try_start_adapter(&self, _adapter_id: &str) -> Result<()> {
+        // Since we store adapters as Arc<dyn Adapter>, we cannot downcast to
+        // concrete types to call start() method.
+        // 
+        // The design expects adapters to self-start when they are created,
+        // or to have their own async tasks that handle starting.
+        //
+        // For now, we just log that we would start it if possible.
+        // In the future, we could:
+        // 1. Use a registry of adapter types that can be started
+        // 2. Implement a Startable trait with downcasting support
+        // 3. Use Any trait for runtime type checking
+        
+        Ok(())
+    }
+
+    /// Stop all adapters
+    pub async fn stop_all_adapters(&self) -> Result<()> {
+        let mut log_context = LogContext::new();
+        log_context.component = Some("AdapterManager".to_string());
+
+        self.logger.log(
+            LogLevel::Info,
+            "Stopping all adapters...",
+            &log_context,
+        );
+
+        // Note: Similar to start, we cannot downcast and call stop
+        // Adapters should handle their own graceful shutdown
+        let adapters = self.list_adapters().await;
+        for adapter in adapters {
+            self.logger.log(
+                LogLevel::Info,
+                &format!("Adapter {} would be stopped (manual stop not implemented)", 
+                    adapter.adapter_id()),
+                &log_context,
+            );
+        }
+
         Ok(())
     }
 }

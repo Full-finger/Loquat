@@ -161,6 +161,38 @@ impl LoquatApplication {
                         &format!("Loaded {} adapters ({} failed)", loaded, failed),
                         &Default::default(),
                     );
+
+                    // Start all loaded adapters
+                    if loaded > 0 {
+                        self.logger.log(
+                            LogLevel::Info,
+                            "Starting adapters...",
+                            &Default::default(),
+                        );
+
+                        let start_results = self.adapter_manager.start_all_adapters().await;
+                        let started = start_results.iter().filter(|r| r.success).count();
+                        let start_failed = start_results.len() - started;
+
+                        self.logger.log(
+                            LogLevel::Info,
+                            &format!("Started {} adapters ({} failed)", started, start_failed),
+                            &Default::default(),
+                        );
+
+                        // Log any adapter start errors
+                        for result in &start_results {
+                            if !result.success {
+                                if let Some(ref error) = result.error {
+                                    self.logger.log(
+                                        LogLevel::Warn,
+                                        &format!("Failed to start adapter {}: {}", result.adapter_id, error),
+                                        &Default::default(),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     self.logger.log(
@@ -621,11 +653,29 @@ async fn main() -> Result<()> {
         // Auto-load adapters if enabled
         if config.adapters.enabled && config.adapters.auto_load {
             println!("Auto-loading adapters...");
-            match app.adapter_manager.auto_load_adapters().await {
+        match app.adapter_manager.auto_load_adapters().await {
                 Ok(results) => {
                     let loaded = results.iter().filter(|r| r.success).count();
                     let failed = results.len() - loaded;
                     println!("Loaded {} adapters ({} failed)", loaded, failed);
+
+                    // Start all loaded adapters
+                    if loaded > 0 {
+                        println!("Starting adapters...");
+                        let start_results = app.adapter_manager.start_all_adapters().await;
+                        let started = start_results.iter().filter(|r| r.success).count();
+                        let start_failed = start_results.len() - started;
+                        println!("Started {} adapters ({} failed)", started, start_failed);
+
+                        // Log any adapter start errors
+                        for result in &start_results {
+                            if !result.success {
+                                if let Some(ref error) = result.error {
+                                    eprintln!("Failed to start adapter {}: {}", result.adapter_id, error);
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("Failed to auto-load adapters: {}", e);

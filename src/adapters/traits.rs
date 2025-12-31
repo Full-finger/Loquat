@@ -65,7 +65,8 @@ pub enum Message {
 
 /// Core adapter trait - all platform adapters must implement this
 ///
-/// Note: This trait is object-safe and can be used as `dyn Adapter`.
+/// Note: This trait is NOT object-safe for start/stop methods.
+/// Use concrete types for start/stop operations.
 pub trait Adapter: Send + Sync + Debug {
     /// Get adapter name
     fn name(&self) -> &str;
@@ -94,6 +95,15 @@ pub trait Adapter: Send + Sync + Debug {
     
     /// Get statistics about adapter
     fn statistics(&self) -> crate::adapters::types::AdapterStatistics;
+}
+
+/// Startable adapter trait - adds start/stop functionality
+pub trait StartableAdapter: Adapter {
+    /// Start the adapter
+    async fn start(&self) -> Result<()>;
+    
+    /// Stop the adapter
+    async fn stop(&self) -> Result<()>;
 }
 
 #[cfg(test)]

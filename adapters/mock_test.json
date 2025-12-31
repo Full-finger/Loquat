@@ -1,0 +1,21 @@
+{
+  "adapter_type": "mock_test",
+  "adapter_id": "mock-test-001",
+  "enabled": true,
+  "name": "Mock Test Adapter",
+  "connection": {
+    "conn_type": "mock",
+    "url": "mock://test",
+    "timeout": 30,
+    "use_tls": false,
+    "keep_alive": null,
+    "max_reconnect": 0,
+    "params": {}
+  },
+  "heartbeat": null,
+  "retry": null,
+  "platform": {
+    "event_interval_seconds": 5
+  },
+  "extra": {}
+}

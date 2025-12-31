@@ -142,7 +142,7 @@ impl MockTestAdapter {
     fn generate_text_event(adapter_id: &str, event_num: u64) -> EventEnum {
         let metadata = EventMetadata::new("message.text")
             .with_source(crate::events::EventSource::User)
-            .with_user_id(format!("user_{}", event_num % 10));
+            .with_user_id(&*format!("user_{}", event_num % 10));
         
         EventEnum::Message(MessageEvent::Text {
             text: format!("Test message #{} from MockTestAdapter", event_num),
@@ -154,7 +154,7 @@ impl MockTestAdapter {
     fn generate_image_event(adapter_id: &str, event_num: u64) -> EventEnum {
         let metadata = EventMetadata::new("message.image")
             .with_source(crate::events::EventSource::User)
-            .with_user_id(format!("user_{}", event_num % 10));
+            .with_user_id(&*format!("user_{}", event_num % 10));
         
         EventEnum::Message(MessageEvent::Image {
             url: format!("http://example.com/image_{}.jpg", event_num),
@@ -179,7 +179,7 @@ impl MockTestAdapter {
     fn generate_voice_event(adapter_id: &str, event_num: u64) -> EventEnum {
         let metadata = EventMetadata::new("message.voice")
             .with_source(crate::events::EventSource::User)
-            .with_user_id(format!("user_{}", event_num % 10));
+            .with_user_id(&*format!("user_{}", event_num % 10));
         
         EventEnum::Message(MessageEvent::Voice {
             url: format!("http://example.com/voice_{}.mp3", event_num),
@@ -192,8 +192,8 @@ impl MockTestAdapter {
     fn generate_group_event(adapter_id: &str, event_num: u64) -> EventEnum {
         let metadata = EventMetadata::new("message.text")
             .with_source(crate::events::EventSource::User)
-            .with_user_id(format!("user_{}", event_num % 10))
-            .with_group_id(format!("group_{}", event_num % 5));
+            .with_user_id(&*format!("user_{}", event_num % 10))
+            .with_group_id(&*format!("group_{}", event_num % 5));
         
         EventEnum::Message(MessageEvent::Text {
             text: format!("Group message #{} from MockTestAdapter in group {}", 
