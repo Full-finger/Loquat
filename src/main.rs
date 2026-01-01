@@ -15,6 +15,7 @@ use loquat::adapters::{AdapterManager, AdapterHotReloadManager};
 use loquat::web::{WebService, WebServiceConfig, AppState};
 use loquat::errors::Result;
 use loquat::shutdown::{ShutdownCoordinator, ShutdownStage, ShutdownOrder};
+use loquat::tui::run_tui;
 use std::sync::Arc;
 use std::time::Duration;
 use std::path::PathBuf;
@@ -499,7 +500,7 @@ impl LoquatApplication {
 
 /// Parse command line arguments
 enum Command {
-    Run { environment: String, rebuild: bool, repl: bool },
+    Run { environment: String, rebuild: bool, repl: bool, tui: bool },
     PluginCreate { args: Vec<String> },
     PluginInteractive,
 }
@@ -523,6 +524,7 @@ fn parse_args() -> Command {
     let mut environment = "dev".to_string();
     let mut rebuild = false;
     let mut repl = false;
+    let mut tui = false;
 
     for i in 1..args.len() {
         match args[i].as_str() {
@@ -537,6 +539,9 @@ fn parse_args() -> Command {
             "--repl" => {
                 repl = true;
             }
+            "--tui" => {
+                tui = true;
+            }
             _ => {
                 // Check if it's an environment name (no flag)
                 // Only set environment if REPL mode is not requested
@@ -547,7 +552,7 @@ fn parse_args() -> Command {
         }
     }
 
-    Command::Run { environment, rebuild, repl }
+    Command::Run { environment, rebuild, repl, tui }
 }
 
 #[tokio::main]
@@ -556,7 +561,7 @@ async fn main() -> Result<()> {
     let command = parse_args();
     
     // Handle different commands
-    let (environment, rebuild, repl) = match command {
+    let (environment, rebuild, repl, tui) = match command {
         Command::PluginCreate { args } => {
             // Run plugin template generator
             println!();
@@ -583,9 +588,9 @@ async fn main() -> Result<()> {
             
             return Ok(());
         }
-        Command::Run { environment, rebuild, repl } => {
+        Command::Run { environment, rebuild, repl, tui } => {
             // Continue with normal application startup
-            (environment, rebuild, repl)
+            (environment, rebuild, repl, tui)
         }
     };
 
@@ -623,8 +628,80 @@ async fn main() -> Result<()> {
     // Create application
     let mut app = LoquatApplication::from_config(config.clone()).await?;
 
+    // Check if TUI mode is requested
+    if tui {
+        println!();
+        println!("Starting TUI mode...");
+        
+        // Create and start engine for TUI mode
+        println!("Starting engine...");
+        let mut engine = StandardEngine::new(app.logger().clone());
+        if let Err(e) = engine.start().await {
+            eprintln!("Failed to start engine: {}", e);
+            return Ok(());
+        }
+        
+        // Auto-load adapters if enabled
+        if config.adapters.enabled && config.adapters.auto_load {
+            println!("Auto-loading adapters...");
+            match app.adapter_manager.auto_load_adapters().await {
+                Ok(results) => {
+                    let loaded = results.iter().filter(|r| r.success).count();
+                    let failed = results.len() - loaded;
+                    println!("Loaded {} adapters ({} failed)", loaded, failed);
+
+                    // Start all loaded adapters
+                    if loaded > 0 {
+                        println!("Starting adapters...");
+                        let start_results = app.adapter_manager.start_all_adapters().await;
+                        let started = start_results.iter().filter(|r| r.success).count();
+                        let start_failed = start_results.len() - started;
+                        println!("Started {} adapters ({} failed)", started, start_failed);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to auto-load adapters: {}", e);
+                }
+            }
+        }
+        
+        // Auto-load plugins if enabled
+        if config.plugins.enabled && config.plugins.auto_load {
+            println!("Auto-loading plugins...");
+            match app.plugin_manager.auto_load_plugins().await {
+                Ok(results) => {
+                    let loaded = results.iter().filter(|r| r.success).count();
+                    let failed = results.len() - loaded;
+                    println!("Loaded {} plugins ({} failed)", loaded, failed);
+                }
+                Err(e) => {
+                    eprintln!("Failed to auto-load plugins: {}", e);
+                }
+            }
+        }
+        
+        // Create REPL context with engine
+        let repl_context = ReplContext {
+            plugin_manager: Some(app.plugin_manager()),
+            adapter_manager: Some(app.adapter_manager()),
+            engine: Some(Arc::new(engine)),
+            logger: app.logger().clone(),
+            config: config.clone(),
+            start_time: std::time::Instant::now(),
+        };
+        
+        println!();
+        println!("Starting TUI...");
+        println!("Use Ctrl+C to exit.");
+        println!();
+        
+        // Run TUI
+        if let Err(e) = run_tui(repl_context).await {
+            eprintln!("TUI error: {}", e);
+        }
+    }
     // Check if REPL mode is requested
-    if repl {
+    else if repl {
         println!();
         println!("Starting REPL mode...");
         

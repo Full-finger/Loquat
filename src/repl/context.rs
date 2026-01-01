@@ -44,3 +44,16 @@ impl ReplContext {
         }
     }
 }
+
+impl std::fmt::Debug for ReplContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReplContext")
+            .field("plugin_manager", &self.plugin_manager.is_some())
+            .field("adapter_manager", &self.adapter_manager.is_some())
+            .field("engine", &self.engine.is_some())
+            .field("logger", &"<Logger>")
+            .field("config", &self.config)
+            .field("start_time", &self.start_time)
+            .finish()
+    }
+}

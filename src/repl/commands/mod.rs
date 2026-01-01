@@ -60,6 +60,14 @@ pub struct CommandRegistry {
     commands: Vec<Box<dyn Command>>,
 }
 
+impl std::fmt::Debug for CommandRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandRegistry")
+            .field("command_count", &self.commands.len())
+            .finish()
+    }
+}
+
 impl CommandRegistry {
     /// Create a new command registry
     pub fn new() -> Self {

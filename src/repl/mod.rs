@@ -2,7 +2,7 @@
 //!
 //! Provides an interactive command-line interface for managing the framework.
 
-mod context;
+pub mod context;
 mod repl;
 mod prompt;
 

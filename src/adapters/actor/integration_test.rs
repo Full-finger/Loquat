@@ -12,7 +12,7 @@ use crate::adapters::actor::{
     AdapterWrapper, BaseAdapterActor, AdapterActor, AdapterMessage,
     create_console_adapter_actor,
 };
-use crate::adapters::{AdapterConfig, AdapterStatus};
+use crate::adapters::{Adapter, AdapterConfig, AdapterStatus};
 use crate::errors::Result;
 use tokio::sync::mpsc;
 

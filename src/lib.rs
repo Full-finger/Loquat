@@ -22,6 +22,7 @@ pub mod shutdown;
 pub mod utils;
 pub mod cli;
 pub mod repl;
+pub mod tui;
 
 pub use aop::*;
 pub use config::*;
