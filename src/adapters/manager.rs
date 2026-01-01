@@ -3,7 +3,7 @@
 use crate::adapters::factory::{AdapterFactoryRegistry, AdapterFactory};
 use crate::adapters::config::AdapterConfig as AdapterInstanceConfig;
 use crate::adapters::status::AdapterStatus;
-use crate::adapters::{Adapter, StartableAdapter};
+use crate::adapters::Adapter;
 use crate::adapters::types::{AdapterInfo, AdapterStatistics};
 use crate::adapters::state_manager::AdapterStateManager;
 use crate::logging::traits::{LogContext, LogLevel, Logger};

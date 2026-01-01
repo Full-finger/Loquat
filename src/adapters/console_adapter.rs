@@ -176,6 +176,18 @@ impl Adapter for ConsoleAdapter {
             guard.clone()
         })
     }
+
+    fn set_event_sender(&self, sender: Option<mpsc::UnboundedSender<EventEnum>>) {
+        // Set the event sender channel
+        // Note: This is a no-op since ConsoleAdapter already stores event_sender internally
+        let _ = sender;
+    }
+
+    fn send_event(&self, _event: EventEnum) -> Result<()> {
+        // ConsoleAdapter sends events directly from the stdin reader task
+        // This method is a no-op
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -246,6 +246,23 @@ impl Adapter for MockTestAdapter {
             stats
         })
     }
+
+    fn set_event_sender(&self, sender: Option<mpsc::UnboundedSender<EventEnum>>) {
+        // This is a bit awkward because we need interior mutability
+        // For now, we'll just note this limitation
+        println!("set_event_sender called but not implemented due to interior mutability requirements");
+    }
+
+    fn send_event(&self, event: EventEnum) -> Result<()> {
+        if let Some(ref sender) = self.event_sender {
+            sender.send(event).map_err(|e| {
+                LoquatError::Adapter(AdapterError::LoadFailed(format!(
+                    "Failed to send event: {}", e
+                )))
+            })?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -290,7 +307,11 @@ mod tests {
     fn test_generate_text_event() {
         let event = MockTestAdapter::generate_text_event("test-adapter", 1);
         if let EventEnum::Message(msg) = event {
-            assert!(msg.content.contains("Test message #1"));
+            if let MessageEvent::Text { text, .. } = msg {
+                assert!(text.contains("Test message #1"));
+            } else {
+                panic!("Expected Text message event");
+            }
         } else {
             panic!("Expected Message event");
         }
@@ -300,7 +321,15 @@ mod tests {
     fn test_generate_image_event() {
         let event = MockTestAdapter::generate_image_event("test-adapter", 2);
         if let EventEnum::Message(msg) = event {
-            assert!(msg.content.contains("[Image #2]"));
+            if let MessageEvent::Image { caption, .. } = msg {
+                if let Some(c) = caption {
+                    assert!(c.contains("[Image #2]"));
+                } else {
+                    panic!("Expected caption in Image event");
+                }
+            } else {
+                panic!("Expected Image message event");
+            }
         } else {
             panic!("Expected Message event");
         }
@@ -310,7 +339,11 @@ mod tests {
     fn test_generate_notice_event() {
         let event = MockTestAdapter::generate_notice_event("test-adapter", 3);
         if let EventEnum::Notice(notice) = event {
-            assert!(notice.content.contains("System notification #3"));
+            if let NoticeEvent::SystemNotice { content, .. } = notice {
+                assert!(content.contains("System notification #3"));
+            } else {
+                panic!("Expected SystemNotice event");
+            }
         } else {
             panic!("Expected Notice event");
         }

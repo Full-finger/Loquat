@@ -1,9 +1,11 @@
 //! Core adapter traits
 
-use crate::adapters::{AdapterConfig, AdapterStatus};
+use crate::adapters::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
 use crate::events::EventEnum;
 use crate::errors::{LoquatError, Result};
+use crate::actor::messages::AdapterMessage;
 use std::fmt::Debug;
+use tokio::sync::mpsc;
 
 /// Message target for sending messages
 #[derive(Debug, Clone)]
@@ -65,8 +67,8 @@ pub enum Message {
 
 /// Core adapter trait - all platform adapters must implement this
 ///
-/// Note: This trait is NOT object-safe for start/stop methods.
-/// Use concrete types for start/stop operations.
+/// This trait provides synchronous methods for adapter interaction.
+/// For asynchronous operations, use the AdapterWrapper which wraps the trait object.
 pub trait Adapter: Send + Sync + Debug {
     /// Get adapter name
     fn name(&self) -> &str;
@@ -77,7 +79,7 @@ pub trait Adapter: Send + Sync + Debug {
     /// Get adapter ID
     fn adapter_id(&self) -> &str;
     
-    /// Get adapter configuration
+    /// Get adapter configuration (synchronous, cached value)
     fn config(&self) -> AdapterConfig;
     
     /// Get adapter status
@@ -94,16 +96,13 @@ pub trait Adapter: Send + Sync + Debug {
     }
     
     /// Get statistics about adapter
-    fn statistics(&self) -> crate::adapters::types::AdapterStatistics;
-}
-
-/// Startable adapter trait - adds start/stop functionality
-pub trait StartableAdapter: Adapter {
-    /// Start the adapter
-    async fn start(&self) -> Result<()>;
+    fn statistics(&self) -> AdapterStatistics;
     
-    /// Stop the adapter
-    async fn stop(&self) -> Result<()>;
+    /// Set event sender for this adapter
+    fn set_event_sender(&self, sender: Option<mpsc::UnboundedSender<EventEnum>>);
+    
+    /// Send an event through the event sender
+    fn send_event(&self, event: EventEnum) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -130,21 +129,19 @@ mod tests {
         fn config(&self) -> AdapterConfig {
             AdapterConfig::new("mock", "mock-001", "ws://localhost")
         }
-
+        
         fn status(&self) -> AdapterStatus {
             AdapterStatus::Running
         }
-
-        fn is_running(&self) -> bool {
-            true
+        
+        fn statistics(&self) -> AdapterStatistics {
+            AdapterStatistics::default()
         }
 
-        fn is_connected(&self) -> bool {
-            true
-        }
-
-        fn statistics(&self) -> crate::adapters::types::AdapterStatistics {
-            crate::adapters::types::AdapterStatistics::default()
+        fn set_event_sender(&self, _sender: Option<mpsc::UnboundedSender<EventEnum>>) {}
+        
+        fn send_event(&self, _event: EventEnum) -> Result<()> {
+            Ok(())
         }
     }
 
@@ -155,9 +152,9 @@ mod tests {
         assert_eq!(adapter.name(), "MockAdapter");
         assert_eq!(adapter.version(), "1.0.0");
         assert_eq!(adapter.adapter_id(), "mock-001");
+        assert_eq!(adapter.status(), AdapterStatus::Running);
         assert!(adapter.is_running());
         assert!(adapter.is_connected());
-        assert_eq!(adapter.status(), AdapterStatus::Running);
         
         let stats = adapter.statistics();
         assert_eq!(stats.events_received, 0);

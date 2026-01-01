@@ -109,6 +109,15 @@ impl Adapter for EchoAdapter {
             guard.clone()
         })
     }
+
+    fn set_event_sender(&self, _sender: Option<tokio::sync::mpsc::UnboundedSender<crate::events::EventEnum>>) {
+        // Echo adapter doesn't need to send events
+    }
+
+    fn send_event(&self, _event: crate::events::EventEnum) -> Result<()> {
+        // Echo adapter doesn't need to send events
+        Ok(())
+    }
 }
 
 #[cfg(test)]
