@@ -118,6 +118,10 @@ impl Adapter for EchoAdapter {
         // Echo adapter doesn't need to send events
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]

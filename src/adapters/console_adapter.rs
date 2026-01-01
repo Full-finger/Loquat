@@ -188,6 +188,10 @@ impl Adapter for ConsoleAdapter {
         // This method is a no-op
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]

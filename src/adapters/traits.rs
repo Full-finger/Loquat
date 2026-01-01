@@ -68,8 +68,8 @@ pub enum Message {
 /// Core adapter trait - all platform adapters must implement this
 ///
 /// This trait provides synchronous methods for adapter interaction.
-/// For asynchronous operations, use the AdapterWrapper which wraps the trait object.
-pub trait Adapter: Send + Sync + Debug {
+/// For asynchronous operations, use AdapterWrapper which wraps the trait object.
+pub trait Adapter: Send + Sync + Debug + std::any::Any {
     /// Get adapter name
     fn name(&self) -> &str;
     
@@ -101,8 +101,11 @@ pub trait Adapter: Send + Sync + Debug {
     /// Set event sender for this adapter
     fn set_event_sender(&self, sender: Option<mpsc::UnboundedSender<EventEnum>>);
     
-    /// Send an event through the event sender
+    /// Send an event through event sender
     fn send_event(&self, event: EventEnum) -> Result<()>;
+    
+    /// Get as Any for downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 #[cfg(test)]

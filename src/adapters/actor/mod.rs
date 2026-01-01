@@ -7,6 +7,8 @@
 pub mod messages;
 pub mod adapter_wrapper;
 pub mod console_adapter_actor;
+#[cfg(test)]
+mod integration_test;
 
 pub use messages::AdapterMessage;
 pub use adapter_wrapper::AdapterWrapper;
