@@ -49,7 +49,7 @@ pub trait AdapterActor: Send + Sync + Clone {
 ///
 /// This struct provides core actor functionality including
 /// message handling and state management with Arc<RwLock<>> for thread-safe access.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BaseAdapterActor {
     /// Adapter configuration
     pub config: AdapterConfig,
@@ -207,6 +207,74 @@ impl AdapterActor for BaseAdapterActor {
     async fn do_stop(&mut self) -> Result<()> {
         // Default implementation does nothing
         Ok(())
+    }
+}
+
+// Implement Adapter trait for BaseAdapterActor
+impl crate::adapters::Adapter for BaseAdapterActor {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn version(&self) -> &str {
+        &self.version
+    }
+
+    fn adapter_id(&self) -> &str {
+        self.config.adapter_id.as_str()
+    }
+
+    fn config(&self) -> crate::adapters::AdapterConfig {
+        self.config.clone()
+    }
+
+    fn status(&self) -> crate::adapters::AdapterStatus {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async {
+                    self.status.read().await.clone()
+                })
+        })
+    }
+
+    fn is_running(&self) -> bool {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async {
+                    self.status.read().await.clone() == crate::adapters::AdapterStatus::Running
+                })
+        })
+    }
+
+    fn is_connected(&self) -> bool {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async {
+                    self.status.read().await.clone().is_active()
+                })
+        })
+    }
+
+    fn statistics(&self) -> crate::adapters::types::AdapterStatistics {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async {
+                    self.statistics.read().await.clone()
+                })
+        })
+    }
+
+    fn set_event_sender(&self, _sender: Option<tokio::sync::mpsc::UnboundedSender<crate::events::EventEnum>>) {
+        // Base adapter doesn't need to send events
+    }
+
+    fn send_event(&self, _event: crate::events::EventEnum) -> crate::errors::Result<()> {
+        // Base adapter doesn't need to send events
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

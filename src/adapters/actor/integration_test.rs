@@ -15,6 +15,7 @@ use crate::adapters::actor::{
 use crate::adapters::{Adapter, AdapterConfig, AdapterStatus};
 use crate::errors::Result;
 use tokio::sync::mpsc;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_adapter_wrapper_lifecycle() -> Result<()> {
@@ -143,10 +144,10 @@ async fn test_multiple_concurrent_access() -> Result<()> {
     }
     
     // Wait for all tasks
-    let results: Vec<_> = futures::future::join_all(handles).await
-        .into_iter()
-        .map(|r| r.unwrap())
-        .collect();
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await.unwrap());
+    }
     
     // Verify all tasks completed
     assert_eq!(results.len(), 10);
