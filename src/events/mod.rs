@@ -14,6 +14,10 @@ pub mod block;
 pub mod group;
 pub mod event_enum;
 
+// New event architecture modules
+pub mod payloads;
+pub mod event;
+
 pub use traits::*;
 pub use package::*;
 pub use message::*;
@@ -25,7 +29,14 @@ pub use block::*;
 pub use group::*;
 pub use event_enum::*;
 
+// New event architecture exports
+pub use payloads::*;
+pub use event::*;
+
 /// Re-export commonly used types
 pub use crate::events::package::Package;
 pub use crate::events::traits::Event;
 pub use crate::events::event_enum::{Status, EventEnum};
+
+/// New unified event type (preferred) - separates events into Simple and Group
+pub use crate::events::event::UnifiedEvent;
