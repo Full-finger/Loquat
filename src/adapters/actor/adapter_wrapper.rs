@@ -1,9 +1,9 @@
 //! Adapter wrapper for bridging sync trait and async actor
 //!
-//! This module provides a wrapper that implements the sync Adapter trait
+//! This module provides a wrapper that implements sync Adapter trait
 //! while internally using an async actor for state management and operations.
 
-use crate::adapters::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
+use crate::adapters::core::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
 use crate::errors::Result;
 use crate::actor::messages::AdapterMessage;
 use crate::events::EventEnum;
@@ -41,17 +41,17 @@ impl AdapterWrapper {
         }
     }
 
-    /// Get the message sender for this adapter
+    /// Get message sender for this adapter
     pub fn message_sender(&self) -> &mpsc::UnboundedSender<AdapterMessage> {
         &self.message_sender
     }
 
-    /// Get the task handle (for cleanup)
+    /// Get task handle (for cleanup)
     pub fn task_handle(&self) -> Option<&tokio::task::JoinHandle<()>> {
         self.task_handle.as_ref()
     }
 
-    /// Send a start message to the actor
+    /// Send a start message to actor
     pub async fn start(&self) -> Result<()> {
         let (msg, rx) = AdapterMessage::start();
         self.message_sender.send(msg).map_err(|e| {
@@ -62,7 +62,7 @@ impl AdapterWrapper {
         })?
     }
 
-    /// Send a stop message to the actor
+    /// Send a stop message to actor
     pub async fn stop(&self) -> Result<()> {
         let (msg, rx) = AdapterMessage::stop();
         self.message_sender.send(msg).map_err(|e| {
@@ -73,14 +73,14 @@ impl AdapterWrapper {
         })?
     }
 
-    /// Get status from the actor
+    /// Get status from actor
     pub async fn status(&self) -> AdapterStatus {
         let (msg, rx) = AdapterMessage::get_status();
         let _ = self.message_sender.send(msg);
         rx.await.unwrap_or(AdapterStatus::Error("Channel closed".to_string()))
     }
 
-    /// Get statistics from the actor
+    /// Get statistics from actor
     pub async fn statistics(&self) -> AdapterStatistics {
         let (msg, rx) = AdapterMessage::get_statistics();
         let _ = self.message_sender.send(msg);
@@ -99,17 +99,12 @@ impl AdapterWrapper {
 
     /// Set event sender for this adapter
     pub async fn set_event_sender(&self, sender: Option<mpsc::UnboundedSender<EventEnum>>) {
-        // Send a custom message to set the event sender
-        let (msg, _rx) = AdapterMessage::custom(
-            "set_event_sender".to_string(),
-            serde_json::json!({
-                "has_sender": sender.is_some()
-            }),
-        );
+        let payload = serde_json::json!({"has_sender": sender.is_some()});
+        let (msg, _rx) = AdapterMessage::custom("set_event_sender".to_string(), payload);
         let _ = self.message_sender.send(msg);
     }
 
-    /// Send an event through the adapter
+    /// Send an event through adapter
     pub async fn send_event(&self, event: EventEnum) -> Result<()> {
         let (msg, rx) = AdapterMessage::custom(
             "send_event".to_string(),
@@ -127,7 +122,7 @@ impl AdapterWrapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::AdapterConfig;
+    use crate::adapters::core::AdapterConfig;
 
     #[tokio::test]
     async fn test_adapter_wrapper_creation() {
@@ -149,9 +144,9 @@ mod tests {
     }
 }
 
-// Implement the Adapter trait for AdapterWrapper
+// Implement Adapter trait for AdapterWrapper
 // This allows AdapterWrapper to be used as a trait object (dyn Adapter)
-impl crate::adapters::Adapter for AdapterWrapper {
+impl crate::adapters::core::Adapter for AdapterWrapper {
     fn name(&self) -> &str {
         &self.name
     }
@@ -164,12 +159,11 @@ impl crate::adapters::Adapter for AdapterWrapper {
         &self.adapter_id
     }
 
-    fn config(&self) -> crate::adapters::AdapterConfig {
+    fn config(&self) -> crate::adapters::core::AdapterConfig {
         self.config.clone()
     }
 
-    fn status(&self) -> crate::adapters::AdapterStatus {
-        // Block on async call to get status from actor
+    fn status(&self) -> crate::adapters::core::AdapterStatus {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(self.status())
@@ -179,7 +173,7 @@ impl crate::adapters::Adapter for AdapterWrapper {
     fn is_running(&self) -> bool {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                self.status().await == crate::adapters::AdapterStatus::Running
+                self.status().await == crate::adapters::core::AdapterStatus::Running
             })
         })
     }
@@ -192,8 +186,7 @@ impl crate::adapters::Adapter for AdapterWrapper {
         })
     }
 
-    fn statistics(&self) -> AdapterStatistics {
-        // Block on async call to get statistics from actor
+    fn statistics(&self) -> crate::adapters::core::types::AdapterStatistics {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(self.statistics())
@@ -201,18 +194,12 @@ impl crate::adapters::Adapter for AdapterWrapper {
     }
 
     fn set_event_sender(&self, sender: Option<mpsc::UnboundedSender<EventEnum>>) {
-        // Send a message to actor to set event sender
-        let (msg, _rx) = AdapterMessage::custom(
-            "set_event_sender".to_string(),
-            serde_json::json!({
-                "has_sender": sender.is_some()
-            }),
-        );
+        let payload = serde_json::json!({"has_sender": sender.is_some()});
+        let (msg, _rx) = AdapterMessage::custom("set_event_sender".to_string(), payload);
         let _ = self.message_sender.send(msg);
     }
 
     fn send_event(&self, event: EventEnum) -> Result<()> {
-        // Send a custom message to actor to send event
         let event_value = serde_json::to_value(&event)
             .map_err(|e| {
                 crate::errors::Error::Adapter(crate::errors::AdapterError::LoadFailed(format!("Failed to serialize event: {}", e)))

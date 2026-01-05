@@ -1,10 +1,10 @@
 //! Console Adapter Factory
 
-use crate::adapters::{
+use crate::adapters::core::{
     Adapter, AdapterConfig, AdapterFactory,
 };
 use crate::errors::Result;
-use super::console_adapter::ConsoleAdapter;
+use super::adapter::ConsoleAdapter;
 
 /// Factory for creating ConsoleAdapter instances
 pub struct ConsoleAdapterFactory;

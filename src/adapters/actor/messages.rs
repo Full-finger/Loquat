@@ -3,7 +3,7 @@
 //! This module defines the message types used for communication
 //! between adapters and the rest of the system via the actor pattern.
 
-use crate::adapters::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
+use crate::adapters::core::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
 use crate::errors::Result;
 use tokio::sync::oneshot;
 

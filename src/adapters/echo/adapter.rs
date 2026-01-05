@@ -1,6 +1,6 @@
 //! Echo Adapter - echoes back received messages
 
-use crate::adapters::{
+use crate::adapters::core::{
     Adapter, AdapterConfig, AdapterStatus,
     types::AdapterStatistics,
 };

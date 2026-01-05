@@ -122,7 +122,7 @@ Aliases: ad, adapter
 }
 
 impl AdaptersCommand {
-    async fn list_adapters(&self, filter: Option<&str>, adapter_manager: &crate::adapters::AdapterManager) -> Result<()> {
+    async fn list_adapters(&self, filter: Option<&str>, adapter_manager: &crate::adapters::core::manager::AdapterManager) -> Result<()> {
         let adapters = adapter_manager.list_adapter_infos().await;
         
         println!();
@@ -170,7 +170,7 @@ impl AdaptersCommand {
         Ok(())
     }
     
-    async fn show_adapter_info(&self, name: &str, adapter_manager: &crate::adapters::AdapterManager) -> Result<()> {
+    async fn show_adapter_info(&self, name: &str, adapter_manager: &crate::adapters::core::manager::AdapterManager) -> Result<()> {
         let adapters = adapter_manager.list_adapter_infos().await;
         
         if let Some(adapter) = adapters.iter().find(|a| a.adapter_id == name) {
@@ -199,7 +199,7 @@ impl AdaptersCommand {
         Ok(())
     }
     
-    async fn reload_adapters(&self, adapter_manager: &crate::adapters::AdapterManager, ctx: &ReplContext) -> Result<()> {
+    async fn reload_adapters(&self, adapter_manager: &crate::adapters::core::manager::AdapterManager, ctx: &ReplContext) -> Result<()> {
         println!();
         println!("{}", "Reloading adapters...".cyan());
         

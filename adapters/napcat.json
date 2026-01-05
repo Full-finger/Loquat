@@ -1,0 +1,33 @@
+{
+  "adapter_type": "napcat",
+  "adapter_id": "napcat-001",
+  "enabled": true,
+  "name": "NapCat Adapter",
+  "connection": {
+    "conn_type": "ws",
+    "url": "ws://127.0.0.1:3001",
+    "timeout": 30,
+    "use_tls": false,
+    "keep_alive": 30,
+    "max_reconnect": 5,
+    "params": {
+      "access_token": ""
+    }
+  },
+  "heartbeat": {
+    "interval": 30,
+    "timeout": 10,
+    "enabled": true
+  },
+  "retry": {
+    "max_attempts": 3,
+    "initial_delay": 1000,
+    "max_delay": 30000,
+    "backoff_multiplier": 2.0
+  },
+  "platform": {
+    "api_base": "http://127.0.0.1:3000",
+    "qq_account": ""
+  },
+  "extra": {}
+}

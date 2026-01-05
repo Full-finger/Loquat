@@ -146,6 +146,10 @@ mod tests {
         fn send_event(&self, _event: EventEnum) -> Result<()> {
             Ok(())
         }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     #[test]

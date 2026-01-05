@@ -14,7 +14,7 @@ pub use messages::AdapterMessage;
 pub use adapter_wrapper::AdapterWrapper;
 pub use console_adapter_actor::{ConsoleAdapterActor, create_console_adapter_actor};
 
-use crate::adapters::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
+use crate::adapters::core::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
 use crate::errors::{AdapterError, LoquatError, Result};
 use crate::events::EventEnum;
 use std::sync::Arc;
@@ -211,7 +211,7 @@ impl AdapterActor for BaseAdapterActor {
 }
 
 // Implement Adapter trait for BaseAdapterActor
-impl crate::adapters::Adapter for BaseAdapterActor {
+impl crate::adapters::core::Adapter for BaseAdapterActor {
     fn name(&self) -> &str {
         &self.name
     }
@@ -224,11 +224,11 @@ impl crate::adapters::Adapter for BaseAdapterActor {
         self.config.adapter_id.as_str()
     }
 
-    fn config(&self) -> crate::adapters::AdapterConfig {
+    fn config(&self) -> crate::adapters::core::AdapterConfig {
         self.config.clone()
     }
 
-    fn status(&self) -> crate::adapters::AdapterStatus {
+    fn status(&self) -> crate::adapters::core::AdapterStatus {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(async {
@@ -241,7 +241,7 @@ impl crate::adapters::Adapter for BaseAdapterActor {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(async {
-                    self.status.read().await.clone() == crate::adapters::AdapterStatus::Running
+                    self.status.read().await.clone() == crate::adapters::core::AdapterStatus::Running
                 })
         })
     }
@@ -255,7 +255,7 @@ impl crate::adapters::Adapter for BaseAdapterActor {
         })
     }
 
-    fn statistics(&self) -> crate::adapters::types::AdapterStatistics {
+    fn statistics(&self) -> crate::adapters::core::types::AdapterStatistics {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
                 .block_on(async {

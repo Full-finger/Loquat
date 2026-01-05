@@ -1,16 +1,14 @@
 //! Adapter manager for managing adapter lifecycle
 
-use crate::adapters::factory::{AdapterFactoryRegistry, AdapterFactory};
-use crate::adapters::config::AdapterConfig as AdapterInstanceConfig;
-use crate::adapters::status::AdapterStatus;
-use crate::adapters::Adapter;
-use crate::adapters::types::{AdapterInfo, AdapterStatistics};
-use crate::adapters::state_manager::AdapterStateManager;
+use crate::adapters::core::factory::{AdapterFactoryRegistry, AdapterFactory};
+use crate::adapters::core::config::AdapterConfig as AdapterInstanceConfig;
+use crate::adapters::core::Adapter;
+use crate::adapters::core::types::{AdapterInfo, AdapterStatistics};
+use crate::adapters::core::state_manager::AdapterStateManager;
 use crate::logging::traits::{LogContext, LogLevel, Logger};
 use crate::errors::{AdapterError, Result};
 use crate::config::loquat_config::AdapterConfig as ManagerConfig;
 use crate::utils::{LruCache, HotReloadHistory, VersionData, PathValidator};
-use std::collections::HashMap;
 use std::path::{PathBuf, Path};
 use std::sync::Arc;
 use std::time::Duration;

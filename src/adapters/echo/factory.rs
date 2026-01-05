@@ -1,10 +1,10 @@
 //! Echo Adapter Factory
 
-use crate::adapters::{
+use crate::adapters::core::{
     Adapter, AdapterConfig, AdapterFactory,
 };
 use crate::errors::Result;
-use super::echo_adapter::EchoAdapter;
+use super::adapter::EchoAdapter;
 
 /// Factory for creating EchoAdapter instances
 pub struct EchoAdapterFactory;

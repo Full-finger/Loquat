@@ -1,6 +1,6 @@
 //! Console Adapter - reads input from stdin and writes output to stdout
 
-use crate::adapters::{
+use crate::adapters::core::{
     Adapter, AdapterConfig, AdapterStatus,
     types::AdapterStatistics,
 };

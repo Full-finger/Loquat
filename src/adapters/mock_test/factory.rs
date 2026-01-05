@@ -1,8 +1,9 @@
 //! Mock Test Adapter Factory
 
-use crate::adapters::factory::AdapterFactory;
-use crate::adapters::config::AdapterConfig;
+use crate::adapters::core::factory::AdapterFactory;
+use crate::adapters::core::config::AdapterConfig;
 use crate::errors::{Result, LoquatError, ConfigError};
+use super::adapter::MockTestAdapter;
 
 /// Factory for creating MockTestAdapter instances
 pub struct MockTestFactory;
@@ -12,12 +13,12 @@ impl AdapterFactory for MockTestFactory {
         "mock_test"
     }
 
-    fn create(&self, config: AdapterConfig) -> Result<Box<dyn crate::adapters::Adapter>> {
+    fn create(&self, config: AdapterConfig) -> Result<Box<dyn crate::adapters::core::Adapter>> {
         // 调用默认的 validate_config
         self.validate_config(config.clone())?;
         
         // 创建 MockTestAdapter 实例
-        let adapter = crate::adapters::mock_test_adapter::MockTestAdapter::new(config);
+        let adapter = MockTestAdapter::new(config);
         
         Ok(Box::new(adapter))
     }

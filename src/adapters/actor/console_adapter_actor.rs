@@ -2,8 +2,8 @@
 
 use super::messages::AdapterMessage;
 use super::{BaseAdapterActor, AdapterActor};
-use crate::adapters::{AdapterConfig, AdapterStatus};
-use crate::adapters::types::AdapterStatistics;
+use crate::adapters::core::{AdapterConfig, AdapterStatus};
+use crate::adapters::core::types::AdapterStatistics;
 use crate::errors::{AdapterError, LoquatError, Result};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};

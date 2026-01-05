@@ -155,6 +155,19 @@ mod tests {
         fn statistics(&self) -> crate::adapters::AdapterStatistics {
             crate::adapters::AdapterStatistics::default()
         }
+
+        fn set_event_sender(&self, _sender: Option<tokio::sync::mpsc::UnboundedSender<crate::events::EventEnum>>) {
+            // Mock adapter doesn't need to send events
+        }
+
+        fn send_event(&self, _event: crate::events::EventEnum) -> crate::errors::Result<()> {
+            // Mock adapter doesn't need to send events
+            Ok(())
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     /// Mock factory for testing

@@ -340,9 +340,16 @@ impl LoquatTui {
                 self.ui_state.active_panel = self.ui_state.active_panel.prev();
             }
             
-            // Up arrow - Browse command history
+            // Up arrow - Browse command history (when not in Logs panel)
+            // Or scroll logs up (when in Logs panel)
             KeyCode::Up => {
-                if !self.ui_state.command_history.is_empty() {
+                if self.ui_state.active_panel == ActivePanel::Logs {
+                    // Scroll logs up
+                    if self.ui_state.logs_scroll_offset > 0 {
+                        self.ui_state.logs_scroll_offset -= 1;
+                    }
+                } else if !self.ui_state.command_history.is_empty() {
+                    // Browse command history
                     let new_index = match self.ui_state.history_index {
                         None => Some(self.ui_state.command_history.len() - 1),
                         Some(idx) if idx > 0 => Some(idx - 1),
@@ -355,18 +362,59 @@ impl LoquatTui {
                 }
             }
             
-            // Down arrow - Browse command history forward
+            // Down arrow - Browse command history forward (when not in Logs panel)
+            // Or scroll logs down (when in Logs panel)
             KeyCode::Down => {
-                match self.ui_state.history_index {
-                    None => {}
-                    Some(idx) if idx < self.ui_state.command_history.len() - 1 => {
-                        self.ui_state.history_index = Some(idx + 1);
-                        self.ui_state.command_input = self.ui_state.command_history[idx + 1].clone();
+                if self.ui_state.active_panel == ActivePanel::Logs {
+                    // Scroll logs down (max scroll to bottom)
+                    let max_offset = self.ui_state.logs.len().saturating_sub(1);
+                    if self.ui_state.logs_scroll_offset < max_offset {
+                        self.ui_state.logs_scroll_offset += 1;
                     }
-                    Some(_) => {
-                        self.ui_state.history_index = None;
-                        self.ui_state.command_input.clear();
+                } else {
+                    match self.ui_state.history_index {
+                        None => {}
+                        Some(idx) if idx < self.ui_state.command_history.len() - 1 => {
+                            self.ui_state.history_index = Some(idx + 1);
+                            self.ui_state.command_input = self.ui_state.command_history[idx + 1].clone();
+                        }
+                        Some(_) => {
+                            self.ui_state.history_index = None;
+                            self.ui_state.command_input.clear();
+                        }
                     }
+                }
+            }
+            
+            // PageUp - Scroll logs up by page (when in Logs panel)
+            KeyCode::PageUp => {
+                if self.ui_state.active_panel == ActivePanel::Logs {
+                    let page_size = 10;
+                    self.ui_state.logs_scroll_offset = self.ui_state.logs_scroll_offset.saturating_sub(page_size);
+                }
+            }
+            
+            // PageDown - Scroll logs down by page (when in Logs panel)
+            KeyCode::PageDown => {
+                if self.ui_state.active_panel == ActivePanel::Logs {
+                    let page_size = 10;
+                    let max_offset = self.ui_state.logs.len().saturating_sub(1);
+                    self.ui_state.logs_scroll_offset = (self.ui_state.logs_scroll_offset + page_size).min(max_offset);
+                }
+            }
+            
+            // Home - Scroll to top (when in Logs panel)
+            KeyCode::Home => {
+                if self.ui_state.active_panel == ActivePanel::Logs {
+                    self.ui_state.logs_scroll_offset = 0;
+                }
+            }
+            
+            // End - Scroll to bottom (when in Logs panel)
+            KeyCode::End => {
+                if self.ui_state.active_panel == ActivePanel::Logs {
+                    let max_offset = self.ui_state.logs.len().saturating_sub(1);
+                    self.ui_state.logs_scroll_offset = max_offset;
                 }
             }
             
@@ -620,14 +668,19 @@ fn draw_logs_panel_impl(f: &mut Frame, area: Rect, ui_state: &UiState) {
         return;
     }
     
-    // Convert logs to text
+    // Convert logs to text with color-coded levels
     let log_lines: Vec<Line> = ui_state.logs
         .iter()
         .map(|log| {
             let timestamp = format!("{} ", log.timestamp);
             let level = format!("[{}] ", log.level);
+            
+            // Color code by log level
             let level_color = match log.level {
-                _ => Color::Cyan,  // Default
+                LogLevel::Debug => Color::Cyan,
+                LogLevel::Info => Color::Green,
+                LogLevel::Warn => Color::Yellow,
+                LogLevel::Error => Color::Red,
             };
             
             Line::from(vec![
@@ -637,50 +690,231 @@ fn draw_logs_panel_impl(f: &mut Frame, area: Rect, ui_state: &UiState) {
                 ),
                 Span::styled(
                     level,
-                    Style::default().fg(level_color)
+                    Style::default().fg(level_color).add_modifier(Modifier::BOLD)
                 ),
                 Span::raw(&log.message),
             ])
         })
         .collect();
     
-    let scroll_offset = (ui_state.logs.len() as u16).saturating_sub(area.height.saturating_sub(2));
-        let paragraph = Paragraph::new(log_lines)
-            .wrap(Wrap { trim: true })
-            .scroll((0, scroll_offset));
+    // Use scroll offset from ui_state
+    let scroll_offset = ui_state.logs_scroll_offset as u16;
+    let paragraph = Paragraph::new(log_lines)
+        .wrap(Wrap { trim: true })
+        .scroll((0, scroll_offset));
     
     f.render_widget(paragraph, area);
 }
     
 /// Independent implementation of draw_plugins_panel
 fn draw_plugins_panel_impl(f: &mut Frame, area: Rect) {
-    let text = Text::from(" Plugins panel - Under construction");
+    // Note: In a real implementation, we would pass app_state to access plugin_manager
+    // For now, showing a placeholder with instructions
+    let text_lines = vec![
+        Line::from(" Plugins Panel "),
+        Line::from(""),
+        Line::from(" This panel will display all loaded plugins"),
+        Line::from(" with their status and controls."),
+        Line::from(""),
+        Line::from(" Planned features:"),
+        Line::from("   • List all plugins with status indicators"),
+        Line::from("   • Show plugin type, version, path"),
+        Line::from("   • Load/unload plugins"),
+        Line::from("   • Enable/disable plugins"),
+        Line::from("   • View detailed plugin information"),
+        Line::from(""),
+        Line::from(" Keyboard shortcuts:"),
+        Line::from("   'l' - Load plugin"),
+        Line::from("   'u' - Unload selected plugin"),
+        Line::from("   Enter - View details"),
+        Line::from(""),
+        Line::from(Span::styled(
+            " (Full implementation requires app_state access)",
+            Style::default().fg(Color::Gray)
+        )),
+    ];
+    
+    let text = Text::from(text_lines);
     let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    
     f.render_widget(paragraph, area);
 }
     
 /// Independent implementation of draw_adapters_panel
 fn draw_adapters_panel_impl(f: &mut Frame, area: Rect) {
-    let text = Text::from(" Adapters panel - Under construction");
+    // Note: In a real implementation, we would pass app_state to access adapter_manager
+    // For now, showing a placeholder with instructions
+    let text_lines = vec![
+        Line::from(" Adapters Panel "),
+        Line::from(""),
+        Line::from(" This panel will display all loaded adapters"),
+        Line::from(" with their status and controls."),
+        Line::from(""),
+        Line::from(" Planned features:"),
+        Line::from("   • List all adapters with status indicators"),
+        Line::from("   • Show adapter type, version, endpoint"),
+        Line::from("   • Reload/unload adapters"),
+        Line::from("   • View detailed adapter information"),
+        Line::from(""),
+        Line::from(" Keyboard shortcuts:"),
+        Line::from("   'r' - Reload selected adapter"),
+        Line::from("   'u' - Unload selected adapter"),
+        Line::from("   Enter - View details"),
+        Line::from(""),
+        Line::from(Span::styled(
+            " (Full implementation requires app_state access)",
+            Style::default().fg(Color::Gray)
+        )),
+    ];
+    
+    let text = Text::from(text_lines);
     let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    
     f.render_widget(paragraph, area);
 }
     
 /// Independent implementation of draw_config_panel
 fn draw_config_panel_impl(f: &mut Frame, area: Rect) {
-    let text = Text::from(" Config panel - Under construction");
+    // Note: In a real implementation, we would pass app_state to access config
+    // For now, showing a placeholder with config structure
+    let text_lines = vec![
+        Line::from(" Config Panel "),
+        Line::from(""),
+        Line::from(" This panel displays current configuration."),
+        Line::from(""),
+        Line::from(" Configuration sections:"),
+        Line::from(Span::styled(
+            "  [General]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        )),
+        Line::from("    Environment: dev/test/prod"),
+        Line::from("    Framework name"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Logging]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        )),
+        Line::from("    Log level (Trace/Debug/Info/Warn/Error)"),
+        Line::from("    Log format (text/json)"),
+        Line::from("    Log output (console/file/combined)"),
+        Line::from("    Log file path"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Plugins]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        )),
+        Line::from("    Plugin directory"),
+        Line::from("    Auto-load on startup"),
+        Line::from("    Hot-reload settings"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Adapters]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        )),
+        Line::from("    Adapter directory"),
+        Line::from("    Auto-load on startup"),
+        Line::from("    Hot-reload settings"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Engine]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        )),
+        Line::from("    Auto-route events"),
+        Line::from("    Auto-create channels"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  [Web]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        )),
+        Line::from("    Web server host/port"),
+        Line::from("    CORS settings"),
+        Line::from(""),
+        Line::from(Span::styled(
+            " (Full implementation requires app_state access)",
+            Style::default().fg(Color::Gray)
+        )),
+    ];
+    
+    let text = Text::from(text_lines);
     let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    
     f.render_widget(paragraph, area);
 }
     
 /// Independent implementation of draw_engine_panel
 fn draw_engine_panel_impl(f: &mut Frame, area: Rect) {
-    let text = Text::from(" Engine panel - Under construction");
+    // Note: In a real implementation, we would pass app_state to access engine
+    // For now, showing a placeholder with engine status structure
+    let text_lines = vec![
+        Line::from(" Engine Panel "),
+        Line::from(""),
+        Line::from(" This panel displays engine status and statistics."),
+        Line::from(""),
+        Line::from(" Planned features:"),
+        Line::from("   • Engine status (Running/Stopped/Idle)"),
+        Line::from("   • Event statistics"),
+        Line::from(Span::styled(
+            "     - Events processed",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from(Span::styled(
+            "     - Events per second",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from(Span::styled(
+            "     - Total events",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from("   • Channel statistics"),
+        Line::from(Span::styled(
+            "     - Active channels",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from(Span::styled(
+            "     - Channel throughput",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from("   • Router statistics"),
+        Line::from(Span::styled(
+            "     - Active routers",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from(Span::styled(
+            "     - Route success rate",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from("   • Configuration"),
+        Line::from(Span::styled(
+            "     - Auto-route",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from(Span::styled(
+            "     - Auto-create-channels",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from(Span::styled(
+            "     - Auto-initialize",
+            Style::default().fg(Color::Gray)
+        )),
+        Line::from("   • Engine uptime"),
+        Line::from(""),
+        Line::from(Span::styled(
+            " (Full implementation requires app_state access)",
+            Style::default().fg(Color::Gray)
+        )),
+    ];
+    
+    let text = Text::from(text_lines);
     let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    
     f.render_widget(paragraph, area);
 }
     

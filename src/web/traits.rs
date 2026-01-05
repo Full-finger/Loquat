@@ -96,7 +96,7 @@ pub struct AppState {
     /// Plugin manager reference
     pub plugin_manager: Option<crate::plugins::PluginManager>,
     /// Adapter manager reference
-    pub adapter_manager: Option<crate::adapters::AdapterManager>,
+    pub adapter_manager: Option<crate::adapters::core::manager::AdapterManager>,
     /// Engine reference
     pub engine: Option<crate::engine::StandardEngine>,
     /// Logger

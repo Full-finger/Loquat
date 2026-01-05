@@ -65,6 +65,8 @@ pub struct UiState {
     pub max_logs: usize,
     /// Minimum log level to display
     pub min_log_level: LogLevel,
+    /// Logs scroll offset
+    pub logs_scroll_offset: usize,
     /// Show help modal
     pub show_help: bool,
     /// Show exit confirmation
@@ -81,6 +83,7 @@ impl Default for UiState {
             logs: Vec::new(),
             max_logs: 1000,
             min_log_level: LogLevel::Info,
+            logs_scroll_offset: 0,
             show_help: false,
             show_exit_confirm: false,
         }

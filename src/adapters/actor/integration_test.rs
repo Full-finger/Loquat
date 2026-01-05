@@ -12,7 +12,7 @@ use crate::adapters::actor::{
     AdapterWrapper, BaseAdapterActor, AdapterActor, AdapterMessage,
     create_console_adapter_actor,
 };
-use crate::adapters::{Adapter, AdapterConfig, AdapterStatus};
+use crate::adapters::core::{Adapter, AdapterConfig, AdapterStatus};
 use crate::errors::Result;
 use tokio::sync::mpsc;
 use std::sync::Arc;
@@ -65,7 +65,7 @@ async fn test_adapter_wrapper_lifecycle() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn test_adapter_wrapper_as_trait_object() -> Result<()> {
     // Create a simple BaseAdapterActor
     let config = AdapterConfig::new("test", "test-002", "ws://localhost");
@@ -93,7 +93,7 @@ async fn test_adapter_wrapper_as_trait_object() -> Result<()> {
     );
     
     // Test: Can be used as Arc<dyn Adapter>
-    let adapter: Arc<dyn crate::adapters::Adapter> = Arc::new(wrapper);
+    let adapter: Arc<dyn crate::adapters::core::Adapter> = Arc::new(wrapper);
     
     // Test: Synchronous methods work
     assert_eq!(adapter.name(), "TestAdapter");

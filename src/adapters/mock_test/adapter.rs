@@ -1,6 +1,6 @@
 //! Mock Test Adapter - 定时生成测试事件的 Adapter
 
-use crate::adapters::{
+use crate::adapters::core::{
     Adapter, AdapterConfig, AdapterStatus,
     types::AdapterStatistics,
 };

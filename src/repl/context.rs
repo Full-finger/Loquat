@@ -3,7 +3,7 @@
 use crate::config::LoquatConfig;
 use crate::engine::traits::Engine;
 use crate::logging::traits::Logger;
-use crate::adapters::AdapterManager;
+use crate::adapters::core::manager::AdapterManager;
 use crate::plugins::PluginManager;
 use std::sync::Arc;
 
