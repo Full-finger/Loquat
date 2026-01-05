@@ -183,7 +183,7 @@ impl LoquatTui {
             let welcome_lines = vec![
                 Line::from(""),
                 Line::from(Span::styled(
-                    "╔════════════════════════════════════════════════════════╗",
+                    "╔══════════════════════════════════════════════════════╗",
                     Style::default().fg(Color::Cyan)
                 )),
                 Line::from(Span::styled(
@@ -191,7 +191,7 @@ impl LoquatTui {
                     Style::default().fg(Color::Cyan)
                 )),
                 Line::from(Span::styled(
-                    "╚════════════════════════════════════════════════════════╝",
+                    "╚══════════════════════════════════════════════════════╝",
                     Style::default().fg(Color::Cyan)
                 )),
                 Line::from(""),
@@ -224,61 +224,6 @@ impl LoquatTui {
         }
         
         Ok(())
-    }
-    
-    /// Draw the UI
-    fn draw_ui(&self, f: &mut Frame, ui_state: &UiState, app_state: &AppState) {
-        draw_ui_impl(f, ui_state, app_state);
-    }
-    
-    /// Draw header
-    fn draw_header(&self, f: &mut Frame, area: Rect, app_state: &AppState) {
-        draw_header_impl(f, area, app_state);
-    }
-    
-    /// Draw main content area
-    fn draw_main_content(&self, f: &mut Frame, area: Rect, ui_state: &UiState, app_state: &AppState) {
-        draw_main_content_impl(f, area, ui_state, app_state);
-    }
-    
-    /// Draw side panel
-    fn draw_side_panel(&self, f: &mut Frame, area: Rect, ui_state: &UiState) {
-        draw_side_panel_impl(f, area);
-    }
-    
-    /// Draw main panel
-    fn draw_main_panel(&self, f: &mut Frame, area: Rect, ui_state: &UiState, app_state: &AppState) {
-        draw_main_panel_impl(f, area, ui_state, app_state);
-    }
-    
-    /// Draw logs panel
-    fn draw_logs_panel(&self, f: &mut Frame, area: Rect, ui_state: &UiState) {
-        draw_logs_panel_impl(f, area, ui_state);
-    }
-    
-    /// Draw plugins panel
-    fn draw_plugins_panel(&self, f: &mut Frame, area: Rect, app_state: &AppState, ui_state: &UiState) {
-        draw_plugins_panel_impl(f, area);
-    }
-    
-    /// Draw adapters panel
-    fn draw_adapters_panel(&self, f: &mut Frame, area: Rect, app_state: &AppState, ui_state: &UiState) {
-        draw_adapters_panel_impl(f, area);
-    }
-    
-    /// Draw config panel
-    fn draw_config_panel(&self, f: &mut Frame, area: Rect, app_state: &AppState, ui_state: &UiState) {
-        draw_config_panel_impl(f, area);
-    }
-    
-    /// Draw engine panel
-    fn draw_engine_panel(&self, f: &mut Frame, area: Rect, app_state: &AppState, ui_state: &UiState) {
-        draw_engine_panel_impl(f, area);
-    }
-    
-    /// Draw command input
-    fn draw_command_input(&self, f: &mut Frame, area: Rect, ui_state: &UiState) {
-        draw_command_input_impl(f, area, ui_state);
     }
     
     /// Handle key events
@@ -651,10 +596,10 @@ fn draw_main_panel_impl(f: &mut Frame, area: Rect, ui_state: &UiState, app_state
     // Draw panel content based on active panel
     match ui_state.active_panel {
         ActivePanel::Logs => draw_logs_panel_impl(f, inner, ui_state),
-        ActivePanel::Plugins => draw_plugins_panel_impl(f, inner),
-        ActivePanel::Adapters => draw_adapters_panel_impl(f, inner),
-        ActivePanel::Config => draw_config_panel_impl(f, inner),
-        ActivePanel::Engine => draw_engine_panel_impl(f, inner),
+        ActivePanel::Plugins => draw_plugins_panel_impl(f, inner, app_state),
+        ActivePanel::Adapters => draw_adapters_panel_impl(f, inner, app_state),
+        ActivePanel::Config => draw_config_panel_impl(f, inner, app_state),
+        ActivePanel::Engine => draw_engine_panel_impl(f, inner, app_state),
     }
 }
     
@@ -707,139 +652,329 @@ fn draw_logs_panel_impl(f: &mut Frame, area: Rect, ui_state: &UiState) {
 }
     
 /// Independent implementation of draw_plugins_panel
-fn draw_plugins_panel_impl(f: &mut Frame, area: Rect) {
-    // Note: In a real implementation, we would pass app_state to access plugin_manager
-    // For now, showing a placeholder with instructions
-    let text_lines = vec![
-        Line::from(" Plugins Panel "),
-        Line::from(""),
-        Line::from(" This panel will display all loaded plugins"),
-        Line::from(" with their status and controls."),
-        Line::from(""),
-        Line::from(" Planned features:"),
-        Line::from("   • List all plugins with status indicators"),
-        Line::from("   • Show plugin type, version, path"),
-        Line::from("   • Load/unload plugins"),
-        Line::from("   • Enable/disable plugins"),
-        Line::from("   • View detailed plugin information"),
-        Line::from(""),
-        Line::from(" Keyboard shortcuts:"),
-        Line::from("   'l' - Load plugin"),
-        Line::from("   'u' - Unload selected plugin"),
-        Line::from("   Enter - View details"),
-        Line::from(""),
-        Line::from(Span::styled(
-            " (Full implementation requires app_state access)",
-            Style::default().fg(Color::Gray)
-        )),
-    ];
-    
-    let text = Text::from(text_lines);
-    let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: true })
-        .alignment(Alignment::Left);
-    
-    f.render_widget(paragraph, area);
+fn draw_plugins_panel_impl(f: &mut Frame, area: Rect, app_state: &AppState) {
+    if let Some(plugin_manager) = &app_state.context.plugin_manager {
+        let plugin_infos = plugin_manager.list_plugin_infos();
+        
+        if plugin_infos.is_empty() {
+            let text_lines = vec![
+                Line::from(" Plugins Panel "),
+                Line::from(""),
+                Line::from(" No plugins loaded."),
+                Line::from(""),
+                Line::from(" Keyboard shortcuts:"),
+                Line::from("   'l' - Load plugin"),
+                Line::from("   Enter - View details"),
+            ];
+            
+            let text = Text::from(text_lines);
+            let paragraph = Paragraph::new(text)
+                .wrap(Wrap { trim: true })
+                .alignment(Alignment::Left);
+            
+            f.render_widget(paragraph, area);
+            return;
+        }
+        
+        // Build plugin list
+        let mut lines = vec![
+            Line::from(" Plugins Panel "),
+            Line::from(""),
+        ];
+        
+        // Add summary
+        lines.push(Line::from(vec![
+            Span::raw("  Total: "),
+            Span::styled(
+                format!("{} ", plugin_infos.len()),
+                Style::default().fg(Color::Cyan)
+            ),
+            Span::raw("Active: "),
+            Span::styled(
+                format!("{} ", plugin_manager.active_plugin_count()),
+                Style::default().fg(Color::Green)
+            ),
+        ]));
+        lines.push(Line::from(""));
+        
+        // Add each plugin
+        for (index, plugin_info) in plugin_infos.iter().enumerate() {
+            let status_color = match &plugin_info.status {
+                crate::plugins::types::PluginStatus::Loaded => Color::Green,
+                crate::plugins::types::PluginStatus::Loading => Color::Yellow,
+                crate::plugins::types::PluginStatus::Error { .. } => Color::Red,
+                crate::plugins::types::PluginStatus::Disabled => Color::Gray,
+                crate::plugins::types::PluginStatus::Unloaded => Color::Yellow,
+            };
+            
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{}. ", index + 1),
+                    Style::default().fg(Color::DarkGray)
+                ),
+                Span::styled(
+                    format!("[{:?}] ", plugin_info.status),
+                    Style::default().fg(status_color).add_modifier(Modifier::BOLD)
+                ),
+                Span::styled(
+                    plugin_info.metadata.name.clone(),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                ),
+                Span::raw(" v"),
+                Span::styled(
+                    plugin_info.metadata.version.clone(),
+                    Style::default().fg(Color::Yellow)
+                ),
+            ]));
+            
+            lines.push(Line::from(vec![
+                Span::raw("    Type: "),
+                Span::styled(
+                    format!("{:?} ", plugin_info.metadata.plugin_type),
+                    Style::default().fg(Color::Cyan)
+                ),
+                Span::raw("Path: "),
+                Span::styled(
+                    plugin_info.metadata.entry_point.clone(),
+                    Style::default().fg(Color::Gray)
+                ),
+            ]));
+            lines.push(Line::from(""));
+        }
+        
+        // Add keyboard shortcuts at the end
+        lines.push(Line::from(""));
+        lines.push(Line::from(" Keyboard shortcuts:"));
+        lines.push(Line::from("   'l' - Load plugin"));
+        lines.push(Line::from("   'u' - Unload selected plugin"));
+        lines.push(Line::from("   Enter - View details"));
+        
+        let text = Text::from(lines);
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+        
+        f.render_widget(paragraph, area);
+    } else {
+        // Plugin manager not available
+        let text_lines = vec![
+            Line::from(" Plugins Panel "),
+            Line::from(""),
+            Line::from(" Plugin manager not available."),
+            Line::from(""),
+            Line::from(" This may indicate that plugins are not"),
+            Line::from(" configured or initialized."),
+        ];
+        
+        let text = Text::from(text_lines);
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+        
+        f.render_widget(paragraph, area);
+    }
 }
     
 /// Independent implementation of draw_adapters_panel
-fn draw_adapters_panel_impl(f: &mut Frame, area: Rect) {
-    // Note: In a real implementation, we would pass app_state to access adapter_manager
-    // For now, showing a placeholder with instructions
-    let text_lines = vec![
-        Line::from(" Adapters Panel "),
-        Line::from(""),
-        Line::from(" This panel will display all loaded adapters"),
-        Line::from(" with their status and controls."),
-        Line::from(""),
-        Line::from(" Planned features:"),
-        Line::from("   • List all adapters with status indicators"),
-        Line::from("   • Show adapter type, version, endpoint"),
-        Line::from("   • Reload/unload adapters"),
-        Line::from("   • View detailed adapter information"),
-        Line::from(""),
-        Line::from(" Keyboard shortcuts:"),
-        Line::from("   'r' - Reload selected adapter"),
-        Line::from("   'u' - Unload selected adapter"),
-        Line::from("   Enter - View details"),
-        Line::from(""),
-        Line::from(Span::styled(
-            " (Full implementation requires app_state access)",
-            Style::default().fg(Color::Gray)
-        )),
-    ];
-    
-    let text = Text::from(text_lines);
-    let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: true })
-        .alignment(Alignment::Left);
-    
-    f.render_widget(paragraph, area);
+fn draw_adapters_panel_impl(f: &mut Frame, area: Rect, app_state: &AppState) {
+    if let Some(_adapter_manager) = &app_state.context.adapter_manager {
+        // Note: Since list_adapter_infos() is async and draw functions are not async,
+        // we show a placeholder message for now
+        let text_lines = vec![
+            Line::from(" Adapters Panel "),
+            Line::from(""),
+            Line::from(" Adapter list requires async data loading."),
+            Line::from(""),
+            Line::from(" This will be implemented with async data"),
+            Line::from(" caching in the main TUI loop."),
+            Line::from(""),
+            Line::from(" Keyboard shortcuts:"),
+            Line::from("   'r' - Reload adapter"),
+            Line::from("   'u' - Unload adapter"),
+            Line::from("   Enter - View details"),
+        ];
+        
+        let text = Text::from(text_lines);
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+        
+        f.render_widget(paragraph, area);
+    } else {
+        // Adapter manager not available
+        let text_lines = vec![
+            Line::from(" Adapters Panel "),
+            Line::from(""),
+            Line::from(" Adapter manager not available."),
+            Line::from(""),
+            Line::from(" This may indicate that adapters are not"),
+            Line::from(" configured or initialized."),
+        ];
+        
+        let text = Text::from(text_lines);
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+        
+        f.render_widget(paragraph, area);
+    }
 }
     
 /// Independent implementation of draw_config_panel
-fn draw_config_panel_impl(f: &mut Frame, area: Rect) {
-    // Note: In a real implementation, we would pass app_state to access config
-    // For now, showing a placeholder with config structure
-    let text_lines = vec![
+fn draw_config_panel_impl(f: &mut Frame, area: Rect, app_state: &AppState) {
+    let config = &app_state.context.config;
+    
+    // Build config display
+    let mut lines = vec![
         Line::from(" Config Panel "),
         Line::from(""),
-        Line::from(" This panel displays current configuration."),
-        Line::from(""),
-        Line::from(" Configuration sections:"),
-        Line::from(Span::styled(
-            "  [General]",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        )),
-        Line::from("    Environment: dev/test/prod"),
-        Line::from("    Framework name"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  [Logging]",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        )),
-        Line::from("    Log level (Trace/Debug/Info/Warn/Error)"),
-        Line::from("    Log format (text/json)"),
-        Line::from("    Log output (console/file/combined)"),
-        Line::from("    Log file path"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  [Plugins]",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        )),
-        Line::from("    Plugin directory"),
-        Line::from("    Auto-load on startup"),
-        Line::from("    Hot-reload settings"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  [Adapters]",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        )),
-        Line::from("    Adapter directory"),
-        Line::from("    Auto-load on startup"),
-        Line::from("    Hot-reload settings"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  [Engine]",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        )),
-        Line::from("    Auto-route events"),
-        Line::from("    Auto-create channels"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  [Web]",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-        )),
-        Line::from("    Web server host/port"),
-        Line::from("    CORS settings"),
-        Line::from(""),
-        Line::from(Span::styled(
-            " (Full implementation requires app_state access)",
-            Style::default().fg(Color::Gray)
-        )),
     ];
     
-    let text = Text::from(text_lines);
+    // General section
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  [General]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Environment: "),
+        Span::styled(
+            config.general.environment.clone(),
+            Style::default().fg(Color::Yellow)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Framework: "),
+        Span::styled(
+            config.general.name.clone(),
+            Style::default().fg(Color::Green)
+        ),
+    ]));
+    lines.push(Line::from(""));
+    
+    // Logging section
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  [Logging]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Level: "),
+        Span::styled(
+            format!("{:?}", config.logging.level),
+            Style::default().fg(Color::Yellow)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Format: "),
+        Span::styled(
+            format!("{:?}", config.logging.format),
+            Style::default().fg(Color::Green)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Output: "),
+        Span::styled(
+            format!("{:?}", config.logging.output),
+            Style::default().fg(Color::Green)
+        ),
+    ]));
+    lines.push(Line::from(""));
+    
+    // Plugins section
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  [Plugins]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Directory: "),
+        Span::styled(
+            config.plugins.plugin_dir.clone(),
+            Style::default().fg(Color::Green)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Auto-load: "),
+        Span::styled(
+            config.plugins.auto_load.to_string(),
+            Style::default().fg(Color::Yellow)
+        ),
+    ]));
+    lines.push(Line::from(""));
+    
+    // Adapters section
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  [Adapters]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Directory: "),
+        Span::styled(
+            config.adapters.adapter_dir.clone(),
+            Style::default().fg(Color::Green)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Auto-load: "),
+        Span::styled(
+            config.adapters.auto_load.to_string(),
+            Style::default().fg(Color::Yellow)
+        ),
+    ]));
+    lines.push(Line::from(""));
+    
+    // Engine section
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  [Engine]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Auto-route: "),
+        Span::styled(
+            config.engine.auto_route.to_string(),
+            Style::default().fg(Color::Yellow)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Auto-create-channels: "),
+        Span::styled(
+            config.engine.auto_create_channels.to_string(),
+            Style::default().fg(Color::Yellow)
+        ),
+    ]));
+    lines.push(Line::from(""));
+    
+    // Web section
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  [Web]",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Host: "),
+        Span::styled(
+            config.web.host.clone(),
+            Style::default().fg(Color::Green)
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    Port: "),
+        Span::styled(
+            config.web.port.to_string(),
+            Style::default().fg(Color::Yellow)
+        ),
+    ]));
+    
+    let text = Text::from(lines);
     let paragraph = Paragraph::new(text)
         .wrap(Wrap { trim: true })
         .alignment(Alignment::Left);
@@ -848,74 +983,131 @@ fn draw_config_panel_impl(f: &mut Frame, area: Rect) {
 }
     
 /// Independent implementation of draw_engine_panel
-fn draw_engine_panel_impl(f: &mut Frame, area: Rect) {
-    // Note: In a real implementation, we would pass app_state to access engine
-    // For now, showing a placeholder with engine status structure
-    let text_lines = vec![
-        Line::from(" Engine Panel "),
-        Line::from(""),
-        Line::from(" This panel displays engine status and statistics."),
-        Line::from(""),
-        Line::from(" Planned features:"),
-        Line::from("   • Engine status (Running/Stopped/Idle)"),
-        Line::from("   • Event statistics"),
-        Line::from(Span::styled(
-            "     - Events processed",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from(Span::styled(
-            "     - Events per second",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from(Span::styled(
-            "     - Total events",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from("   • Channel statistics"),
-        Line::from(Span::styled(
-            "     - Active channels",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from(Span::styled(
-            "     - Channel throughput",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from("   • Router statistics"),
-        Line::from(Span::styled(
-            "     - Active routers",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from(Span::styled(
-            "     - Route success rate",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from("   • Configuration"),
-        Line::from(Span::styled(
-            "     - Auto-route",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from(Span::styled(
-            "     - Auto-create-channels",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from(Span::styled(
-            "     - Auto-initialize",
-            Style::default().fg(Color::Gray)
-        )),
-        Line::from("   • Engine uptime"),
-        Line::from(""),
-        Line::from(Span::styled(
-            " (Full implementation requires app_state access)",
-            Style::default().fg(Color::Gray)
-        )),
-    ];
-    
-    let text = Text::from(text_lines);
-    let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: true })
-        .alignment(Alignment::Left);
-    
-    f.render_widget(paragraph, area);
+fn draw_engine_panel_impl(f: &mut Frame, area: Rect, app_state: &AppState) {
+    if let Some(engine) = &app_state.context.engine {
+        let state = engine.try_state();
+        let stats = engine.stats();
+        let config = engine.config();
+        
+        // Build engine display
+        let mut lines = vec![
+            Line::from(" Engine Panel "),
+            Line::from(""),
+        ];
+        
+        // Status
+        let status_color = match state.status {
+            crate::engine::types::EngineStatus::Running => Color::Green,
+            crate::engine::types::EngineStatus::Stopped => Color::Red,
+            _ => Color::Yellow,
+        };
+        
+        lines.push(Line::from(vec![
+            Span::raw("  Status: "),
+            Span::styled(
+                format!("{:?}", state.status),
+                Style::default().fg(status_color).add_modifier(Modifier::BOLD)
+            ),
+        ]));
+        lines.push(Line::from(""));
+        
+        // Statistics - using correct field names
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  Statistics",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Total packages: "),
+            Span::styled(
+                stats.total_packages.to_string(),
+                Style::default().fg(Color::Green)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Successful packages: "),
+            Span::styled(
+                stats.successful_packages.to_string(),
+                Style::default().fg(Color::Green)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Failed packages: "),
+            Span::styled(
+                stats.failed_packages.to_string(),
+                Style::default().fg(Color::Red)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Active channels: "),
+            Span::styled(
+                stats.active_channels.to_string(),
+                Style::default().fg(Color::Yellow)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Avg processing time: "),
+            Span::styled(
+                format!("{} ms", stats.avg_processing_time_ms),
+                Style::default().fg(Color::Cyan)
+            ),
+        ]));
+        lines.push(Line::from(""));
+        
+        // Configuration
+        lines.push(Line::from(vec![
+            Span::styled(
+                "  Configuration",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Auto-route: "),
+            Span::styled(
+                config.auto_route.to_string(),
+                Style::default().fg(Color::Yellow)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Auto-create-channels: "),
+            Span::styled(
+                config.auto_create_channels.to_string(),
+                Style::default().fg(Color::Yellow)
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Auto-initialize: "),
+            Span::styled(
+                config.auto_initialize.to_string(),
+                Style::default().fg(Color::Yellow)
+            ),
+        ]));
+        
+        let text = Text::from(lines);
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+        
+        f.render_widget(paragraph, area);
+    } else {
+        // Engine not available
+        let text_lines = vec![
+            Line::from(" Engine Panel "),
+            Line::from(""),
+            Line::from(" Engine not available."),
+            Line::from(""),
+            Line::from(" This may indicate that to engine"),
+            Line::from(" is not configured or initialized."),
+        ];
+        
+        let text = Text::from(text_lines);
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+        
+        f.render_widget(paragraph, area);
+    }
 }
     
 /// Independent implementation of draw_command_input
