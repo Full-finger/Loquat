@@ -121,6 +121,8 @@ impl LoquatTui {
         self.print_welcome()?;
         
         // Main event loop
+        let mut update_counter: usize = 0;
+        
         loop {
             // Check for incoming logs
             while let Ok(log_msg) = self.app_state.log_receiver.try_recv() {
@@ -146,6 +148,18 @@ impl LoquatTui {
                     if self.ui_state.logs.len() > self.ui_state.max_logs {
                         self.ui_state.logs.remove(0);
                     }
+                }
+            }
+            
+            // Update adapter cache every 10 iterations (approximately 1 second)
+            update_counter = (update_counter + 1) % 10;
+            if update_counter == 0 {
+                if let Some(adapter_manager) = &self.app_state.context.adapter_manager {
+                    let adapter_infos = adapter_manager.list_adapter_infos().await;
+                    let active_count = adapter_manager.active_adapter_count().await;
+                    
+                    self.app_state.cached_adapter_infos = adapter_infos;
+                    self.app_state.cached_active_adapter_count = active_count;
                 }
             }
             
@@ -777,16 +791,15 @@ fn draw_plugins_panel_impl(f: &mut Frame, area: Rect, app_state: &AppState) {
     
 /// Independent implementation of draw_adapters_panel
 fn draw_adapters_panel_impl(f: &mut Frame, area: Rect, app_state: &AppState) {
-    if let Some(_adapter_manager) = &app_state.context.adapter_manager {
-        // Note: Since list_adapter_infos() is async and draw functions are not async,
-        // we show a placeholder message for now
+    // Use cached adapter data
+    let adapter_infos = &app_state.cached_adapter_infos;
+    let active_count = app_state.cached_active_adapter_count;
+    
+    if adapter_infos.is_empty() {
         let text_lines = vec![
             Line::from(" Adapters Panel "),
             Line::from(""),
-            Line::from(" Adapter list requires async data loading."),
-            Line::from(""),
-            Line::from(" This will be implemented with async data"),
-            Line::from(" caching in the main TUI loop."),
+            Line::from(" No adapters loaded."),
             Line::from(""),
             Line::from(" Keyboard shortcuts:"),
             Line::from("   'r' - Reload adapter"),
@@ -800,24 +813,89 @@ fn draw_adapters_panel_impl(f: &mut Frame, area: Rect, app_state: &AppState) {
             .alignment(Alignment::Left);
         
         f.render_widget(paragraph, area);
-    } else {
-        // Adapter manager not available
-        let text_lines = vec![
-            Line::from(" Adapters Panel "),
-            Line::from(""),
-            Line::from(" Adapter manager not available."),
-            Line::from(""),
-            Line::from(" This may indicate that adapters are not"),
-            Line::from(" configured or initialized."),
-        ];
-        
-        let text = Text::from(text_lines);
-        let paragraph = Paragraph::new(text)
-            .wrap(Wrap { trim: true })
-            .alignment(Alignment::Left);
-        
-        f.render_widget(paragraph, area);
+        return;
     }
+    
+    // Build adapter list
+    let mut lines = vec![
+        Line::from(" Adapters Panel "),
+        Line::from(""),
+    ];
+    
+    // Add summary
+    lines.push(Line::from(vec![
+        Span::raw("  Total: "),
+        Span::styled(
+            format!("{} ", adapter_infos.len()),
+            Style::default().fg(Color::Cyan)
+        ),
+        Span::raw("Active: "),
+        Span::styled(
+            format!("{} ", active_count),
+            Style::default().fg(Color::Green)
+        ),
+    ]));
+    lines.push(Line::from(""));
+    
+    // Add each adapter
+    for (index, adapter_info) in adapter_infos.iter().enumerate() {
+        let status_color = match adapter_info.status {
+            crate::adapters::core::status::AdapterStatus::Running => Color::Green,
+            crate::adapters::core::status::AdapterStatus::Ready => Color::Green,
+            crate::adapters::core::status::AdapterStatus::Stopped => Color::Gray,
+            crate::adapters::core::status::AdapterStatus::Error { .. } => Color::Red,
+            _ => Color::Yellow,
+        };
+        
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{}. ", index + 1),
+                Style::default().fg(Color::DarkGray)
+            ),
+            Span::styled(
+                format!("[{:?}] ", adapter_info.status),
+                Style::default().fg(status_color).add_modifier(Modifier::BOLD)
+            ),
+            Span::styled(
+                adapter_info.name.clone(),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            ),
+            Span::raw(" v"),
+            Span::styled(
+                adapter_info.version.clone(),
+                Style::default().fg(Color::Yellow)
+            ),
+        ]));
+        
+        lines.push(Line::from(vec![
+            Span::raw("    Type: "),
+            Span::styled(
+                format!("{} ", adapter_info.adapter_type),
+                Style::default().fg(Color::Cyan)
+            ),
+            Span::raw("ID: "),
+            Span::styled(
+                adapter_info.adapter_id.clone(),
+                Style::default().fg(Color::Gray)
+            ),
+        ]));
+        
+        lines.push(Line::from(""));
+    }
+    
+    // Add keyboard shortcuts at the end
+    lines.push(Line::from(""));
+    lines.push(Line::from(" Keyboard shortcuts:"));
+    lines.push(Line::from("   'r' - Reload adapter"));
+    lines.push(Line::from("   'u' - Unload adapter"));
+    lines.push(Line::from("   Enter - View details"));
+    
+    let text = Text::from(lines);
+    let paragraph = Paragraph::new(text)
+        .wrap(Wrap { trim: true })
+        .alignment(Alignment::Left);
+    
+    f.render_widget(paragraph, area);
 }
     
 /// Independent implementation of draw_config_panel

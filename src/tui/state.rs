@@ -16,6 +16,10 @@ pub struct AppState {
     pub command_registry: Arc<CommandRegistry>,
     /// Log receiver for real-time log display
     pub log_receiver: mpsc::UnboundedReceiver<TuiLogMessage>,
+    /// Cached adapter infos for TUI display
+    pub cached_adapter_infos: Vec<crate::adapters::core::types::AdapterInfo>,
+    /// Cached active adapter count
+    pub cached_active_adapter_count: usize,
 }
 
 impl AppState {
@@ -29,6 +33,8 @@ impl AppState {
             context: Arc::new(context),
             command_registry: Arc::new(command_registry),
             log_receiver,
+            cached_adapter_infos: Vec::new(),
+            cached_active_adapter_count: 0,
         }
     }
 }
@@ -43,6 +49,8 @@ impl Clone for AppState {
             context: self.context.clone(),
             command_registry: self.command_registry.clone(),
             log_receiver: dummy_rx,
+            cached_adapter_infos: self.cached_adapter_infos.clone(),
+            cached_active_adapter_count: self.cached_active_adapter_count,
         }
     }
 }
