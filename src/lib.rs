@@ -23,6 +23,7 @@ pub mod utils;
 pub mod cli;
 pub mod repl;
 pub mod tui;
+pub mod database;
 
 pub use aop::*;
 pub use config::*;

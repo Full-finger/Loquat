@@ -175,6 +175,25 @@ pub enum ChannelError {
     RemovalFailed(String),
 }
 
+/// Database related errors
+#[derive(Error, Debug, Clone)]
+pub enum DatabaseError {
+    #[error("Database connection failed: {0}")]
+    ConnectionFailed(String),
+
+    #[error("Query failed: {0}")]
+    QueryFailed(String),
+
+    #[error("Transaction failed: {0}")]
+    TransactionFailed(String),
+
+    #[error("Migration failed: {0}")]
+    MigrationFailed(String),
+
+    #[error("Database error: {0}")]
+    Database(String),
+}
+
 /// Main error wrapper for entire framework
 #[derive(Error, Debug, Clone)]
 pub enum Error {
@@ -198,6 +217,9 @@ pub enum Error {
 
     #[error("Channel error: {0}")]
     Channel(#[from] ChannelError),
+
+    #[error("Database error: {0}")]
+    Database(#[from] DatabaseError),
 
     #[error("IO error: {0}")]
     Io(String),
