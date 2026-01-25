@@ -1,4 +1,5 @@
 /target
+loquat-tool/target
 /logs
 .repl_history
 build_output.txt

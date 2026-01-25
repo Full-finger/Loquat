@@ -41,6 +41,7 @@ pub use plugins::*;
 pub use channel_manager::*;
 pub use engine::*;
 pub use shutdown::*;
+pub use database::*;
 
 /// Re-export common types for convenience
 pub mod prelude {
@@ -51,4 +52,8 @@ pub mod prelude {
     pub use crate::plugins::{Plugin, PluginManager, PluginType};
     pub use crate::config::loquat_config::PluginConfig;
     pub use crate::engine::{Engine, EngineConfig, EngineStats, EngineState};
+    pub use crate::database::{
+        DatabaseConnection, DatabaseConfig,
+        EventRepository, PluginRepository, AdapterRepository, LogRepository
+    };
 }

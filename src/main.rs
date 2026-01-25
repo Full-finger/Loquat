@@ -4,7 +4,7 @@
 
 use loquat::config::LoquatConfig;
 use loquat::engine::{Engine, StandardEngine};
-use loquat::cli::PluginCli;
+use loquat::cli::{PluginCli, RemoveCli};
 use loquat::config::loquat_config::{LoggingConfig, AdapterConfig};
 use loquat::repl::{ReplEngine, ReplContext};
 use loquat::logging::formatters::{JsonFormatter, TextFormatter};
@@ -74,10 +74,7 @@ impl LoquatApplication {
         let adapter_manager = Arc::new(AdapterManager::new(adapter_config, logger.clone()));
 
         // Register built-in adapter factories
-        use loquat::adapters::{ConsoleAdapterFactory, EchoAdapterFactory, MockTestFactory, NapCatAdapterFactory};
-        adapter_manager.register_factory(Box::new(ConsoleAdapterFactory))?;
-        adapter_manager.register_factory(Box::new(EchoAdapterFactory))?;
-        adapter_manager.register_factory(Box::new(MockTestFactory))?;
+        use loquat::adapters::NapCatAdapterFactory;
         adapter_manager.register_factory(Box::new(NapCatAdapterFactory))?;
 
         // Create shutdown coordinator with default order
@@ -662,6 +659,7 @@ enum Command {
     Run { environment: String, rebuild: bool, repl: bool, tui: bool },
     PluginCreate { args: Vec<String> },
     PluginInteractive,
+    Remove { args: Vec<String> },
 }
 
 fn parse_args() -> Command {
@@ -677,6 +675,12 @@ fn parse_args() -> Command {
             // Interactive plugin creation
             return Command::PluginInteractive;
         }
+    }
+    
+    // Check for remove command
+    if args.len() >= 2 && args[1] == "remove" {
+        let remove_args: Vec<String> = args.iter().skip(1).cloned().collect();
+        return Command::Remove { args: remove_args };
     }
     
     // Default: run application
@@ -724,9 +728,9 @@ async fn main() -> Result<()> {
         Command::PluginCreate { args } => {
             // Run plugin template generator
             println!();
-            println!("╔══════════════════════════════════════════════════════════╗");
+            println!("╔════════════════════════════════════════════════════════╗");
             println!("║              Loquat Plugin Template Generator              ║");
-            println!("╚══════════════════════════════════════════════════════════╝");
+            println!("╚════════════════════════════════════════════════════════╝");
             println!();
             
             let mut cli = PluginCli::new();
@@ -741,6 +745,21 @@ async fn main() -> Result<()> {
             // Run interactive plugin creator
             let mut cli = PluginCli::new();
             if let Err(e) = cli.run_interactive() {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+            
+            return Ok(());
+        }
+        Command::Remove { args } => {
+            // Run remove command
+            println!();
+            println!("╔════════════════════════════════════════════════════════╗");
+            println!("║              Loquat Remove Command                     ║");
+            println!("╚════════════════════════════════════════════════════════╝");
+            println!();
+            
+            if let Err(e) = RemoveCli::run_from_args(args) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }

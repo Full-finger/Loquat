@@ -7,9 +7,6 @@
 pub mod core;
 
 // Adapter implementations
-pub mod console;
-pub mod echo;
-pub mod mock_test;
 pub mod napcat;
 
 // Actor-based adapter support
@@ -22,9 +19,6 @@ pub mod utils;
 pub use core::*;
 
 // Re-export adapter implementations
-pub use console::*;
-pub use echo::*;
-pub use mock_test::*;
 pub use napcat::*;
 
 // Re-export actor module
