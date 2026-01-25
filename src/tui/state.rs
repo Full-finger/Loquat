@@ -317,16 +317,17 @@ mod tests {
 
     #[test]
     fn test_active_panel_navigation() {
-        let mut panel = ActivePanel::Logs;
+        let panel = ActivePanel::Logs;
         
-        panel = panel.next();
-        assert_eq!(panel, ActivePanel::Plugins);
+        // Test next() sequence: Logs -> Outputs -> Plugins -> Adapters
+        assert_eq!(panel.next(), ActivePanel::Outputs);
+        assert_eq!(ActivePanel::Outputs.next(), ActivePanel::Plugins);
+        assert_eq!(ActivePanel::Plugins.next(), ActivePanel::Adapters);
         
-        panel = panel.next();
-        assert_eq!(panel, ActivePanel::Adapters);
-        
-        panel = panel.prev();
-        assert_eq!(panel, ActivePanel::Plugins);
+        // Test prev() sequence: Logs -> Engine -> Config -> Adapters
+        assert_eq!(panel.prev(), ActivePanel::Engine);
+        assert_eq!(ActivePanel::Engine.prev(), ActivePanel::Config);
+        assert_eq!(ActivePanel::Config.prev(), ActivePanel::Adapters);
     }
 
     #[test]
