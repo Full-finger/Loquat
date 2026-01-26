@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+import "common.proto";
+
+package loquat.engine;
+
+// Engine服务 - 插件运行时
+service EngineService {
+    // 执行控制
+    rpc Start(Empty) returns (Empty);
+    rpc Stop(Empty) returns (Empty);
+    rpc Pause(Empty) returns (Empty);
+    rpc Resume(Empty) returns (Empty);
+    rpc Reload(Empty) returns (Empty);
+    rpc GetStatus(Empty) returns (EngineStatus);
+    
+    // 插件管理
+    rpc LoadPlugin(PluginPath) returns (PluginStatus);
+    rpc UnloadPlugin(PluginName) returns (Empty);
+    rpc ReloadPlugin(PluginName) returns (PluginStatus);
+    rpc ListPlugins(Empty) returns (PluginList);
+    rpc GetPluginInfo(PluginName) returns (loquat.common.PluginInfo);
+    
+    // 适配器管理
+    rpc LoadAdapter(AdapterPath) returns (AdapterStatus);
+    rpc UnloadAdapter(AdapterName) returns (Empty);
+    rpc ListAdapters(Empty) returns (AdapterList);
+    
+    // 事件处理
+    rpc SendEvent(loquat.common.Event) returns (loquat.common.EventResult);
+    rpc StreamEvents(Empty) returns (stream loquat.common.Event);
+    
+    // 配置
+    rpc GetConfig(Empty) returns (loquat.common.Config);
+    rpc UpdateConfig(loquat.common.Config) returns (Empty);
+    
+    // 监控
+    rpc GetMetrics(Empty) returns (MetricSummary);
+    rpc StreamLogs(Empty) returns (stream loquat.common.LogEntry);
+    
+    // 健康检查
+    rpc HealthCheck(Empty) returns (loquat.common.HealthStatus);
+    
+    // Engine信息
+    rpc GetEngineInfo(Empty) returns (EngineInfo);
+}
+
+// Engine状态
+message EngineStatus {
+    loquat.common.EngineStatus status = 1;
+    string message = 2;
+    google.protobuf.Timestamp timestamp = 3;
+    int32 plugin_count = 4;
+    int32 adapter_count = 5;
+}
+
+// Engine信息
+message EngineInfo {
+    string id = 1;
+    string name = 2;
+    string version = 3;
+    string environment = 4;
+    google.protobuf.Timestamp start_time = 5;
+    google.protobuf.Timestamp uptime = 6;
+    map<string, string> metadata = 7;
+}
+
+// 插件列表
+message PluginList {
+    repeated loquat.common.PluginInfo plugins = 1;
+}
+
+// 插件路径
+message PluginPath {
+    string path = 1;
+    string plugin_type = 2;
+    map<string, string> options = 3;
+}
+
+// 适配器路径
+message AdapterPath {
+    string path = 1;
+    string adapter_type = 2;
+    map<string, string> config = 3;
+}
+
+// 适配器名称
+message AdapterName {
+    string name = 1;
+}
+
+// 适配器状态
+message AdapterStatus {
+    bool loaded = 1;
+    string message = 2;
+    google.protobuf.Timestamp loaded_at = 3;
+}
+
+// 适配器列表
+message AdapterList {
+    repeated AdapterInfo adapters = 1;
+}
+
+// 适配器信息
+message AdapterInfo {
+    string name = 1;
+    string adapter_type = 2;
+    string version = 3;
+    bool enabled = 4;
+    string status = 5;
+    google.protobuf.Timestamp loaded_at = 6;
+}
+
+// 指标摘要
+message MetricSummary {
+    map<string, double> metrics = 1;
+    google.protobuf.Timestamp timestamp = 2;
+    int32 events_processed = 3;
+    int32 events_sent = 4;
+    int32 errors = 5;
+}

@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package loquat.common;
+
+// 空消息，用于无参数的RPC调用
+message Empty {}
+
+// 错误信息
+message Error {
+    string code = 1;
+    string message = 2;
+    map<string, string> details = 3;
+}
+
+// 引擎ID
+message EngineId {
+    string id = 1;
+}
+
+// 引擎信息
+message EngineInfo {
+    string id = 1;
+    string name = 2;
+    string version = 3;
+    string host = 4;
+    int32 port = 5;
+    map<string, string> metadata = 6;
+}
+
+// 引擎状态
+enum EngineStatus {
+    STATUS_UNKNOWN = 0;
+    STARTING = 1;
+    RUNNING = 2;
+    STOPPING = 3;
+    STOPPED = 4;
+    ERROR = 5;
+}
+
+// 健康状态
+message HealthStatus {
+    bool healthy = 1;
+    string message = 2;
+    google.protobuf.Timestamp last_check = 3;
+}
+
+// 配置
+message Config {
+    map<string, string> values = 1;
+    string environment = 2;
+}
+
+// 插件信息
+message PluginInfo {
+    string name = 1;
+    string version = 2;
+    string plugin_type = 3;
+    bool enabled = 4;
+    string status = 5;
+}
+
+// 插件路径
+message PluginPath {
+    string path = 1;
+    string name = 2;
+}
+
+// 插件名称
+message PluginName {
+    string name = 1;
+}
+
+// 插件状态
+message PluginStatus {
+    bool loaded = 1;
+    string message = 2;
+    google.protobuf.Timestamp loaded_at = 3;
+}
+
+// 事件
+message Event {
+    string event_id = 1;
+    string event_type = 2;
+    bytes payload = 3;
+    google.protobuf.Timestamp timestamp = 4;
+    map<string, string> metadata = 5;
+}
+
+// 事件结果
+message EventResult {
+    bool success = 1;
+    string message = 2;
+    bytes result = 3;
+}
+
+// 指标
+message Metric {
+    string name = 1;
+    double value = 2;
+    google.protobuf.Timestamp timestamp = 3;
+    map<string, string> labels = 4;
+}
+
+// 日志条目
+message LogEntry {
+    google.protobuf.Timestamp timestamp = 1;
+    string level = 2;
+    string message = 3;
+    string component = 4;
+    map<string, string> fields = 5;
+}

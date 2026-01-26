@@ -1,40 +1,68 @@
-[package]
-name = "loquat"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = [
+    "loquat-tool",
+    "loquat-kernel",
+    "loquat-engine",
+]
 
-[dependencies]
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "time", "signal"] }
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+authors = ["Loquat Contributors"]
+license = "MIT"
+repository = "https://github.com/Full-finger/Loquat"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
 tokio-util = "0.7"
-tokio-tungstenite = "0.20"
-futures-util = "0.3"
-rustyline = "13.0"
-colored = "2.1"
-ctrlc = "3.4"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "1.0"
-async-trait = "0.1"
-uuid = { version = "1.0", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["trace", "cors"] }
-atty = "0.2"
-tempfile = "3.8"
 toml = "0.8"
-regex = "1.10"
-merge = "0.2.0"
 
-# Database dependencies
-rusqlite = { version = "0.30", features = ["bundled"] }
+# gRPC
+tonic = "0.11"
+tonic-build = "0.11"
+prost = "0.12"
 
-# TUI dependencies
-ratatui = { version = "0.24", features = ["all-widgets"] }
-crossterm = { version = "0.27" }
-gethostname = "1.1.0"
+# HTTP/Web
+axum = "0.7"
+hyper = "1.0"
+tower = "0.4"
+tower-http = "0.5"
 
-[dev-dependencies]
-tokio-test = "0.4"
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.1"
+indicatif = "0.17"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# System
+sysinfo = "0.30"
+nix = { version = "0.27", features = ["process", "resource"] }
+
+# Utilities
+lazy_static = "1.4"
+parking_lot = "0.12"
+
+[workspace.metadata.release]
+pre-release-replacements = [
+    { file = "README.md", search = "version = \"[^\"]+\"", replace = "version = \"{{version}}\"" },
+]

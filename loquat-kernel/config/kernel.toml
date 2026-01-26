@@ -1,0 +1,42 @@
+[kernel]
+# Kernel服务配置
+bind_address = "127.0.0.1:50051"
+web_address = "127.0.0.1:8080"
+max_engines = 10
+kernel_id = "kernel-001"
+
+[engine]
+# Engine默认配置
+default_host = "127.0.0.1"
+default_port_range = [50052, 50151]
+auto_restart = true
+restart_delay_seconds = 5
+
+[monitoring]
+# 监控配置
+health_check_interval = 30
+metric_collection_interval = 10
+enable_auto_restart = true
+restart_failure_threshold = 3
+
+[logging]
+# 日志配置
+level = "info"
+output = "file"
+file_path = "logs/kernel.log"
+format = "json"
+max_file_size = "100MB"
+max_files = 10
+
+[resource]
+# 资源限制
+max_memory_per_engine = "1GB"
+max_cpu_percent = 80
+max_engines_per_user = 5
+
+[security]
+# 安全配置
+enable_sandbox = true
+allow_network = true
+allowed_hosts = ["127.0.0.1", "localhost"]
+require_authentication = false

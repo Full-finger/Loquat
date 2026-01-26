@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+import "common.proto";
+
+package loquat.kernel;
+
+// Kernel服务 - 管理Engine生命周期
+service KernelService {
+    // Engine生命周期管理
+    rpc RegisterEngine(EngineInfo) returns (EngineId);
+    rpc UnregisterEngine(EngineId) returns (Empty);
+    rpc RestartEngine(EngineId) returns (EngineStatus);
+    rpc StopEngine(EngineId) returns (Empty);
+    rpc GetEngineStatus(EngineId) returns (EngineStatus);
+    
+    // Engine列表
+    rpc ListEngines(Empty) returns (EngineList);
+    rpc GetEngineInfo(EngineId) returns (EngineInfo);
+    
+    // 健康检查
+    rpc HealthCheck(EngineId) returns (HealthStatus);
+    
+    // 配置管理
+    rpc GetConfig(Empty) returns (Config);
+    rpc UpdateConfig(Config) returns (Empty);
+    rpc ReloadConfig(Empty) returns (Empty);
+    
+    // 监控和指标
+    rpc StreamMetrics(Empty) returns (stream Metric);
+    rpc StreamLogs(EngineId) returns (stream LogEntry);
+    
+    // 系统信息
+    rpc GetSystemInfo(Empty) returns (SystemInfo);
+    rpc Shutdown(Empty) returns (Empty);
+}
+
+// Engine列表
+message EngineList {
+    repeated EngineInfo engines = 1;
+}
+
+// 引擎状态（带时间戳）
+message EngineStatus {
+    loquat.common.EngineStatus status = 1;
+    string message = 2;
+    google.protobuf.Timestamp timestamp = 3;
+    string pid = 4;
+}
+
+// 系统信息
+message SystemInfo {
+    string version = 1;
+    string kernel_id = 2;
+    google.protobuf.Timestamp start_time = 3;
+    google.protobuf.Timestamp uptime = 4;
+    int32 engine_count = 5;
+    int32 max_engines = 6;
+}
