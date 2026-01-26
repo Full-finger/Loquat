@@ -59,6 +59,9 @@ pub fn list_adapters() -> Result<()> {
 pub fn list_plugins() -> Result<()> {
     print_step("Listing plugins");
     
+    // Get project root
+    let project_root = crate::utils::file_ops::get_project_root()?;
+    
     let plugins = code_parser::list_plugins()?;
     
     if plugins.is_empty() {
@@ -73,10 +76,37 @@ pub fn list_plugins() -> Result<()> {
     println!();
     
     for (i, plugin) in plugins.iter().enumerate() {
-        println!("  {}. {}", i + 1, plugin.cyan());
+        // Determine plugin type from config
+        let config_path = project_root.join("plugins").join(plugin).join("config.json");
+        let plugin_type = if std::path::Path::new(&config_path).exists() {
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    json.get("plugin_type")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "rust".to_string())
+                } else {
+                    "rust".to_string()
+                }
+            } else {
+                "rust".to_string()
+            }
+        } else {
+            "rust".to_string()
+        };
+        
+        let plugin_type = plugin_type.as_str();
+        
+        // Format plugin type with color
+        let plugin_type_display = match plugin_type {
+            "python" => "Python".green(),
+            "javascript" => "JavaScript".yellow(),
+            _ => "Rust".cyan(),
+        };
+        
+        println!("  {}. {} [{}]", i + 1, plugin.cyan(), plugin_type_display);
         
         // Try to read plugin config
-        let config_path = format!("plugins/{}/config.json", plugin);
         if std::path::Path::new(&config_path).exists() {
             if let Ok(content) = std::fs::read_to_string(&config_path) {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {

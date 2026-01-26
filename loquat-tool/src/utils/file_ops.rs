@@ -94,20 +94,29 @@ pub fn list_directory(path: &str) -> Result<Vec<PathBuf>> {
 pub fn get_project_root() -> Result<PathBuf> {
     let current_dir = std::env::current_dir()?;
     
-    // Look for Cargo.toml or adapters directory
+    // Look for Loquat main project root (must have both adapters and plugins directories)
     for dir in current_dir.ancestors() {
-        if dir.join("Cargo.toml").exists() || dir.join("adapters").exists() {
+        // Check if this is the Loquat main project (has adapters, plugins, and Cargo.toml)
+        if dir.join("adapters").is_dir() && 
+           dir.join("plugins").is_dir() && 
+           dir.join("Cargo.toml").is_file() {
             return Ok(dir.to_path_buf());
         }
     }
     
-    Err(anyhow::anyhow!("Could not find Loquat project root. Please run this command from a Loquat project directory."))
+    Err(anyhow::anyhow!(
+        "Could not find Loquat project root. \n\
+         Please run this command from a Loquat project directory.\n\
+         The directory should contain: adapters/, plugins/, and Cargo.toml"
+    ))
 }
 
 /// Check if we're in a Loquat project
 pub fn is_loquat_project() -> bool {
     if let Ok(root) = get_project_root() {
-        root.join("Cargo.toml").exists() && root.join("src").exists()
+        root.join("adapters").is_dir() && 
+        root.join("plugins").is_dir() && 
+        root.join("Cargo.toml").is_file()
     } else {
         false
     }

@@ -193,12 +193,15 @@ pub fn list_adapters() -> Result<Vec<String>> {
 
 /// Get list of plugins from plugins directory
 pub fn list_plugins() -> Result<Vec<String>> {
-    let plugins_dir = "plugins";
-    if !std::path::Path::new(plugins_dir).exists() {
+    // Get project root
+    let project_root = super::file_ops::get_project_root()?;
+    let plugins_dir = project_root.join("plugins");
+    
+    if !plugins_dir.exists() {
         return Ok(vec![]);
     }
     
-    let entries = fs::read_dir(plugins_dir)
+    let entries = fs::read_dir(&plugins_dir)
         .with_context(|| format!("Failed to read plugins directory"))?;
     
     let mut plugins = Vec::new();

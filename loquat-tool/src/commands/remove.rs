@@ -80,9 +80,14 @@ pub fn remove_adapter(name: &str, force: bool) -> Result<()> {
 pub fn remove_plugin(name: &str, force: bool) -> Result<()> {
     print_step(&format!("Removing plugin '{}'", name));
     
+    // Get project root to locate plugins directory
+    let project_root = file_ops::get_project_root()?;
+    
     // Check if plugin exists
-    let plugin_dir = format!("plugins/{}", name);
-    if !file_ops::directory_exists(&plugin_dir) {
+    let plugin_dir = project_root.join("plugins").join(name);
+    let plugin_dir_str = plugin_dir.to_string_lossy().to_string();
+    
+    if !file_ops::directory_exists(&plugin_dir_str) {
         print_warning(&format!("Plugin '{}' does not exist", name));
         return Ok(());
     }
@@ -97,8 +102,8 @@ pub fn remove_plugin(name: &str, force: bool) -> Result<()> {
     }
     
     // Remove plugin directory
-    file_ops::remove_directory(&plugin_dir)?;
-    print_success(&format!("Removed directory: {}", plugin_dir));
+    file_ops::remove_directory(&plugin_dir_str)?;
+    print_success(&format!("Removed directory: {}", plugin_dir_str));
     
     // Print summary
     println!();

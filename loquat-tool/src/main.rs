@@ -64,6 +64,9 @@ enum NewTarget {
     Plugin {
         #[arg(help = "Name of the plugin")]
         name: String,
+        
+        #[arg(short, long, default_value = "rust", help = "Plugin type: rust, python, javascript")]
+        plugin_type: String,
     },
 }
 
@@ -112,8 +115,8 @@ fn main() -> anyhow::Result<()> {
                 NewTarget::Adapter { name } => {
                     commands::new::create_adapter(&name)?;
                 }
-                NewTarget::Plugin { name } => {
-                    commands::new::create_plugin(&name)?;
+                NewTarget::Plugin { name, plugin_type } => {
+                    commands::new::create_plugin(&name, &plugin_type)?;
                 }
             }
         }

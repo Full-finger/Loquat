@@ -2,6 +2,13 @@
 
 use super::helpers::{to_struct_name};
 
+/// Plugin type enum
+pub enum PluginType {
+    Rust,
+    Python,
+    JavaScript,
+}
+
 /// Generate adapter files
 pub fn adapter_files(name: &str) -> Vec<(String, String)> {
     let struct_name = to_struct_name(name);
@@ -156,25 +163,25 @@ pub fn adapter_config(name: &str) -> String {
 "#, Name=name)
 }
 
-/// Generate plugin files
-pub fn plugin_files(name: &str) -> Vec<(String, String)> {
+/// Generate plugin files (returns relative paths from plugin directory)
+pub fn plugin_files(name: &str) -> Vec<(&'static str, String)> {
     let struct_name = to_struct_name(name);
     
     vec![
         (
-            format!("plugins/{}/src/lib.rs", name),
+            "src/lib.rs",
             plugin_lib_impl(name, &struct_name),
         ),
         (
-            format!("plugins/{}/Cargo.toml", name),
+            "Cargo.toml",
             plugin_cargo_toml(name),
         ),
         (
-            format!("plugins/{}/config.json", name),
+            "config.json",
             plugin_config(name),
         ),
         (
-            format!("plugins/{}/README.md", name),
+            "README.md",
             plugin_readme(name),
         ),
     ]
@@ -256,6 +263,7 @@ fn plugin_config(name: &str) -> String {
   "name": "{Name}",
   "version": "0.1.0",
   "description": "{Name} plugin for Loquat framework",
+  "plugin_type": "rust",
   "enabled": true,
   "dependencies": [],
   "permissions": []
@@ -266,11 +274,359 @@ fn plugin_config(name: &str) -> String {
 fn plugin_readme(name: &str) -> String {
     format!(r#"# {name} Plugin
 
-A plugin for the Loquat framework.
+A plugin for Loquat framework.
 
 ## Installation
 
 Copy this plugin to your Loquat `plugins/` directory.
+
+## Configuration
+
+Edit `plugins/{name}/config.json` to configure this plugin.
+
+## Usage
+
+The plugin will automatically load when Loquat starts.
+
+## Commands
+
+- `hello` - Say hello from this plugin
+
+## Development
+
+Edit `src/lib.rs` to modify plugin behavior.
+
+Build with:
+```bash
+cargo build --release
+```
+"#, name=name)
+}
+
+/// Generate Python plugin files (returns relative paths from plugin directory)
+pub fn python_plugin_files(name: &str) -> Vec<(&'static str, String)> {
+    let module_name = name.replace("-", "_");
+    let class_name: String = name.replace("-", "_").split('_').map(|s| {
+        let mut chars = s.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first) => first.to_uppercase().chain(chars).collect(),
+        }
+    }).collect::<Vec<_>>().join("");
+    
+    vec![
+        (
+            "__init__.py",
+            python_init_impl(name, &class_name),
+        ),
+        (
+            "plugin.py",
+            python_plugin_impl(name, &class_name),
+        ),
+        (
+            "requirements.txt",
+            python_requirements(name),
+        ),
+        (
+            "pyproject.toml",
+            python_pyproject(name, &module_name),
+        ),
+        (
+            "config.json",
+            python_config(name),
+        ),
+        (
+            "README.md",
+            python_readme(name),
+        ),
+    ]
+}
+
+fn python_init_impl(name: &str, class_name: &str) -> String {
+    format!(r#"# {name} Python Plugin Package
+
+# This package provides a Loquat plugin implementation in Python.
+
+from .plugin import {Class}Plugin
+
+__all__ = ["{Class}Plugin"]
+"#, name=name, Class=class_name)
+}
+
+fn python_plugin_impl(name: &str, class_name: &str) -> String {
+    format!(r#"# {class_name} Plugin Implementation
+
+# This module provides a Python implementation of a Loquat plugin.
+
+from typing import Optional, Dict, Any
+import json
+
+
+class {class_name}Plugin:
+    """A Python plugin for Loquat framework."""
+    
+    def __init__(self):
+        """Initialize plugin."""
+        self._name = "{name_val}"
+        self._version = "0.1.0"
+        self._description = "{name_val} plugin for Loquat framework"
+        self._config: Dict[str, Any] = {{}}
+        self._initialized = False
+    
+    # Required Plugin Methods
+    # ========================
+    
+    @property
+    def name(self) -> str:
+        """Get plugin name."""
+        return self._name
+    
+    @property
+    def version(self) -> str:
+        """Get plugin version."""
+        return self._version
+    
+    @property
+    def description(self) -> str:
+        """Get plugin description."""
+        return self._description
+    
+    async def init(self) -> None:
+        """Initialize plugin.
+        
+        This is called when plugin is loaded.
+        """
+        print(f"Initializing {{self._name}} plugin...")
+        self._initialized = True
+    
+    async def load(self) -> None:
+        """Load plugin.
+        
+        This is called after init() and allows plugin to set up resources.
+        """
+        print(f"Loading {{self._name}} plugin...")
+    
+    async def unload(self) -> None:
+        """Unload plugin.
+        
+        This is called when plugin is being unloaded or reloaded.
+        """
+        print(f"Unloading {{self._name}} plugin...")
+        self._initialized = False
+    
+    async def reload(self) -> None:
+        """Reload plugin.
+        
+        This is called to hot-reload plugin.
+        """
+        await self.unload()
+        await self.init()
+        await self.load()
+    
+    @property
+    def is_ready(self) -> bool:
+        """Check if plugin is ready to handle events."""
+        return self._initialized
+    
+    async def update_config(self, config: Dict[str, Any]) -> None:
+        """Update plugin configuration.
+        
+        Args:
+            config: New configuration dictionary
+        """
+        self._config.update(config)
+        print(f"Configuration updated for {{self._name}}")
+    
+    @property
+    def health_status(self) -> str:
+        """Get plugin health status.
+        
+        Returns:
+            One of: "healthy", "degraded", "unhealthy"
+        """
+        return "healthy"
+    
+    # Event and Command Handlers
+    # ==========================
+    
+    async def on_event(self, event: Dict[str, Any]) -> None:
+        """Handle an event from Loquat.
+        
+        Args:
+            event: Event data as a dictionary
+        """
+        print(f"{{self._name}} received event: {{json.dumps(event, indent=2)}}")
+        
+        # Add your event handling logic here
+        event_type = event.get("type", "unknown")
+        
+        if event_type == "message":
+            await self._handle_message(event)
+        elif event_type == "notice":
+            await self._handle_notice(event)
+    
+    async def on_command(self, command: str, args: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """Handle a command sent to plugin.
+        
+        Args:
+            command: Command name
+            args: Command arguments (optional)
+            
+        Returns:
+            Response string if command was handled, None otherwise
+        """
+        print(f"{{self._name}} received command: {{command}}")
+        
+        if command == "hello":
+            return f"Hello from {{self._name}} plugin!"
+        
+        # Return None if command was not handled
+        return None
+    
+    # Plugin-Specific Methods
+    # =======================
+    
+    async def _handle_message(self, event: Dict[str, Any]) -> None:
+        """Handle message events.
+        
+        Args:
+            event: Message event data
+        """
+        # Add your message handling logic here
+        pass
+    
+    async def _handle_notice(self, event: Dict[str, Any]) -> None:
+        """Handle notice events.
+        
+        Args:
+            event: Notice event data
+        """
+        # Add your notice handling logic here
+        pass
+    
+    # Utility Methods
+    # ===============
+    
+    def get_config(self) -> Dict[str, Any]:
+        """Get current plugin configuration."""
+        return self._config.copy()
+    
+    def set_config(self, config: Dict[str, Any]) -> None:
+        """Set plugin configuration.
+        
+        Args:
+            config: New configuration dictionary
+        """
+        self._config = config.copy()
+
+
+# Plugin Factory
+# ==============
+
+def create_plugin() -> {class_name}Plugin:
+    """Create a new instance of plugin.
+    
+    This function is called by Loquat to create plugin instances.
+    
+    Returns:
+        A new plugin instance
+    """
+    return {class_name}Plugin()
+
+
+# Export plugin factory
+__all__ = ["create_plugin", "{class_name}Plugin"]
+"#, class_name=class_name, name_val=name)
+}
+
+fn python_requirements(name: &str) -> String {
+    format!(r#"# {name} Plugin Dependencies
+
+# Core dependencies
+# Add required Python packages here
+# Example:
+# requests>=2.31.0
+# pydantic>=2.0.0
+
+# Loquat Python SDK (when available)
+# loquat-python>=0.1.0
+"#, name=name)
+}
+
+fn python_pyproject(name: &str, module_name: &str) -> String {
+    format!(r#"[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{name}-plugin"
+version = "0.1.0"
+description = "{name} plugin for Loquat framework"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {{text = "MIT"}}
+authors = [
+    {{name = "Your Name", email = "your.email@example.com"}},
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["{module_name}*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+"#, name=name, module_name=module_name)
+}
+
+fn python_config(name: &str) -> String {
+    let description = format!("{} plugin for Loquat framework", name);
+    let json_obj = serde_json::json! {{
+        "name": name,
+        "version": "0.1.0",
+        "description": description,
+        "plugin_type": "python",
+        "enabled": true,
+        "entry_point": "plugin.py",
+        "dependencies": [],
+        "permissions": [],
+        "config": serde_json::json! {{}},
+    }};
+    serde_json::to_string_pretty(&json_obj).unwrap()
+}
+
+fn python_readme(name: &str) -> String {
+    format!(r#"# {} Plugin (Python)
+
+A Python plugin for Loquat framework.
+
+## Installation
+
+Copy this plugin to your Loquat `plugins/` directory.
+
+## Requirements
+
+- Python 3.8 or higher
+- Dependencies listed in `requirements.txt`
+
+Install dependencies:
+```bash
+cd plugins/{}
+pip install -r requirements.txt
+```
 
 ## Configuration
 
@@ -286,11 +642,34 @@ The plugin will automatically load when Loquat starts.
 
 ## Development
 
-Edit `src/lib.rs` to modify the plugin behavior.
+Edit `plugin.py` to modify plugin behavior.
 
-Build with:
+### Plugin Structure
+
+- `__init__.py` - Package initialization
+- `plugin.py` - Main plugin implementation
+- `requirements.txt` - Python dependencies
+- `pyproject.toml` - Project configuration
+- `config.json` - Loquat plugin configuration
+
+### Testing
+
+Run tests with:
 ```bash
-cargo build --release
+cd plugins/{}
+pytest
 ```
-"#, name)
+
+### Code Style
+
+Format code with Black:
+```bash
+black plugin.py
+```
+
+Type check with mypy:
+```bash
+mypy plugin.py
+```
+"#, name, name, name, name)
 }

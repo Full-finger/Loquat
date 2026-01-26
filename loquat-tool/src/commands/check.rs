@@ -95,6 +95,9 @@ pub fn check_project() -> Result<()> {
     print_step("Checking plugins");
     println!();
     
+    // Get project root
+    let project_root = file_ops::get_project_root()?;
+    
     // Check plugins
     let plugins = code_parser::list_plugins()?;
     
@@ -104,17 +107,78 @@ pub fn check_project() -> Result<()> {
         println!("Found {} plugin(s):", plugins.len());
         
         for plugin in &plugins {
-            let plugin_dir = format!("plugins/{}", plugin);
+        let plugin_dir = project_root.join("plugins").join(plugin);
+        
+        if plugin_dir.exists() {
+            // Determine plugin type from config if available
+            let config_path = plugin_dir.join("config.json");
+            let config_path_str = config_path.to_string_lossy().to_string();
+            let is_python = if std::path::Path::new(&config_path).exists() {
+                if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                        json.get("plugin_type")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s == "python")
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
             
-            if file_ops::directory_exists(&plugin_dir) {
-                let has_lib = file_ops::file_exists(&format!("{}/src/lib.rs", plugin_dir));
-                let has_cargo = file_ops::file_exists(&format!("{}/Cargo.toml", plugin_dir));
-                let has_config = file_ops::file_exists(&format!("{}/config.json", plugin_dir));
+            let _is_complete = if is_python {
+                // Python plugin checks
+                let init_path = plugin_dir.join("__init__.py");
+                let plugin_path = plugin_dir.join("plugin.py");
+                let requirements_path = plugin_dir.join("requirements.txt");
+                let pyproject_path = plugin_dir.join("pyproject.toml");
+                
+                let has_init = init_path.exists();
+                let has_plugin = plugin_path.exists();
+                let has_requirements = requirements_path.exists();
+                let has_pyproject = pyproject_path.exists();
+                let has_config = std::path::Path::new(&config_path).exists();
+                
+                if has_init && has_plugin && has_requirements && has_pyproject && has_config {
+                    print_success(&format!("✓ Plugin '{}' is complete (Python)", plugin));
+                    true
+                } else {
+                    warnings.push(format!("Plugin '{}' (Python) is incomplete", plugin));
+                    if !has_init {
+                        print_warning(&format!("⚠ Plugin '{}' missing __init__.py", plugin));
+                    }
+                    if !has_plugin {
+                        print_warning(&format!("⚠ Plugin '{}' missing plugin.py", plugin));
+                    }
+                    if !has_requirements {
+                        print_warning(&format!("⚠ Plugin '{}' missing requirements.txt", plugin));
+                    }
+                    if !has_pyproject {
+                        print_warning(&format!("⚠ Plugin '{}' missing pyproject.toml", plugin));
+                    }
+                    if !has_config {
+                        print_warning(&format!("⚠ Plugin '{}' missing config.json", plugin));
+                    }
+                    false
+                }
+            } else {
+                // Rust plugin checks (default)
+                let lib_path = plugin_dir.join("src").join("lib.rs");
+                let cargo_path = plugin_dir.join("Cargo.toml");
+                
+                let has_lib = lib_path.exists();
+                let has_cargo = cargo_path.exists();
+                let has_config = std::path::Path::new(&config_path).exists();
                 
                 if has_lib && has_cargo && has_config {
-                    print_success(&format!("✓ Plugin '{}' is complete", plugin));
+                    print_success(&format!("✓ Plugin '{}' is complete (Rust)", plugin));
+                    true
                 } else {
-                    warnings.push(format!("Plugin '{}' is incomplete", plugin));
+                    warnings.push(format!("Plugin '{}' (Rust) is incomplete", plugin));
                     if !has_lib {
                         print_warning(&format!("⚠ Plugin '{}' missing src/lib.rs", plugin));
                     }
@@ -124,9 +188,11 @@ pub fn check_project() -> Result<()> {
                     if !has_config {
                         print_warning(&format!("⚠ Plugin '{}' missing config.json", plugin));
                     }
+                    false
                 }
-            }
+            };
         }
+    }
     }
     
     // Print summary
