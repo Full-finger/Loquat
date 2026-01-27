@@ -7,12 +7,17 @@ pub mod kernel;
 pub mod engine;
 pub mod monitor;
 pub mod api;
+pub mod grpc_server;
+pub mod http_server;
+pub mod process_manager;
 
 pub use config::KernelConfig;
 pub use kernel::Kernel;
 pub use engine::EngineManager;
 pub use monitor::Monitor;
-pub use api::{GrpcServer, HttpServer};
+pub use grpc_server::GrpcServer;
+pub use http_server::HttpServer;
+pub use process_manager::{ProcessManager, ProcessHandle};
 
 pub mod error {
     use thiserror::Error;

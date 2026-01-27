@@ -1,0 +1,62 @@
+[package]
+name = "loquat-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# 依赖workspace中的共享包
+loquat-kernel = { path = "../loquat-kernel", optional = true }
+
+# gRPC
+tonic = { version = "0.11", features = ["tls"] }
+prost = "0.12"
+
+# 异步运行时
+tokio = { version = "1.35", features = ["full"] }
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 错误处理
+anyhow = "1.0"
+thiserror = "1.0"
+
+# 时间处理
+chrono = "0.4"
+
+# 配置
+toml = "0.8"
+config = "0.14"
+
+# 命令行解析
+clap = { version = "4.4", features = ["derive"] }
+
+# 网络和HTTP
+axum = "0.7"
+hyper = "1.0"
+tower = "0.4"
+
+# 工具库
+uuid = { version = "1.6", features = ["v4", "serde"] }
+indexmap = "2.1"
+
+# 原有Loquat核心功能（暂时保留，后续会重构）
+# 这些依赖将逐步迁移到loquat-engine内部
+async-trait = "0.1"
+futures = "0.3"
+
+[build-dependencies]
+tonic-build = "0.11"
+
+[features]
+default = []
+kernel-client = ["loquat-kernel"]
+
+[[bin]]
+name = "loquat-engine"
+path = "src/main.rs"

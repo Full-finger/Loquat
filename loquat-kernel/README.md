@@ -1,165 +1,230 @@
-# Loquat Kernel - 微内核
+# Loquat Kernel
 
-## 概述
+微内核层，负责管理Engine生命周期、进程监控、资源分配。
 
-Loquat Kernel是Loquat框架的微内核组件，负责管理Engine进程的生命周期、监控健康状态、协调资源分配。
+## 📋 概述
 
-## 架构
+Loquat Kernel是Loquat项目的核心管理组件，提供以下功能：
+- Engine进程生命周期管理
+- gRPC和HTTP API接口
+- 健康检查和监控
+- 自动重启和故障恢复
+- 配置管理
 
-```
-┌─────────────────────────────────────────┐
-│       Loquat Kernel                │
-│  ┌─────────────────────────────┐    │
-│  │   Engine Manager          │    │
-│  │  - 进程注册               │    │
-│  │  - 状态管理               │    │
-│  │  - 端口分配               │    │
-│  └──────────┬──────────────┘    │
-│             │                      │
-│  ┌──────────▼──────────────┐    │
-│  │   Monitor                │    │
-│  │  - 健康检查               │    │
-│  │  - 指标收集               │    │
-│  │  - 自动重启               │    │
-│  └──────────┬──────────────┘    │
-│             │                      │
-│  ┌──────────▼──────────────┐    │
-│  │   API Server             │    │
-│  │  - gRPC Service          │    │
-│  │  - HTTP API               │    │
-│  └──────────────────────────┘    │
-└─────────────────────────────────────────┘
-             │
-             ▼
-        loquat-engine(s)
+## 🚀 快速开始
+
+### 构建项目
+
+```bash
+cd loquat-kernel
+cargo build --release
 ```
 
-## 核心功能
+### 运行Kernel
 
-### 1. Engine管理
-- 注册新的Engine实例
-- 管理Engine状态（启动、运行、停止、错误）
-- 自动分配端口号
-- Engine数量限制
+```bash
+cargo run --bin loquat-kernel
+```
 
-### 2. 进程监控
-- 定期健康检查
-- 指标收集和聚合
-- 自动重启失败的Engine
-- 故障阈值管理
+或指定配置文件：
 
-### 3. API服务
-- **gRPC服务**：高性能进程间通信
-  - Engine生命周期管理
-  - 健康检查
-  - 配置管理
-  - 指标流式传输
-  
-- **HTTP服务**：RESTful API
-  - Engine管理端点
-  - 配置查询
-  - 日志查看
-  - Web界面支持
+```bash
+cargo run --bin loquat-kernel -- --config custom.toml
+```
 
-### 4. 资源管理
-- 内存限制
-- CPU使用限制
-- 网络访问控制
-- 沙箱隔离
+## 📁 项目结构
 
-## 配置
+```
+loquat-kernel/
+├── Cargo.toml                    # 项目配置
+├── config/
+│   └── kernel.toml             # 默认配置
+├── src/
+│   ├── lib.rs                  # 库入口
+│   ├── config.rs               # 配置管理
+│   ├── kernel/mod.rs            # Kernel核心
+│   ├── engine/mod.rs            # Engine管理器
+│   ├── monitor/mod.rs          # 监控器
+│   ├── api/mod.rs              # API服务器框架
+│   ├── grpc_server.rs          # gRPC服务实现
+│   ├── http_server.rs          # HTTP服务实现
+│   └── process_manager.rs     # 进程管理器
+└── README.md
+```
 
-配置文件：`config/kernel.toml`
+## 🔧 配置
+
+### 配置文件示例
 
 ```toml
 [kernel]
-bind_address = "127.0.0.1:50051"  # gRPC服务地址
-web_address = "127.0.0.1:8080"    # HTTP服务地址
-max_engines = 10                  # 最大Engine数量
+name = "Loquat Kernel"
+host = "127.0.0.1"
+grpc_port = 50051
+http_port = 3000
+
+[engine]
+default_host = "127.0.0.1"
+default_port_range = [50052, 60000]
+auto_restart = true
+restart_delay_seconds = 5
 
 [monitoring]
-health_check_interval = 30          # 健康检查间隔（秒）
-enable_auto_restart = true           # 启用自动重启
+health_check_interval = 10
+metric_collection_interval = 60
+enable_auto_restart = true
+restart_failure_threshold = 3
+
+[logging]
+level = "info"
+file = "./logs/kernel.log"
+max_size_mb = 100
 ```
 
-## gRPC接口
+### 配置说明
 
-### KernelService
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `kernel.name` | Kernel名称 | "Loquat Kernel" |
+| `kernel.host` | 监听地址 | "127.0.0.1" |
+| `kernel.grpc_port` | gRPC端口 | 50051 |
+| `kernel.http_port` | HTTP端口 | 3000 |
+| `engine.auto_restart` | 自动重启失败Engine | true |
+| `monitoring.health_check_interval` | 健康检查间隔（秒） | 10 |
+| `monitoring.enable_auto_restart` | 启用自动重启 | true |
 
-```protobuf
-service KernelService {
-    rpc RegisterEngine(EngineInfo) returns (EngineId);
-    rpc UnregisterEngine(EngineId) returns (Empty);
-    rpc RestartEngine(EngineId) returns (EngineStatus);
-    rpc HealthCheck(EngineId) returns (HealthStatus);
-    rpc StreamMetrics(Empty) returns (stream Metric);
-    rpc StreamLogs(EngineId) returns (stream LogEntry);
-}
+## 📡 API接口
+
+### gRPC接口
+
+**地址**: `127.0.0.1:50051`
+
+主要方法：
+- `RegisterEngine` - 注册新Engine
+- `UnregisterEngine` - 注销Engine
+- `RestartEngine` - 重启Engine
+- `StopEngine` - 停止Engine
+- `GetEngineStatus` - 获取Engine状态
+- `ListEngines` - 列出所有Engine
+- `HealthCheck` - 健康检查
+- `GetConfig` - 获取配置
+- `SetConfig` - 更新配置
+
+详细API文档参见 [proto/kernel.proto](../proto/kernel.proto)
+
+### HTTP REST API
+
+**地址**: `http://127.0.0.1:3000`
+
+主要端点：
+- `GET /api/health` - 健康检查
+- `GET /api/engines` - 列出所有Engine
+- `POST /api/engines` - 创建新Engine
+- `GET /api/engines/:id` - 获取Engine详情
+- `DELETE /api/engines/:id` - 删除Engine
+- `POST /api/engines/:id/restart` - 重启Engine
+- `GET /api/config` - 获取配置
+- `PUT /api/config` - 更新配置
+- `GET /api/system/info` - 系统信息
+
+#### API示例
+
+**健康检查**:
+```bash
+curl http://127.0.0.1:3000/api/health
 ```
 
-## HTTP API端点
+**列出所有Engine**:
+```bash
+curl http://127.0.0.1:3000/api/engines
+```
 
-| 方法 | 端点 | 描述 |
-|------|--------|------|
-| GET | /api/engines | 列出所有Engine |
-| POST | /api/engines | 创建新Engine |
-| GET | /api/engines/:id | 获取Engine详情 |
-| DELETE | /api/engines/:id | 停止Engine |
-| POST | /api/engines/:id/restart | 重启Engine |
-| GET | /api/config | 获取配置 |
-| PUT | /api/config | 更新配置 |
+**创建新Engine**:
+```bash
+curl -X POST http://127.0.0.1:3000/api/engines \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Engine",
+    "port": 50052,
+    "command": "loquat-engine"
+  }'
+```
 
-## 当前实现状态
+## 🔍 监控和日志
 
-### ✅ 已完成
-- [x] Proto定义（common.proto, kernel.proto, engine.proto）
-- [x] 项目结构和配置
-- [x] 配置管理系统
-- [x] Engine管理器框架
-- [x] 监控器框架
-- [x] API服务器框架
+### 健康检查
 
-### 🚧 进行中
-- [ ] 实现gRPC服务（tonic集成）
-- [ ] 实现HTTP服务（axum集成）
-- [ ] 实现进程管理
-- [ ] 实现健康检查逻辑
-- [ ] 实现指标收集
-- [ ] 实现自动重启
+Kernel会定期检查所有Engine的健康状态：
+- 检查进程是否运行
+- 检查响应时间
+- 自动重启失败的Engine（如果启用）
 
-### 📋 待实现
-- [ ] 沙箱隔离（cgroups/namespace）
-- [ ] 资源限制实现
-- [ ] 认证和授权
-- [ ] 集成测试
-- [ ] 性能优化
-- [ ] 文档完善
+### 日志
 
-## 构建和运行
+日志文件位置：`logs/kernel.log`
+
+日志级别可通过配置文件调整：
+- `trace` - 最详细的日志
+- `debug` - 调试信息
+- `info` - 一般信息（默认）
+- `warn` - 警告信息
+- `error` - 错误信息
+
+## 🧪 测试
 
 ```bash
-# 构建
-cargo build --release
+# 运行所有测试
+cargo test
 
-# 运行
-cargo run --release
+# 运行特定测试
+cargo test test_kernel_creation
 
-# 使用自定义配置
-./target/release/loquat-kernel --config config/kernel.toml
+# 带输出的测试
+cargo test -- --nocapture
 ```
 
-## 下一步
+## 🤝 贡献
 
-1. 实现gRPC服务，基于proto定义
-2. 实现HTTP REST API
-3. 添加进程管理和监控逻辑
-4. 实现沙箱和资源限制
-5. 编写集成测试
-6. 完善文档
+欢迎贡献！请遵循以下步骤：
 
-## 相关链接
+1. Fork仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启Pull Request
 
-- [Loquat Engine](../loquat-engine/)
-- [Loquat Tool](../loquat-tool/)
-- [Proto定义](../proto/)
-- [主README](../README.md)
+## 📄 许可证
+
+本项目采用MIT许可证 - 详见 [LICENSE](../LICENSE) 文件
+
+## 🔗 相关链接
+
+- [主项目文档](../README.md)
+- [API文档](../docs/api/WEB_API_DOCUMENTATION.md)
+- [实现进度](../IMPLEMENTATION_PROGRESS.md)
+- [proto定义](../proto/)
+
+## 💡 常见问题
+
+### Q: 如何修改监听端口？
+
+修改配置文件中的 `kernel.grpc_port` 和 `kernel.http_port`。
+
+### Q: 如何禁用自动重启？
+
+设置 `monitoring.enable_auto_restart = false`。
+
+### Q: 如何查看Engine日志？
+
+Engine进程的日志由Engine自己管理，通常在其工作目录的 `logs/` 文件夹中。
+
+### Q: Kernel崩溃了怎么办？
+
+1. 检查日志文件：`logs/kernel.log`
+2. 验证配置文件格式
+3. 检查端口是否被占用
+4. 如果是Bug，请提交Issue
+
+---
+
+*最后更新: 2026-01-26*
