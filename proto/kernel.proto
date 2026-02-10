@@ -1,46 +1,47 @@
 syntax = "proto3";
 
 import "common.proto";
+import "google/protobuf/timestamp.proto";
 
 package loquat.kernel;
 
 // Kernel服务 - 管理Engine生命周期
 service KernelService {
     // Engine生命周期管理
-    rpc RegisterEngine(EngineInfo) returns (EngineId);
-    rpc UnregisterEngine(EngineId) returns (Empty);
-    rpc RestartEngine(EngineId) returns (EngineStatus);
-    rpc StopEngine(EngineId) returns (Empty);
-    rpc GetEngineStatus(EngineId) returns (EngineStatus);
+    rpc RegisterEngine(loquat.common.EngineInfo) returns (loquat.common.EngineId);
+    rpc UnregisterEngine(loquat.common.EngineId) returns (loquat.common.Empty);
+    rpc RestartEngine(loquat.common.EngineId) returns (EngineStatusResponse);
+    rpc StopEngine(loquat.common.EngineId) returns (loquat.common.Empty);
+    rpc GetEngineStatus(loquat.common.EngineId) returns (EngineStatusResponse);
     
     // Engine列表
-    rpc ListEngines(Empty) returns (EngineList);
-    rpc GetEngineInfo(EngineId) returns (EngineInfo);
+    rpc ListEngines(loquat.common.Empty) returns (EngineList);
+    rpc GetEngineInfo(loquat.common.EngineId) returns (loquat.common.EngineInfo);
     
     // 健康检查
-    rpc HealthCheck(EngineId) returns (HealthStatus);
+    rpc HealthCheck(loquat.common.EngineId) returns (loquat.common.HealthStatus);
     
     // 配置管理
-    rpc GetConfig(Empty) returns (Config);
-    rpc UpdateConfig(Config) returns (Empty);
-    rpc ReloadConfig(Empty) returns (Empty);
+    rpc GetConfig(loquat.common.Empty) returns (loquat.common.Config);
+    rpc UpdateConfig(loquat.common.Config) returns (loquat.common.Empty);
+    rpc ReloadConfig(loquat.common.Empty) returns (loquat.common.Empty);
     
     // 监控和指标
-    rpc StreamMetrics(Empty) returns (stream Metric);
-    rpc StreamLogs(EngineId) returns (stream LogEntry);
+    rpc StreamMetrics(loquat.common.Empty) returns (stream loquat.common.Metric);
+    rpc StreamLogs(loquat.common.EngineId) returns (stream loquat.common.LogEntry);
     
     // 系统信息
-    rpc GetSystemInfo(Empty) returns (SystemInfo);
-    rpc Shutdown(Empty) returns (Empty);
+    rpc GetSystemInfo(loquat.common.Empty) returns (SystemInfo);
+    rpc Shutdown(loquat.common.Empty) returns (loquat.common.Empty);
 }
 
 // Engine列表
 message EngineList {
-    repeated EngineInfo engines = 1;
+    repeated loquat.common.EngineInfo engines = 1;
 }
 
-// 引擎状态（带时间戳）
-message EngineStatus {
+// 引擎状态响应（带时间戳）
+message EngineStatusResponse {
     loquat.common.EngineStatus status = 1;
     string message = 2;
     google.protobuf.Timestamp timestamp = 3;

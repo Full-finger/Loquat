@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tokio::process::{Child, Command};
 
 use crate::config::KernelConfig;
-use crate::engine::{EngineInfo, EngineStatus};
+use crate::engine::EngineInfo;
 use crate::error::{KernelError, Result};
 
 #[derive(Clone)]
@@ -37,9 +37,9 @@ impl ProcessManager {
         }
     }
     
-    fn find_engine_binary() -> PathBuf {
+    pub fn find_engine_binary() -> PathBuf {
         // 尝试多个可能的路径
-        let possible_paths = vec![
+        let possible_paths: Vec<PathBuf> = vec![
             "./target/debug/loquat-engine".into(),
             "./target/release/loquat-engine".into(),
             "./loquat-engine/target/debug/loquat-engine".into(),
@@ -70,7 +70,7 @@ impl ProcessManager {
             "--engine-id".to_string(),
             engine_id.clone(),
             "--kernel-address".to_string(),
-            self.config.kernel.grpc_address.clone(),
+            self.config.kernel.bind_address.clone(),
             "--port".to_string(),
             port.to_string(),
         ];
@@ -150,15 +150,21 @@ impl ProcessManager {
                 Err(_) => {
                     // 超时，强制杀死
                     tracing::warn!("Engine {} did not stop gracefully, killing...", engine_id);
-                    if let Err(e) = child.kill() {
-                        tracing::warn!("Failed to kill engine {}: {}", engine_id, e);
+                    // kill 是异步的，需要 .await
+                    match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        child.kill()
+                    ).await {
+                        Ok(Ok(())) => tracing::info!("Engine {} killed", engine_id),
+                        Ok(Err(e)) => tracing::warn!("Failed to kill engine {}: {}", engine_id, e),
+                        Err(_) => tracing::warn!("Timeout while killing engine {}", engine_id),
                     }
                 }
             }
             
             Ok(())
         } else {
-            Err(KernelError::NotFound(format!(
+            Err(KernelError::EngineNotFound(format!(
                 "Process for engine {} not found",
                 engine_id
             )))
@@ -188,11 +194,17 @@ impl ProcessManager {
     pub async fn is_running(&self, engine_id: &str) -> bool {
         let processes = self.processes.read().await;
         
-        if let Some(child) = processes.get(engine_id) {
-            if let Ok(Some(_)) = child.try_wait() {
-                false // 进程已经退出
+        if processes.get(engine_id).is_some() {
+            drop(processes);
+            // 需要获取可变引用来调用 try_wait
+            let mut processes = self.processes.write().await;
+            if let Some(child) = processes.get_mut(engine_id) {
+                match child.try_wait() {
+                    Ok(Some(_)) => false, // 进程已经退出
+                    _ => true, // 进程仍在运行
+                }
             } else {
-                true // 进程仍在运行
+                false
             }
         } else {
             false // 进程不存在

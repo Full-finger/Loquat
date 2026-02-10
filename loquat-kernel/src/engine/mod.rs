@@ -8,17 +8,18 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 use chrono::Utc;
 use tracing::{info, error, warn};
-use tokio::process::Child;
 
 /// Engine信息
 #[derive(Debug, Clone)]
 pub struct EngineInfo {
-    pub id: String,
+    pub engine_id: String,
     pub name: String,
     pub host: String,
     pub port: u16,
     pub pid: Option<u32>,
     pub status: EngineStatus,
+    pub uptime: std::time::Duration,
+    pub last_heartbeat: Option<std::time::Instant>,
     pub start_time: chrono::DateTime<Utc>,
     pub metadata: HashMap<String, String>,
 }
@@ -30,23 +31,26 @@ pub enum EngineStatus {
     Running,
     Stopping,
     Stopped,
+    Restarting,
     Error { message: String },
 }
 
 /// Engine管理器
+#[derive(Clone)]
 pub struct EngineManager {
     config: KernelConfig,
-    engines: RwLock<HashMap<String, EngineInfo>>,
-    next_port: RwLock<u16>,
+    engines: Arc<RwLock<HashMap<String, EngineInfo>>>,
+    next_port: Arc<RwLock<u16>>,
 }
 
 impl EngineManager {
     /// 创建新的Engine管理器
     pub fn new(config: KernelConfig) -> Self {
+        let port_range = config.engine.default_port_range.clone();
         Self {
             config,
-            engines: RwLock::new(HashMap::new()),
-            next_port: RwLock::new(config.engine.default_port_range[0]),
+            engines: Arc::new(RwLock::new(HashMap::new())),
+            next_port: Arc::new(RwLock::new(port_range[0])),
         }
     }
     
@@ -71,25 +75,19 @@ impl EngineManager {
         drop(engines);
         
         // 分配端口
-        let port = {
-            let mut next_port = self.next_port.write();
-            let port = *next_port;
-            *next_port = if *next_port >= self.config.engine.default_port_range[1] {
-                self.config.engine.default_port_range[0]
-            } else {
-                *next_port + 1
-            };
-            port
-        };
+        let port = self.get_next_available_port();
         
         let id = Uuid::new_v4().to_string();
+        let status = EngineStatus::Starting;
         let engine_info = EngineInfo {
-            id: id.clone(),
+            engine_id: id.clone(),
             name: name.clone(),
             host,
             port,
             pid: None,
-            status: EngineStatus::Starting,
+            status,
+            uptime: std::time::Duration::ZERO,
+            last_heartbeat: None,
             start_time: Utc::now(),
             metadata: HashMap::new(),
         };
@@ -118,7 +116,7 @@ impl EngineManager {
         let mut engines = self.engines.write();
         
         if let Some(engine) = engines.get_mut(id) {
-            engine.status = status;
+            engine.status = status.clone();
             engine.pid = pid;
             info!("Engine {} status updated: {:?}", id, status);
         } else {
@@ -141,6 +139,22 @@ impl EngineManager {
         self.engines.read().len()
     }
     
+    /// 获取下一个可用端口
+    pub fn get_next_available_port(&self) -> u16 {
+        let range = self.config.engine.default_port_range.clone();
+        let port_range_start = range[0];
+        let port_range_end = range[1];
+        
+        let mut next_port = self.next_port.write();
+        let port = *next_port;
+        *next_port = if *next_port >= port_range_end {
+            port_range_start
+        } else {
+            *next_port + 1
+        };
+        port
+    }
+    
     /// 停止所有Engine
     pub async fn stop_all(&self) -> anyhow::Result<()> {
         let engines: Vec<String> = self.engines.read().keys().cloned().collect();
@@ -159,5 +173,24 @@ impl EngineManager {
         // TODO: 实现实际的进程停止逻辑
         warn!("Stopping engine {} (not yet implemented)", id);
         Ok(())
+    }
+    
+    /// 内部方法：更新EngineInfo
+    pub(crate) fn update_engine<F>(&self, id: &str, f: F) -> bool
+    where
+        F: FnOnce(&mut EngineInfo),
+    {
+        let mut engines = self.engines.write();
+        if let Some(info) = engines.get_mut(id) {
+            f(info);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// 内部方法：检查Engine是否存在
+    pub(crate) fn contains_engine(&self, id: &str) -> bool {
+        self.engines.read().contains_key(id)
     }
 }

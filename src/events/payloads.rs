@@ -1,13 +1,14 @@
 //! Event payloads - content data for group events
 //!
-//! This module defines the payload structures for different event types.
-//! Payloads contain the actual content data for events.
+//! This module defines both legacy event payloads and the new universal payload system.
 
 use crate::events::traits::EventMetadata;
 use serde::{Deserialize, Serialize};
+use std::any::Any;
+use thiserror::Error;
 
 // ============================================================================
-// Message Payloads
+// Message Payloads (Legacy - for event metadata)
 // ============================================================================
 
 /// Message payload structure
@@ -149,7 +150,7 @@ impl MessageContent {
 }
 
 // ============================================================================
-// Notice Payloads
+// Notice Payloads (Legacy)
 // ============================================================================
 
 /// Notice payload structure
@@ -300,7 +301,7 @@ pub struct UserInfo {
 }
 
 // ============================================================================
-// Request Payloads
+// Request Payloads (Legacy)
 // ============================================================================
 
 /// Request payload structure
@@ -395,10 +396,10 @@ pub enum RequestContent {
 }
 
 // ============================================================================
-// Helper trait for payloads
+// Helper trait for payloads (Legacy - for event metadata)
 // ============================================================================
 
-/// Payload trait - common interface for all payloads
+/// Legacy Payload trait - common interface for event payloads
 pub trait Payload {
     /// Get event metadata
     fn metadata(&self) -> &EventMetadata;
@@ -435,6 +436,217 @@ impl Payload for RequestPayload {
         self.event_type()
     }
 }
+
+// ============================================================================
+// Universal Payload System (Design Document v2.0)
+// ============================================================================
+
+/// Errors related to Payload operations
+#[derive(Error, Debug)]
+pub enum PayloadError {
+    #[error("Payload type mismatch: expected {expected}, got {actual}")]
+    TypeMismatch { expected: String, actual: String },
+    
+    #[error("Failed to serialize payload: {0}")]
+    SerializationError(String),
+    
+    #[error("Failed to deserialize payload: {0}")]
+    DeserializationError(String),
+    
+    #[error("Unknown payload type: {0}")]
+    UnknownType(String),
+}
+
+/// Type marker for payload types (object-safe)
+pub trait PayloadType: Send + Sync + 'static {
+    /// Get type name dynamically
+    fn type_name(&self) -> &'static str;
+    
+    /// Get size estimate in bytes
+    fn size_estimate(&self) -> usize;
+}
+
+/// Universal Payload trait for Package content (object-safe version)
+/// This is v2.0 payload system from design document
+pub trait UniversalPayload: PayloadType + std::fmt::Debug {
+    /// Convert to Any for downcasting
+    fn as_any(&self) -> &dyn Any;
+    
+    /// Convert to mutable Any for downcasting
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+/// Text payload for text messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextPayload {
+    /// Text content
+    pub content: String,
+    
+    /// Text format (plain, markdown, etc.)
+    #[serde(default)]
+    pub format: TextFormat,
+}
+
+impl TextPayload {
+    /// Create a new text payload
+    pub fn new<S: Into<String>>(content: S) -> Self {
+        Self {
+            content: content.into(),
+            format: TextFormat::Plain,
+        }
+    }
+    
+    /// Set text format
+    pub fn with_format(mut self, format: TextFormat) -> Self {
+        self.format = format;
+        self
+    }
+}
+
+impl PayloadType for TextPayload {
+    fn type_name(&self) -> &'static str {
+        "text"
+    }
+    
+    fn size_estimate(&self) -> usize {
+        self.content.len()
+    }
+}
+
+impl UniversalPayload for TextPayload {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Text format types
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextFormat {
+    Plain,
+    Markdown,
+    Html,
+    Json,
+}
+
+impl Default for TextFormat {
+    fn default() -> Self {
+        TextFormat::Plain
+    }
+}
+
+/// Blob payload for binary data (images, files, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlobPayload {
+    /// Binary data
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+    
+    /// MIME type
+    #[serde(default)]
+    pub mime_type: String,
+    
+    /// Optional URL (for large data)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl BlobPayload {
+    /// Create a new blob payload
+    pub fn new(data: Vec<u8>, mime_type: String) -> Self {
+        Self {
+            data,
+            mime_type,
+            url: None,
+        }
+    }
+    
+    /// Create from a URL (for large data)
+    pub fn from_url(url: String, mime_type: String) -> Self {
+        Self {
+            data: Vec::new(),
+            mime_type,
+            url: Some(url),
+        }
+    }
+}
+
+impl PayloadType for BlobPayload {
+    fn type_name(&self) -> &'static str {
+        "blob"
+    }
+    
+    fn size_estimate(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl UniversalPayload for BlobPayload {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Event payload for structured events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventPayload {
+    /// Event type
+    pub event_type: String,
+    
+    /// Event data (flexible JSON structure)
+    pub data: serde_json::Value,
+}
+
+impl EventPayload {
+    /// Create a new event payload
+    pub fn new<S: Into<String>>(event_type: S, data: serde_json::Value) -> Self {
+        Self {
+            event_type: event_type.into(),
+            data,
+        }
+    }
+    
+    /// Get typed data from event
+    pub fn get_data<T: serde::de::DeserializeOwned>(&self) -> Result<T, PayloadError> {
+        serde_json::from_value(self.data.clone())
+            .map_err(|e| PayloadError::DeserializationError(e.to_string()))
+    }
+}
+
+impl PayloadType for EventPayload {
+    fn type_name(&self) -> &'static str {
+        "event"
+    }
+    
+    fn size_estimate(&self) -> usize {
+        self.data.to_string().len()
+    }
+}
+
+impl UniversalPayload for EventPayload {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Wrapper for boxed payload
+pub type BoxedPayload = Box<dyn UniversalPayload>;
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -509,5 +721,28 @@ mod tests {
         let deserialized: MessagePayload = serde_json::from_str(&json).unwrap();
 
         assert_eq!(payload, deserialized);
+    }
+
+    #[test]
+    fn test_text_payload() {
+        let payload = TextPayload::new("Hello world");
+        assert_eq!(payload.type_name(), "text");
+        assert_eq!(payload.content, "Hello world");
+    }
+
+    #[test]
+    fn test_blob_payload() {
+        let data = vec![1u8, 2u8, 3u8];
+        let payload = BlobPayload::new(data.clone(), "application/octet-stream".to_string());
+        assert_eq!(payload.type_name(), "blob");
+        assert_eq!(payload.data, data);
+    }
+
+    #[test]
+    fn test_event_payload() {
+        let data = serde_json::json!({"key": "value"});
+        let payload = EventPayload::new("test.event", data.clone());
+        assert_eq!(payload.type_name(), "event");
+        assert_eq!(payload.data, data);
     }
 }

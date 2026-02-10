@@ -5,8 +5,8 @@
 use serde::{Serialize, Deserialize};
 use std::fmt::Debug;
 
-/// Site type classification
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Site type classification (v2.0 with Tag support)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SiteType {
     /// Worker type - plugin worker
     Worker(String),
@@ -18,12 +18,14 @@ pub enum SiteType {
     User(String),
     /// Channel type - channel
     Channel(String),
+    /// Tag type - simple tag for matching (v2.0)
+    Tag(String),
     /// Unknown type
     Unknown,
 }
 
 /// TargetSite - worker identification/label group
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TargetSite {
     /// Site identifier/worker name
     pub site_id: String,
@@ -62,6 +64,14 @@ impl TargetSite {
         Self {
             site_id: group_id.to_string(),
             site_type: SiteType::Group(group_id.to_string()),
+        }
+    }
+    
+    /// Create a tag type target site (v2.0)
+    pub fn tag(tag_name: &str) -> Self {
+        Self {
+            site_id: tag_name.to_string(),
+            site_type: SiteType::Tag(tag_name.to_string()),
         }
     }
 }

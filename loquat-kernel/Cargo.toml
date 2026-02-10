@@ -8,6 +8,7 @@ edition = "2021"
 tokio = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
+prost-types = { workspace = true }
 axum = { workspace = true }
 hyper = { workspace = true }
 tower = { workspace = true }
@@ -36,6 +37,7 @@ bytes = "1.5"
 async-trait = "0.1"
 tokio-stream = "0.1"
 gethostname = "0.4"
+rusqlite = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }

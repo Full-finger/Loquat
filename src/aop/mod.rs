@@ -12,7 +12,7 @@ pub use aspects::*;
 pub use proxy::*;
 pub use traits::*;
 
-use crate::errors::Result;
+use crate::errors::AopResult;
 
 /// AOP manager for coordinating aspects and proxies
 pub struct AopManager {
@@ -41,9 +41,9 @@ impl AopManager {
     }
 
     /// Apply aspects to a function
-    pub async fn apply_aspects<F, R>(&self, operation: &str, f: F) -> Result<R>
+    pub async fn apply_aspects<F, R>(&self, operation: &str, f: F) -> crate::errors::Result<R>
     where
-        F: FnOnce() -> Result<R> + Send,
+        F: FnOnce() -> crate::errors::Result<R> + Send,
         R: Send,
     {
         // Execute before advice for all aspects

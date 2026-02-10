@@ -396,7 +396,8 @@ mod tests {
         let block = Block::new(BlockType::Message).with_group(group);
         let package = Package::new().with_block(block);
 
-        let results = router.route_batch(&[package.clone()]).await;
+        // Package is moved to route_batch, no clone needed
+        let results = router.route_batch(&[package]).await;
         assert_eq!(results.len(), 1);
         assert!(results[0].success);
     }

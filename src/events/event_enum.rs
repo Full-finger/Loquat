@@ -4,7 +4,7 @@ use crate::events::message::MessageEvent;
 use crate::events::notice::NoticeEvent;
 use crate::events::request::RequestEvent;
 use crate::events::meta::MetaEvent;
-use crate::events::traits::Event;
+use crate::events::traits::{Event, EventSource};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -78,38 +78,38 @@ impl EventEnum {
         match self {
             EventEnum::Message(evt) => {
                 match evt.source() {
-                    crate::events::EventSource::User => "user".to_string(),
-                    crate::events::EventSource::System => "system".to_string(),
-                    crate::events::EventSource::Api => "api".to_string(),
-                    crate::events::EventSource::Worker(s) => format!("worker:{}", s),
-                    crate::events::EventSource::Unknown => "unknown".to_string(),
+                    EventSource::User => "user".to_string(),
+                    EventSource::System => "system".to_string(),
+                    EventSource::Api => "api".to_string(),
+                    EventSource::Worker(s) => format!("worker:{}", s),
+                    EventSource::Unknown => "unknown".to_string(),
                 }
             }
             EventEnum::Notice(evt) => {
                 match evt.source() {
-                    crate::events::EventSource::User => "user".to_string(),
-                    crate::events::EventSource::System => "system".to_string(),
-                    crate::events::EventSource::Api => "api".to_string(),
-                    crate::events::EventSource::Worker(s) => format!("worker:{}", s),
-                    crate::events::EventSource::Unknown => "unknown".to_string(),
+                    EventSource::User => "user".to_string(),
+                    EventSource::System => "system".to_string(),
+                    EventSource::Api => "api".to_string(),
+                    EventSource::Worker(s) => format!("worker:{}", s),
+                    EventSource::Unknown => "unknown".to_string(),
                 }
             }
             EventEnum::Request(evt) => {
                 match evt.source() {
-                    crate::events::EventSource::User => "user".to_string(),
-                    crate::events::EventSource::System => "system".to_string(),
-                    crate::events::EventSource::Api => "api".to_string(),
-                    crate::events::EventSource::Worker(s) => format!("worker:{}", s),
-                    crate::events::EventSource::Unknown => "unknown".to_string(),
+                    EventSource::User => "user".to_string(),
+                    EventSource::System => "system".to_string(),
+                    EventSource::Api => "api".to_string(),
+                    EventSource::Worker(s) => format!("worker:{}", s),
+                    EventSource::Unknown => "unknown".to_string(),
                 }
             }
             EventEnum::Meta(evt) => {
                 match evt.source() {
-                    crate::events::EventSource::User => "user".to_string(),
-                    crate::events::EventSource::System => "system".to_string(),
-                    crate::events::EventSource::Api => "api".to_string(),
-                    crate::events::EventSource::Worker(s) => format!("worker:{}", s),
-                    crate::events::EventSource::Unknown => "unknown".to_string(),
+                    EventSource::User => "user".to_string(),
+                    EventSource::System => "system".to_string(),
+                    EventSource::Api => "api".to_string(),
+                    EventSource::Worker(s) => format!("worker:{}", s),
+                    EventSource::Unknown => "unknown".to_string(),
                 }
             }
         }

@@ -16,9 +16,8 @@ pub use console_adapter_actor::{ConsoleAdapterActor, create_console_adapter_acto
 
 use crate::adapters::core::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
 use crate::errors::{AdapterError, LoquatError, Result};
-use crate::events::EventEnum;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 
 /// Trait for actor-based adapters
 ///

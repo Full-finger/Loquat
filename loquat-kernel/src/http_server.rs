@@ -2,10 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{get, post, delete, put},
+    extract::{Path, State},
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -44,7 +42,7 @@ impl HttpServer {
             .route("/api/system/info", get(get_system_info))
             .with_state(self.clone());
 
-        let addr: SocketAddr = self.config.kernel.http_address.parse()?;
+        let addr: SocketAddr = self.config.kernel.bind_address.parse()?;
         
         tracing::info!("HTTP server starting on {}", addr);
         
@@ -110,16 +108,17 @@ fn to_api_engine_info(info: &LocalEngineInfo) -> EngineInfo {
         engine_id: info.engine_id.clone(),
         name: info.name.clone(),
         port: info.port,
-        status: match info.status {
+        status: match &info.status {
             EngineStatus::Starting => "Starting".to_string(),
             EngineStatus::Running => "Running".to_string(),
             EngineStatus::Stopping => "Stopping".to_string(),
             EngineStatus::Stopped => "Stopped".to_string(),
-            EngineStatus::Error => "Error".to_string(),
+            EngineStatus::Restarting => "Restarting".to_string(),
+            EngineStatus::Error { .. } => "Error".to_string(),
         },
         pid: info.pid,
         uptime: info.uptime.as_secs(),
-        last_heartbeat: info.last_heartbeat.map(|t| t.timestamp()),
+        last_heartbeat: info.last_heartbeat.map(|_| chrono::Utc::now().timestamp()),
     }
 }
 
@@ -127,15 +126,15 @@ fn to_api_engine_info(info: &LocalEngineInfo) -> EngineInfo {
 
 async fn health_check(State(server): State<HttpServer>) -> Json<ApiResponse<serde_json::Value>> {
     let kernel = server.kernel.read().await;
-    let info = kernel.get_info().await;
+    let info = kernel.get_info();
     
     let manager = server.engine_manager.read().await;
-    let engine_count = manager.count().await;
+    let engine_count = manager.count();
 
     let health_data = serde_json::json!({
         "healthy": true,
         "message": "Kernel is healthy",
-        "uptime": info.uptime.as_secs(),
+        "uptime": info.uptime.num_seconds(),
         "engine_count": engine_count,
         "version": info.version,
     });
@@ -149,7 +148,7 @@ async fn list_engines(State(server): State<HttpServer>) -> Json<ApiResponse<Vec<
     let engines: Vec<EngineInfo> = manager
         .list()
         .iter()
-        .map(to_api_engine_info)
+        .map(|info| to_api_engine_info(info))
         .collect();
 
     Json(ApiResponse::success(engines))
@@ -162,7 +161,7 @@ async fn get_engine(
     let manager = server.engine_manager.read().await;
     
     match manager.get(&id) {
-        Some(info) => Json(ApiResponse::success(to_api_engine_info(info))),
+        Some(info) => Json(ApiResponse::success(to_api_engine_info(&info))),
         None => Json(ApiResponse::error(format!("Engine {} not found", id))),
     }
 }
@@ -170,107 +169,88 @@ async fn get_engine(
 async fn create_engine(
     State(server): State<HttpServer>,
     Json(req): Json<CreateEngineRequest>,
-) -> impl IntoResponse {
-    let mut manager = server.engine_manager.write().await;
+) -> Json<ApiResponse<serde_json::Value>> {
+    let manager = server.engine_manager.read().await;
     
     // 检查是否达到最大数量限制
-    let count = manager.count().await;
-    if count >= server.config.engine.max_engines {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::<()>::error(
-                format!("Maximum engine count ({}) reached", server.config.engine.max_engines)
-            )),
-        );
+    let count = manager.count();
+    if count >= server.config.kernel.max_engines {
+        return Json(ApiResponse::<serde_json::Value>::error(
+            format!("Maximum engine count ({}) reached", server.config.kernel.max_engines)
+        ));
     }
     
-    // 生成engine ID
-    let engine_id = format!("engine-{}-{}", chrono::Utc::now().timestamp(), count);
+    drop(manager);
+    
+    let manager = server.engine_manager.write().await;
     
     // 分配端口
     let port = match req.port {
         Some(p) => p,
-        None => {
-            match manager.allocate_port().await {
-                Ok(p) => p,
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ApiResponse::<()>::error(e.to_string()))
-                    );
-                }
-            }
-        }
-    };
-    
-    // 创建EngineInfo
-    let engine_info = LocalEngineInfo {
-        engine_id: engine_id.clone(),
-        name: req.name,
-        port,
-        status: EngineStatus::Starting,
-        pid: None,
-        uptime: std::time::Duration::ZERO,
-        last_heartbeat: None,
+        None => manager.get_next_available_port(),
     };
     
     // 注册
-    match manager.register(engine_info).await {
-        Ok(_) => {
-            // TODO: 实际启动进程
-            tracing::info!("Engine {} created (port: {})", engine_id, port);
-            
-            (
-                StatusCode::CREATED,
-                Json(ApiResponse::success(serde_json::json!({
-                    "engine_id": engine_id,
-                    "port": port
-                })))
-            )
-        }
+    let engine_id = match manager.register(req.name.clone(), "localhost".to_string()) {
+        Ok(id) => id,
         Err(e) => {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()>::error(e.to_string()))
-            )
+            return Json(ApiResponse::<serde_json::Value>::error(e.to_string()));
         }
-    }
+    };
+    
+    // 更新端口和状态
+    manager.update_engine(&engine_id, |info| {
+        info.port = port;
+        info.status = EngineStatus::Running;
+    });
+    
+    drop(manager);
+    
+    tracing::info!("Engine {} created (port: {})", engine_id, port);
+    
+    Json(ApiResponse::success(serde_json::json!({
+        "engine_id": engine_id,
+        "port": port
+    })))
 }
 
 async fn delete_engine(
     State(server): State<HttpServer>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<()>> {
-    let mut manager = server.engine_manager.write().await;
+    let manager = server.engine_manager.read().await;
     
-    match manager.get(&id) {
-        Some(_) => {
-            // TODO: 实际停止进程
-            manager.unregister(&id).await.ok();
-            
-            tracing::info!("Engine {} deleted", id);
-            Json(ApiResponse::success(()))
-        }
-        None => Json(ApiResponse::error(format!("Engine {} not found", id))),
+    if manager.get(&id).is_none() {
+        return Json(ApiResponse::error(format!("Engine {} not found", id)));
     }
+    
+    drop(manager);
+    
+    let manager = server.engine_manager.write().await;
+    
+    // TODO: 实际停止进程
+    manager.unregister(&id).ok();
+    
+    tracing::info!("Engine {} deleted", id);
+    Json(ApiResponse::success(()))
 }
 
 async fn restart_engine(
     State(server): State<HttpServer>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<()>> {
-    let mut manager = server.engine_manager.write().await;
+    let manager = server.engine_manager.write().await;
     
-    match manager.get_mut(&id) {
-        Some(info) => {
-            // TODO: 实际重启进程
-            info.status = EngineStatus::Restarting;
-            info.uptime = std::time::Duration::ZERO;
-            
-            tracing::info!("Engine {} restarted", id);
-            Json(ApiResponse::success(()))
-        }
-        None => Json(ApiResponse::error(format!("Engine {} not found", id))),
+    // 更新 engine 状态
+    if manager.update_engine(&id, |info| {
+        // TODO: 实际重启进程
+        info.status = EngineStatus::Restarting;
+        info.uptime = std::time::Duration::ZERO;
+    }) {
+        Json(ApiResponse::success(()))
+    } else {
+        tracing::info!("Engine {} not found", id);
+        Json(ApiResponse::error(format!("Engine {} not found", id)))
     }
 }
 
@@ -281,7 +261,7 @@ async fn get_config(State(server): State<HttpServer>) -> Json<ApiResponse<serde_
 }
 
 async fn update_config(
-    State(server): State<HttpServer>,
+    State(_server): State<HttpServer>,
     Json(_new_config): Json<serde_json::Value>,
 ) -> Json<ApiResponse<()>> {
     // TODO: 实现配置验证和应用
@@ -292,14 +272,13 @@ async fn update_config(
 
 async fn get_system_info(State(server): State<HttpServer>) -> Json<ApiResponse<serde_json::Value>> {
     let kernel = server.kernel.read().await;
-    let info = kernel.get_info().await;
+    let info = kernel.get_info();
     
     let system_info = serde_json::json!({
         "kernel_id": info.kernel_id,
         "version": info.version,
-        "uptime": info.uptime.as_secs(),
+        "uptime": info.uptime.num_seconds(),
         "engine_count": info.engine_count,
-        "hostname": gethostname::gethostname().to_string_lossy().to_string(),
     });
 
     Json(ApiResponse::success(system_info))

@@ -5,10 +5,12 @@
 
 use crate::adapters::core::{AdapterConfig, AdapterStatus, types::AdapterStatistics};
 use crate::errors::Result;
-use crate::actor::messages::AdapterMessage;
 use crate::events::EventEnum;
 use std::fmt::Debug;
 use tokio::sync::mpsc;
+
+// Re-export AdapterMessage for use in this module
+pub use super::messages::AdapterMessage;
 
 /// Wrapper that implements sync Adapter trait but uses async actor internally
 #[derive(Debug)]

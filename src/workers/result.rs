@@ -4,7 +4,9 @@ use crate::events::Package;
 use serde::{Deserialize, Serialize};
 
 /// Worker processing result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
+// Note: Deserialize is not implemented because Package cannot be deserialized
+// (contains trait object BoxedPayload)
 pub enum WorkerResult {
     /// Processing complete, Package moves to next pool
     Release,

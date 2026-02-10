@@ -6,6 +6,7 @@ use crate::kernel_client::KernelClient;
 use crate::error::{EngineError, Result};
 
 /// Engine - 插件运行时核心
+#[derive(Clone)]
 pub struct Engine {
     config: Arc<EngineConfig>,
     kernel_client: Arc<KernelClient>,

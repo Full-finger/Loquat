@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
 use tracing::{info, warn, error, debug};
+use chrono::Utc;
 
 /// 健康检查结果
 #[derive(Debug, Clone)]
@@ -37,12 +38,12 @@ pub enum MonitorEvent {
 }
 
 /// 监控器
+#[derive(Clone)]
 pub struct Monitor {
     config: MonitoringSection,
     engine_manager: Arc<RwLock<EngineManager>>,
     process_manager: Arc<ProcessManager>,
     running: Arc<RwLock<bool>>,
-    event_sender: Option<mpsc::UnboundedSender<MonitorEvent>>,
 }
 
 impl Monitor {
@@ -57,27 +58,7 @@ impl Monitor {
             engine_manager,
             process_manager,
             running: Arc::new(RwLock::new(false)),
-            event_sender: None,
         }
-    }
-    
-    /// 创建带事件通道的监控器
-    pub fn with_event_channel(
-        config: MonitoringSection,
-        engine_manager: Arc<RwLock<EngineManager>>,
-        process_manager: Arc<ProcessManager>,
-    ) -> (Self, mpsc::UnboundedReceiver<MonitorEvent>) {
-        let (tx, rx) = mpsc::unbounded_channel();
-        
-        let monitor = Self {
-            config,
-            engine_manager,
-            process_manager,
-            running: Arc::new(RwLock::new(false)),
-            event_sender: Some(tx),
-        };
-        
-        (monitor, rx)
     }
     
     /// 启动监控器
@@ -91,15 +72,14 @@ impl Monitor {
         
         info!(
             "Monitor started (check interval: {}s, auto-restart: {})",
-            self.config.health_check_interval, self.config.auto_restart
+            self.config.health_check_interval, self.config.enable_auto_restart
         );
         
         let running = self.running.clone();
         let engine_manager = self.engine_manager.clone();
         let process_manager = self.process_manager.clone();
         let config_interval = Duration::from_secs(self.config.health_check_interval);
-        let auto_restart = self.config.auto_restart;
-        let event_sender = self.event_sender.clone();
+        let auto_restart = self.config.enable_auto_restart;
         
         tokio::spawn(async move {
             let mut ticker = interval(config_interval);
@@ -115,11 +95,10 @@ impl Monitor {
                     &engine_manager,
                     &process_manager,
                     auto_restart,
-                    &event_sender,
                 ).await;
                 
                 // 收集指标
-                Self::collect_metrics_loop(&engine_manager, &event_sender).await;
+                Self::collect_metrics_loop(&engine_manager, &None);
             }
             
             info!("Monitor stopped");
@@ -148,7 +127,6 @@ impl Monitor {
         engine_manager: &Arc<RwLock<EngineManager>>,
         process_manager: &Arc<ProcessManager>,
         auto_restart: bool,
-        event_sender: &Option<mpsc::UnboundedSender<MonitorEvent>>,
     ) {
         let engines = {
             let manager = engine_manager.read().await;
@@ -173,13 +151,6 @@ impl Monitor {
                 let reason = "Process not running".to_string();
                 warn!("Engine {} is unhealthy: {}", engine_id, reason);
                 
-                // 发送不健康事件
-                if let Some(tx) = event_sender {
-                    let _ = tx.send(MonitorEvent::EngineUnhealthy {
-                        engine_id: engine_id.clone(),
-                        reason: reason.clone(),
-                    });
-                }
                 
                 // 尝试自动重启
                 if auto_restart {
@@ -188,30 +159,23 @@ impl Monitor {
                     match process_manager.restart_engine(&engine_info).await {
                         Ok(_) => {
                             // 更新状态
-                            let mut manager = engine_manager.write().await;
-                            if let Some(info) = manager.get_mut(&engine_id) {
+                            engine_manager.write().await.update_engine(&engine_id, |info| {
                                 info.status = EngineStatus::Running;
                                 info.uptime = Duration::ZERO;
                                 info.last_heartbeat = Some(Instant::now());
-                            }
-                            
+                            });
+                         
                             info!("Engine {} restarted successfully", engine_id);
-                            
-                            // 发送重启事件
-                            if let Some(tx) = event_sender {
-                                let _ = tx.send(MonitorEvent::EngineRestarted {
-                                    engine_id: engine_id.clone(),
-                                });
-                            }
                         }
                         Err(e) => {
                             error!("Failed to restart engine {}: {}", engine_id, e);
                             
                             // 标记为错误状态
-                            let mut manager = engine_manager.write().await;
-                            if let Some(info) = manager.get_mut(&engine_id) {
-                                info.status = EngineStatus::Error;
-                            }
+                            engine_manager.write().await.update_engine(&engine_id, |info| {
+                                info.status = EngineStatus::Error {
+                                    message: format!("Failed to restart: {}", e),
+                                };
+                            });
                         }
                     }
                 }
@@ -220,21 +184,13 @@ impl Monitor {
                 debug!("Engine {} is healthy", engine_id);
                 
                 // 更新运行时间
-                let mut manager = engine_manager.write().await;
-                if let Some(info) = manager.get_mut(&engine_id) {
+                engine_manager.write().await.update_engine(&engine_id, |info| {
                     if info.status == EngineStatus::Starting {
                         info.status = EngineStatus::Running;
                     }
-                    info.uptime = info.start_time.elapsed();
+                    info.uptime = Utc::now().signed_duration_since(info.start_time).to_std().unwrap_or(Duration::ZERO);
                     info.last_heartbeat = Some(Instant::now());
-                }
-                
-                // 发送健康检查通过事件
-                if let Some(tx) = event_sender {
-                    let _ = tx.send(MonitorEvent::HealthCheckPassed {
-                        engine_id: engine_id.clone(),
-                    });
-                }
+                });
             }
         }
         
@@ -272,7 +228,7 @@ impl Monitor {
     pub async fn check_engine_health(&self, engine_id: &str) -> anyhow::Result<HealthCheckResult> {
         let manager = self.engine_manager.read().await;
         
-        if let Some(engine_info) = manager.get(engine_id) {
+        if let Some(_engine_info) = manager.get(engine_id) {
             let is_running = self.process_manager.is_running(engine_id).await;
             
             if is_running {
@@ -327,8 +283,8 @@ impl Monitor {
 mod tests {
     use super::*;
     
-    #[test]
-    fn test_monitor_creation() {
+    #[tokio::test]
+    async fn test_monitor_creation() {
         let config = MonitoringSection::default();
         let engine_manager = Arc::new(RwLock::new(EngineManager::new(config.clone())));
         let process_manager = Arc::new(ProcessManager::new(Arc::new(config.clone().into())));

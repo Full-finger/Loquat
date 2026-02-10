@@ -1,0 +1,12 @@
+[package]
+name = "loquat-proto"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+prost = { workspace = true }
+prost-types = { workspace = true }
+tonic = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }

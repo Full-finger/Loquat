@@ -1,7 +1,7 @@
 //! Core traits for Aspect-Oriented Programming
 
 use async_trait::async_trait;
-use crate::errors::{Result, LoquatError, AopError};
+use crate::errors::{Result, AopError};
 use std::fmt::Debug;
 
 /// Result type for AOP operations

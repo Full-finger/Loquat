@@ -1,48 +1,49 @@
 syntax = "proto3";
 
 import "common.proto";
+import "google/protobuf/timestamp.proto";
 
 package loquat.engine;
 
 // Engine服务 - 插件运行时
 service EngineService {
     // 执行控制
-    rpc Start(Empty) returns (Empty);
-    rpc Stop(Empty) returns (Empty);
-    rpc Pause(Empty) returns (Empty);
-    rpc Resume(Empty) returns (Empty);
-    rpc Reload(Empty) returns (Empty);
-    rpc GetStatus(Empty) returns (EngineStatus);
+    rpc Start(loquat.common.Empty) returns (loquat.common.Empty);
+    rpc Stop(loquat.common.Empty) returns (loquat.common.Empty);
+    rpc Pause(loquat.common.Empty) returns (loquat.common.Empty);
+    rpc Resume(loquat.common.Empty) returns (loquat.common.Empty);
+    rpc Reload(loquat.common.Empty) returns (loquat.common.Empty);
+    rpc GetStatus(loquat.common.Empty) returns (EngineStatus);
     
     // 插件管理
-    rpc LoadPlugin(PluginPath) returns (PluginStatus);
-    rpc UnloadPlugin(PluginName) returns (Empty);
-    rpc ReloadPlugin(PluginName) returns (PluginStatus);
-    rpc ListPlugins(Empty) returns (PluginList);
-    rpc GetPluginInfo(PluginName) returns (loquat.common.PluginInfo);
+    rpc LoadPlugin(PluginPath) returns (loquat.common.PluginStatus);
+    rpc UnloadPlugin(loquat.common.PluginName) returns (loquat.common.Empty);
+    rpc ReloadPlugin(loquat.common.PluginName) returns (loquat.common.PluginStatus);
+    rpc ListPlugins(loquat.common.Empty) returns (PluginList);
+    rpc GetPluginInfo(loquat.common.PluginName) returns (loquat.common.PluginInfo);
     
     // 适配器管理
     rpc LoadAdapter(AdapterPath) returns (AdapterStatus);
-    rpc UnloadAdapter(AdapterName) returns (Empty);
-    rpc ListAdapters(Empty) returns (AdapterList);
+    rpc UnloadAdapter(AdapterName) returns (loquat.common.Empty);
+    rpc ListAdapters(loquat.common.Empty) returns (AdapterList);
     
     // 事件处理
     rpc SendEvent(loquat.common.Event) returns (loquat.common.EventResult);
-    rpc StreamEvents(Empty) returns (stream loquat.common.Event);
+    rpc StreamEvents(loquat.common.Empty) returns (stream loquat.common.Event);
     
     // 配置
-    rpc GetConfig(Empty) returns (loquat.common.Config);
-    rpc UpdateConfig(loquat.common.Config) returns (Empty);
+    rpc GetConfig(loquat.common.Empty) returns (loquat.common.Config);
+    rpc UpdateConfig(loquat.common.Config) returns (loquat.common.Empty);
     
     // 监控
-    rpc GetMetrics(Empty) returns (MetricSummary);
-    rpc StreamLogs(Empty) returns (stream loquat.common.LogEntry);
+    rpc GetMetrics(loquat.common.Empty) returns (MetricSummary);
+    rpc StreamLogs(loquat.common.Empty) returns (stream loquat.common.LogEntry);
     
     // 健康检查
-    rpc HealthCheck(Empty) returns (loquat.common.HealthStatus);
+    rpc HealthCheck(loquat.common.Empty) returns (loquat.common.HealthStatus);
     
     // Engine信息
-    rpc GetEngineInfo(Empty) returns (EngineInfo);
+    rpc GetEngineInfo(loquat.common.Empty) returns (EngineInfo);
 }
 
 // Engine状态

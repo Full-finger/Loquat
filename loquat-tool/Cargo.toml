@@ -17,8 +17,3 @@ dirs = "5.0"
 
 # 依赖主项目src
 loquat = { path = ".." }
-
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1

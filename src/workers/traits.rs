@@ -1,7 +1,7 @@
-//! Worker trait and related types
+//! Worker trait and related types (v2.0 with Matcher support)
 
 use crate::events::{Package, TargetSite};
-use crate::workers::WorkerResult;
+use crate::workers::{Matcher, WorkerResult};
 use async_trait::async_trait;
 use std::fmt::Debug;
 
@@ -32,7 +32,7 @@ impl std::fmt::Display for WorkerType {
     }
 }
 
-/// Worker trait - processing unit registered to pools
+/// Worker trait - processing unit registered to pools (v2.0 with Matcher)
 #[async_trait]
 pub trait Worker: Send + Sync + Debug {
     /// Worker name (unique identifier)
@@ -41,8 +41,27 @@ pub trait Worker: Send + Sync + Debug {
     /// Worker type
     fn worker_type(&self) -> WorkerType;
     
-    /// Check if this worker matches a specific target site
-    fn matches(&self, target_site: &TargetSite) -> bool;
+    /// Get the matcher for this worker (v2.0)
+    /// Default implementation checks target sites (backward compatible)
+    fn matcher(&self) -> &Matcher {
+        // Default: create a matcher that checks target sites
+        // Subclasses should override this
+        static DEFAULT_MATCHER: Matcher = Matcher::Wildcard;
+        &DEFAULT_MATCHER
+    }
+    
+    /// Check if this worker matches a specific target site (legacy, for backward compatibility)
+    /// V2.0 workers should implement matcher() instead
+    fn matches(&self, target_site: &TargetSite) -> bool {
+        // Use the matcher if available
+        self.matcher().matches(&Package::new().with_target_site(target_site.clone()))
+    }
+    
+    /// Check if this worker should process a given package (v2.0)
+    /// Uses the matcher to determine if the package should be processed
+    fn matches_package(&self, package: &Package) -> bool {
+        self.matcher().matches(package)
+    }
     
     /// Async handle a batch of packages
     /// Workers can split/merge packages

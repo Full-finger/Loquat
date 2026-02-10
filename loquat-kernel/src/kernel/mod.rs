@@ -2,21 +2,23 @@
 
 use crate::config::KernelConfig;
 use crate::engine::EngineManager;
+use crate::grpc_server::GrpcServer;
+use crate::http_server::HttpServer;
 use crate::monitor::Monitor;
-use crate::api::{GrpcServer, HttpServer};
+use crate::process_manager::ProcessManager;
 use std::sync::Arc;
-use parking_lot::RwLock;
+use tokio::sync::RwLock as TokioRwLock;
+use tracing::info;
 use chrono::Utc;
-use uuid::Uuid;
-use tracing::{info, error, warn};
 
 /// Kernel主结构
+#[derive(Clone)]
 pub struct Kernel {
     config: KernelConfig,
     engine_manager: Arc<EngineManager>,
     monitor: Arc<Monitor>,
-    grpc_server: Option<GrpcServer>,
-    http_server: Option<HttpServer>,
+    #[allow(dead_code)]
+    process_manager: Arc<ProcessManager>,
     start_time: chrono::DateTime<Utc>,
     kernel_id: String,
 }
@@ -26,62 +28,56 @@ impl Kernel {
     pub fn new(config: KernelConfig) -> Self {
         let kernel_id = config.kernel.kernel_id.clone();
         let engine_manager = Arc::new(EngineManager::new(config.clone()));
+        let process_manager = Arc::new(ProcessManager::new(Arc::new(config.clone())));
         let monitor = Arc::new(Monitor::new(
             config.monitoring.clone(),
-            Arc::clone(&engine_manager),
+            Arc::new(TokioRwLock::new((*engine_manager).clone())),
+            process_manager.clone(),
         ));
         
         Self {
             config,
             engine_manager,
             monitor,
-            grpc_server: None,
-            http_server: None,
+            process_manager,
             start_time: Utc::now(),
             kernel_id,
         }
     }
     
     /// 启动Kernel
-    pub async fn start(&mut self) -> anyhow::Result<()> {
+    pub async fn start(&self) -> anyhow::Result<()> {
         info!("Starting Loquat Kernel (ID: {})", self.kernel_id);
         
         // 启动监控器
         self.monitor.start().await?;
         
-        // 启动gRPC服务器
-        let grpc_addr = self.config.kernel.bind_address.parse()?;
-        let grpc_server = GrpcServer::new(
-            grpc_addr,
-            Arc::clone(&self.engine_manager),
-        );
-        self.grpc_server = Some(grpc_server);
-        
-        // 启动HTTP服务器
-        let http_addr = self.config.kernel.web_address.parse()?;
-        let http_server = HttpServer::new(
-            http_addr,
-            Arc::clone(&self.engine_manager),
-        );
-        self.http_server = Some(http_server);
-        
         info!("Kernel started successfully");
         Ok(())
     }
     
+    /// 启动gRPC服务器
+    pub fn start_grpc(&self) -> GrpcServer {
+        GrpcServer::new(
+            Arc::new(self.config.clone()),
+            Arc::new(TokioRwLock::new((*self.engine_manager).clone())),
+            Arc::new(TokioRwLock::new((*self.monitor).clone())),
+            Arc::new(TokioRwLock::new(self.clone())),
+        )
+    }
+    
+    /// 启动HTTP服务器
+    pub fn start_http(&self) -> HttpServer {
+        HttpServer::new(
+            Arc::new(self.config.clone()),
+            Arc::new(TokioRwLock::new((*self.engine_manager).clone())),
+            Arc::new(TokioRwLock::new(self.clone())),
+        )
+    }
+    
     /// 停止Kernel
-    pub async fn stop(&mut self) -> anyhow::Result<()> {
+    pub async fn stop(&self) -> anyhow::Result<()> {
         info!("Stopping Loquat Kernel");
-        
-        // 停止HTTP服务器
-        if let Some(http_server) = self.http_server.take() {
-            http_server.stop().await?;
-        }
-        
-        // 停止gRPC服务器
-        if let Some(grpc_server) = self.grpc_server.take() {
-            grpc_server.stop().await?;
-        }
         
         // 停止监控器
         self.monitor.stop().await?;

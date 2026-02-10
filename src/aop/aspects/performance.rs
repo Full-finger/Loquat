@@ -1,7 +1,7 @@
 //! Performance monitoring aspect implementation
 
 use crate::aop::traits::Aspect;
-use crate::errors::{AopError, Result};
+use crate::errors::Result;
 use crate::logging::traits::{Logger, LogLevel, LogContext};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -182,7 +182,7 @@ impl Aspect for PerformanceAspect {
         Ok(())
     }
 
-    async fn on_error(&self, operation: &str, error: &AopError) -> crate::aop::traits::AopResult<()> {
+    async fn on_error(&self, operation: &str, error: &crate::errors::AopError) -> crate::aop::traits::AopResult<()> {
         let mut log_context = LogContext::new();
         log_context = log_context.with_metadata("operation", operation).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
         log_context = log_context.with_metadata("error_type", std::any::type_name_of_val(error)).map_err(|e| crate::errors::AopError::ExecutionFailed(e.to_string()))?;
