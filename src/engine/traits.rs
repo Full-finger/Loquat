@@ -3,8 +3,11 @@
 use async_trait::async_trait;
 use crate::channels::types::ChannelType;
 use crate::engine::types::{EngineConfig, EngineStats, EngineState, ProcessingContext};
+use crate::engine::events::{EngineEvent, EventCallback, EventSubscription, CloneableEventCallback};
 use crate::errors::Result;
 use crate::events::Package;
+use crate::pools::{Pool, PoolType};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Engine trait - core orchestration interface
@@ -41,6 +44,28 @@ pub trait Engine: Send + Sync + std::fmt::Debug {
     
     /// Check if engine is running
     fn is_running(&self) -> bool;
+    
+    // Pool management
+    
+    /// Register a pool for a specific pool type
+    async fn register_pool(&mut self, pool_type: PoolType, pool: Arc<dyn Pool>) -> Result<()>;
+    
+    /// Unregister a pool for a specific pool type
+    async fn unregister_pool(&mut self, pool_type: PoolType) -> Result<()>;
+    
+    /// Get all registered pools
+    fn get_pools(&self) -> HashMap<PoolType, Arc<dyn Pool>>;
+    
+    // Event management
+    
+    /// Emit an event to all subscribers
+    async fn emit_event(&self, event: EngineEvent) -> Result<()>;
+    
+    /// Subscribe to events matching a pattern
+    async fn subscribe(&mut self, event_pattern: String, callback: CloneableEventCallback) -> Result<EventSubscription>;
+    
+    /// Unsubscribe from events
+    async fn unsubscribe(&mut self, subscription_id: &str) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -110,6 +135,43 @@ mod tests {
 
         fn is_running(&self) -> bool {
             self.running
+        }
+
+        async fn register_pool(&mut self, _pool_type: PoolType, _pool: Arc<dyn Pool>) -> Result<()> {
+            Ok(())
+        }
+
+        async fn unregister_pool(&mut self, _pool_type: PoolType) -> Result<()> {
+            Ok(())
+        }
+
+        fn get_pools(&self) -> HashMap<PoolType, Arc<dyn Pool>> {
+            HashMap::new()
+        }
+
+        async fn emit_event(&self, _event: EngineEvent) -> Result<()> {
+            Ok(())
+        }
+
+        async fn subscribe(&mut self, _event_pattern: String, _callback: CloneableEventCallback) -> Result<EventSubscription> {
+            Ok(EventSubscription {
+                id: "test-subscription".to_string(),
+                event_pattern: "*".to_string(),
+                callback: CloneableEventCallback::new(MockCallback),
+            })
+        }
+
+        async fn unsubscribe(&mut self, _subscription_id: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+    
+    #[derive(Debug, Clone)]
+    struct MockCallback;
+    
+    #[async_trait]
+    impl EventCallback for MockCallback {
+        async fn handle(&self, _event: EngineEvent) {
         }
     }
 

@@ -15,7 +15,7 @@ pub mod group;
 pub mod event_enum;
 
 // New event architecture modules
-pub mod payloads;
+pub mod payloads_legacy; // Legacy event payloads (MessagePayload, NoticePayload, RequestPayload)
 pub mod event;
 
 // Re-export commonly used types
@@ -37,3 +37,25 @@ pub use crate::events::event_enum::{Status, EventEnum};
 
 /// New unified event type (preferred) - separates events into Simple and Group
 pub use crate::events::event::UnifiedEvent;
+
+// ============================================================================
+// Legacy Payloads (Deprecated - will be removed in v3.0)
+// ============================================================================
+
+/// Legacy event payloads (deprecated - use crate::payloads instead)
+/// 
+/// # Migration Guide
+/// Old code:
+/// ```rust,ignore
+/// use loquat::events::MessagePayload;
+/// ```
+/// 
+/// New code:
+/// ```rust,ignore
+/// use loquat::payloads::TextPayload;
+/// ```
+#[deprecated(since = "0.2.0", note = "Use crate::payloads module instead")]
+pub mod payloads {
+    // Re-export from payloads_legacy for backward compatibility
+    pub use super::payloads_legacy::*;
+}

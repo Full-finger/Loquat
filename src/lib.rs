@@ -9,6 +9,7 @@ pub mod errors;
 pub mod logging;
 pub mod web;
 pub mod events;
+pub mod payloads;
 pub mod adapters;
 pub mod workers;
 pub mod pools;

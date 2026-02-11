@@ -196,10 +196,14 @@ impl Pool for StandardPool {
                 let mut processed = false;
                 let mut moved_to_next_pool = false;
                 
+                // Extract package ID for logging before package is moved
+                let package_id_for_log = package.package_id.clone();
+                let target_sites_clone = package.target_sites.clone();
+                
                 // Iterate through workers in priority order
                 for worker in &self.workers {
                     // Check if worker matches any target site in package
-                    if worker.matches_any(&package.target_sites) {
+                    if worker.matches_any(&target_sites_clone) {
                         // Worker matches - move package to worker
                         let result = worker.worker.handle_batch(vec![package]).await;
                         
@@ -241,9 +245,9 @@ impl Pool for StandardPool {
                     // For test purposes, we create a fresh package
                     let message = format!(
                         "Package moved to next pool (no matching worker): {:?}",
-                        package.package_id
+                        package_id_for_log
                     );
-                    let log_context = crate::logging::LogContext::new();
+                    let mut log_context = crate::logging::LogContext::new();
                     log_context.component = Some("StandardPool".to_string());
                     log_context.add("event_type", "no_match");
                     self.logger.log(crate::logging::LogLevel::Debug, &message, &log_context);

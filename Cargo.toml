@@ -103,6 +103,7 @@ serde_yaml = { workspace = true }
 tonic = { workspace = true }
 tonic-build = { workspace = true }
 prost = { workspace = true }
+prost-types = { workspace = true }
 axum = { workspace = true }
 hyper = { workspace = true }
 tower = { workspace = true }
@@ -122,6 +123,9 @@ nix = { workspace = true, features = ["process", "resource"] }
 lazy_static = { workspace = true }
 parking_lot = { workspace = true }
 async-trait = "0.1"
+
+# Proto definitions
+loquat-proto = { path = "proto" }
 
 # 额外依赖
 ratatui = "0.26"

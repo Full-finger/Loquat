@@ -1,122 +1,103 @@
 syntax = "proto3";
 
-import "common.proto";
+import "package.proto";
 import "google/protobuf/timestamp.proto";
 
 package loquat.engine;
 
-// Engine服务 - 插件运行时
+// Engine服务 - 流水线处理核心
 service EngineService {
-    // 执行控制
-    rpc Start(loquat.common.Empty) returns (loquat.common.Empty);
-    rpc Stop(loquat.common.Empty) returns (loquat.common.Empty);
-    rpc Pause(loquat.common.Empty) returns (loquat.common.Empty);
-    rpc Resume(loquat.common.Empty) returns (loquat.common.Empty);
-    rpc Reload(loquat.common.Empty) returns (loquat.common.Empty);
-    rpc GetStatus(loquat.common.Empty) returns (EngineStatus);
-    
-    // 插件管理
-    rpc LoadPlugin(PluginPath) returns (loquat.common.PluginStatus);
-    rpc UnloadPlugin(loquat.common.PluginName) returns (loquat.common.Empty);
-    rpc ReloadPlugin(loquat.common.PluginName) returns (loquat.common.PluginStatus);
-    rpc ListPlugins(loquat.common.Empty) returns (PluginList);
-    rpc GetPluginInfo(loquat.common.PluginName) returns (loquat.common.PluginInfo);
-    
-    // 适配器管理
-    rpc LoadAdapter(AdapterPath) returns (AdapterStatus);
-    rpc UnloadAdapter(AdapterName) returns (loquat.common.Empty);
-    rpc ListAdapters(loquat.common.Empty) returns (AdapterList);
-    
-    // 事件处理
-    rpc SendEvent(loquat.common.Event) returns (loquat.common.EventResult);
-    rpc StreamEvents(loquat.common.Empty) returns (stream loquat.common.Event);
-    
-    // 配置
-    rpc GetConfig(loquat.common.Empty) returns (loquat.common.Config);
-    rpc UpdateConfig(loquat.common.Config) returns (loquat.common.Empty);
-    
-    // 监控
-    rpc GetMetrics(loquat.common.Empty) returns (MetricSummary);
-    rpc StreamLogs(loquat.common.Empty) returns (stream loquat.common.LogEntry);
-    
-    // 健康检查
-    rpc HealthCheck(loquat.common.Empty) returns (loquat.common.HealthStatus);
-    
-    // Engine信息
-    rpc GetEngineInfo(loquat.common.Empty) returns (EngineInfo);
+  // Engine 生命周期管理
+  rpc Start(Empty) returns (EngineStatus);
+  rpc Stop(Empty) returns (EngineStatus);
+  rpc Pause(Empty) returns (EngineStatus);
+  rpc Resume(Empty) returns (EngineStatus);
+  rpc HealthCheck(Empty) returns (HealthStatus);
+  
+  // Package 处理
+  rpc SubmitPackage(loquat.v1.Package) returns (loquat.v1.ProcessResult);
+  rpc StreamPackages(stream loquat.v1.Package) returns (stream loquat.v1.ProcessResult);
+  
+  // Worker 管理
+  rpc RegisterWorker(WorkerRegistration) returns (WorkerAck);
+  rpc UnregisterWorker(WorkerId) returns (Empty);
+  rpc ListWorkers(Empty) returns (WorkerList);
+  rpc GetWorkerInfo(WorkerId) returns (loquat.v1.WorkerInfo);
+  
+  // Engine 信息
+  rpc GetEngineInfo(Empty) returns (EngineInfo);
+  rpc GetMetrics(Empty) returns (MetricSummary);
 }
 
-// Engine状态
+// 空消息
+message Empty {}
+
+// Engine 状态
 message EngineStatus {
-    loquat.common.EngineStatus status = 1;
-    string message = 2;
-    google.protobuf.Timestamp timestamp = 3;
-    int32 plugin_count = 4;
-    int32 adapter_count = 5;
+  enum State {
+    UNKNOWN = 0;
+    STARTING = 1;
+    RUNNING = 2;
+    PAUSED = 3;
+    STOPPING = 4;
+    STOPPED = 5;
+    ERROR = 6;
+  }
+  State state = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  int32 worker_count = 4;
+  int32 packages_processed = 5;
 }
 
-// Engine信息
+// 健康状态
+message HealthStatus {
+  bool healthy = 1;
+  string message = 2;
+  google.protobuf.Timestamp last_check = 3;
+}
+
+// Worker 注册请求
+message WorkerRegistration {
+  string id = 1;
+  string name = 2;
+  loquat.v1.PoolState pool = 3;    // 固定池子
+  int32 priority = 4;              // 同池子内排序
+  repeated loquat.v1.TargetSite targets = 5; // 匹配规则
+  map<string, string> metadata = 6;
+}
+
+// Worker 确认
+message WorkerAck {
+  bool success = 1;
+  string message = 2;
+}
+
+// Worker ID
+message WorkerId {
+  string id = 1;
+}
+
+// Worker 列表
+message WorkerList {
+  repeated loquat.v1.WorkerInfo workers = 1;
+}
+
+// Engine 信息
 message EngineInfo {
-    string id = 1;
-    string name = 2;
-    string version = 3;
-    string environment = 4;
-    google.protobuf.Timestamp start_time = 5;
-    google.protobuf.Timestamp uptime = 6;
-    map<string, string> metadata = 7;
-}
-
-// 插件列表
-message PluginList {
-    repeated loquat.common.PluginInfo plugins = 1;
-}
-
-// 插件路径
-message PluginPath {
-    string path = 1;
-    string plugin_type = 2;
-    map<string, string> options = 3;
-}
-
-// 适配器路径
-message AdapterPath {
-    string path = 1;
-    string adapter_type = 2;
-    map<string, string> config = 3;
-}
-
-// 适配器名称
-message AdapterName {
-    string name = 1;
-}
-
-// 适配器状态
-message AdapterStatus {
-    bool loaded = 1;
-    string message = 2;
-    google.protobuf.Timestamp loaded_at = 3;
-}
-
-// 适配器列表
-message AdapterList {
-    repeated AdapterInfo adapters = 1;
-}
-
-// 适配器信息
-message AdapterInfo {
-    string name = 1;
-    string adapter_type = 2;
-    string version = 3;
-    bool enabled = 4;
-    string status = 5;
-    google.protobuf.Timestamp loaded_at = 6;
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  google.protobuf.Timestamp start_time = 4;
+  string environment = 5;
+  map<string, string> metadata = 6;
 }
 
 // 指标摘要
 message MetricSummary {
-    map<string, double> metrics = 1;
-    google.protobuf.Timestamp timestamp = 2;
-    int32 events_processed = 3;
-    int32 events_sent = 4;
-    int32 errors = 5;
+  map<string, double> metrics = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  int64 packages_processed = 3;
+  int64 packages_failed = 4;
+  double avg_processing_time_ms = 5;
 }

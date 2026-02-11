@@ -1,59 +1,124 @@
 syntax = "proto3";
 
-import "common.proto";
+import "package.proto";
 import "google/protobuf/timestamp.proto";
 
 package loquat.kernel;
 
-// Kernel服务 - 管理Engine生命周期
+// Kernel服务 - Engine 生命周期管理和 Package 路由
 service KernelService {
-    // Engine生命周期管理
-    rpc RegisterEngine(loquat.common.EngineInfo) returns (loquat.common.EngineId);
-    rpc UnregisterEngine(loquat.common.EngineId) returns (loquat.common.Empty);
-    rpc RestartEngine(loquat.common.EngineId) returns (EngineStatusResponse);
-    rpc StopEngine(loquat.common.EngineId) returns (loquat.common.Empty);
-    rpc GetEngineStatus(loquat.common.EngineId) returns (EngineStatusResponse);
-    
-    // Engine列表
-    rpc ListEngines(loquat.common.Empty) returns (EngineList);
-    rpc GetEngineInfo(loquat.common.EngineId) returns (loquat.common.EngineInfo);
-    
-    // 健康检查
-    rpc HealthCheck(loquat.common.EngineId) returns (loquat.common.HealthStatus);
-    
-    // 配置管理
-    rpc GetConfig(loquat.common.Empty) returns (loquat.common.Config);
-    rpc UpdateConfig(loquat.common.Config) returns (loquat.common.Empty);
-    rpc ReloadConfig(loquat.common.Empty) returns (loquat.common.Empty);
-    
-    // 监控和指标
-    rpc StreamMetrics(loquat.common.Empty) returns (stream loquat.common.Metric);
-    rpc StreamLogs(loquat.common.EngineId) returns (stream loquat.common.LogEntry);
-    
-    // 系统信息
-    rpc GetSystemInfo(loquat.common.Empty) returns (SystemInfo);
-    rpc Shutdown(loquat.common.Empty) returns (loquat.common.Empty);
+  // Engine 生命周期管理
+  rpc RegisterEngine(EngineInfo) returns (EngineConfig);
+  rpc UnregisterEngine(EngineId) returns (Empty);
+  rpc RestartEngine(EngineId) returns (EngineStatusResponse);
+  rpc StopEngine(EngineId) returns (Empty);
+  
+  // Engine 列表和信息
+  rpc ListEngines(Empty) returns (EngineList);
+  rpc GetEngineStatus(EngineId) returns (EngineStatusResponse);
+  rpc GetEngineInfo(EngineId) returns (EngineInfo);
+  
+  // Package 路由
+  rpc RoutePackage(loquat.v1.Package) returns (RouteAck);
+  rpc StreamPackages(stream loquat.v1.Package) returns (stream loquat.v1.ProcessResult);
+  
+  // 配置管理
+  rpc GetConfig(Empty) returns (Config);
+  rpc UpdateConfig(Config) returns (Empty);
+  rpc ReloadConfig(Empty) returns (Empty);
+  
+  // 监控
+  rpc StreamMetrics(Empty) returns (stream Metric);
+  rpc StreamLogs(EngineId) returns (stream LogEntry);
+  
+  // 系统信息
+  rpc GetSystemInfo(Empty) returns (SystemInfo);
+  rpc Shutdown(Empty) returns (Empty);
 }
 
-// Engine列表
-message EngineList {
-    repeated loquat.common.EngineInfo engines = 1;
+// 空消息
+message Empty {}
+
+// Engine 注册信息
+message EngineInfo {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  string addr = 4;              // gRPC 地址
+  map<string, string> metadata = 5;
 }
 
-// 引擎状态响应（带时间戳）
+// Engine 配置（从 Kernel 返回）
+message EngineConfig {
+  string kernel_id = 1;
+  map<string, string> settings = 2;
+  google.protobuf.Timestamp issued_at = 3;
+}
+
+// Engine ID
+message EngineId {
+  string id = 1;
+}
+
+// Engine 状态响应
 message EngineStatusResponse {
-    loquat.common.EngineStatus status = 1;
-    string message = 2;
-    google.protobuf.Timestamp timestamp = 3;
-    string pid = 4;
+  enum Status {
+    UNKNOWN = 0;
+    ACTIVE = 1;
+    DOWN = 2;
+    DRAINING = 3;
+    ERROR = 4;
+  }
+  Status status = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  string pid = 4;
+}
+
+// Engine 列表
+message EngineList {
+  repeated EngineInfo engines = 1;
+}
+
+// 路由确认
+message RouteAck {
+  bool routed = 1;
+  string engine_id = 2;
+  string message = 3;
+}
+
+// 配置
+message Config {
+  map<string, string> values = 1;
+  string environment = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+// 指标
+message Metric {
+  string name = 1;
+  double value = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  map<string, string> labels = 4;
+}
+
+// 日志条目
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  string level = 2;
+  string message = 3;
+  string component = 4;
+  string engine_id = 5;
+  map<string, string> fields = 6;
 }
 
 // 系统信息
 message SystemInfo {
-    string version = 1;
-    string kernel_id = 2;
-    google.protobuf.Timestamp start_time = 3;
-    google.protobuf.Timestamp uptime = 4;
-    int32 engine_count = 5;
-    int32 max_engines = 6;
+  string version = 1;
+  string kernel_id = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp uptime = 4;
+  int32 engine_count = 5;
+  int32 max_engines = 6;
+  string database_path = 7;
 }

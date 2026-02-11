@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package loquat.v1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+// Package - 流水线中的基本处理单元
+message Package {
+  string flow_id = 1;              // UUID，全生命周期追踪
+  PoolState pool = 2;               // 当前所在的池子
+  repeated TargetSite targets = 3;    // 靶点标记，Worker 匹配用
+  google.protobuf.Any payload = 4;     // 实际内容
+  PayloadMeta meta = 5;              // Payload 元数据
+  repeated string trace = 6;          // 处理历史（Worker ID 列表）
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// 靶点 - Worker 用于匹配 Package 的标记
+message TargetSite {
+  enum Type {
+    DOMAIN = 0;      // 物质类型：text, image, event...
+    MOTIF = 1;       // 结构特征：command, mention, url...
+    STATE = 2;       // 功能状态：intent_weather, spam_suspected...
+    CONTEXT = 3;     // 上下文：user_vip, group_night_mode...
+  }
+  Type type = 1;
+  string tag = 2;                 // 具体标签值
+  map<string, string> metadata = 3; // 额外元数据
+}
+
+// Payload 元数据
+message PayloadMeta {
+  string type_url = 1;           // "loquat.types.Text/v1"
+  uint32 size_bytes = 2;
+  bool is_stream = 3;
+  map<string, string> hints = 4; // 快速过滤用
+}
+
+// 池子状态 - 九池子流水线
+enum PoolState {
+  PRE_INPUT = 0;      // 预输入池（公开）
+  INPUT = 1;         // 输入池（公开）
+  POST_INPUT = 2;     // 后输入池（中间）
+  PRE_PROCESS = 3;    // 预处理池（中间）
+  MID_PROCESS = 4;    // 中处理池（中间）
+  PROCESS = 5;       // 处理池（公开）
+  POST_PROCESS = 6;   // 后处理池（中间）
+  OUTPUT = 7;        // 输出池（公开）
+  POST_OUTPUT = 8;    // 后输出池（中间）
+}
+
+// Worker 信息
+message WorkerInfo {
+  string id = 1;
+  string name = 2;
+  PoolState pool = 3;           // 固定车间
+  int32 priority = 4;           // 同池子内排序（越小越优先）
+  string pool_state = 5;        // 池子状态名称
+  repeated TargetSite targets = 6; // 匹配规则
+  bool enabled = 7;
+}
+
+// Package 处理结果
+message ProcessResult {
+  string flow_id = 1;
+  bool success = 2;
+  repeated string trace = 3;   // 更新的处理历史
+  google.protobuf.Any payload = 4; // 处理后的 Payload
+  string error_message = 5;
+}

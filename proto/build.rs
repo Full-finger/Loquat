@@ -8,6 +8,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = manifest_dir.join("src").join("gen");
     std::fs::create_dir_all(&out_dir)?;
     
+    // 生成到 src/gen/v1 子目录（package.proto）
+    let v1_out = out_dir.join("v1");
+    std::fs::create_dir_all(&v1_out)?;
+    
+    tonic_build::configure()
+        .build_server(false)  // package 只有 message，没有 service
+        .build_client(false)
+        .type_attribute("loquat.v1.", "#[derive(Serialize, Deserialize)]")
+        .type_attribute("loquat.v1.", "#[serde(rename_all = \"snake_case\")]")
+        .out_dir(&v1_out)
+        .compile(&["package.proto"], &["."])?;
+    
     // 生成到 src/gen/common 子目录
     let common_out = out_dir.join("common");
     std::fs::create_dir_all(&common_out)?;
@@ -22,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kernel_out = out_dir.join("kernel");
     std::fs::create_dir_all(&kernel_out)?;
     
-    // 不使用 extern_path，让生成的代码使用相对路径
+    // kernel 依赖 package.proto
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
@@ -34,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine_out = out_dir.join("engine");
     std::fs::create_dir_all(&engine_out)?;
     
+    // engine 依赖 package.proto
     tonic_build::configure()
         .build_server(true)
         .build_client(true)

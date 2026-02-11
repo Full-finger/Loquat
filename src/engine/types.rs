@@ -3,8 +3,11 @@
 use crate::channels::types::ChannelType;
 use crate::events::Package;
 use crate::logging::traits::LogLevel;
+use crate::pools::PoolType;
 use crate::routers::types::RouteTarget;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt;
 
 /// Engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +26,18 @@ pub struct EngineConfig {
     
     /// Log level
     pub log_level: String,
+    
+    /// Pool enabled/disabled state
+    pub pool_enabled: HashMap<PoolType, bool>,
+    
+    /// Maximum pool flow depth (prevents infinite loops)
+    pub max_pool_depth: usize,
+    
+    /// Enable event system
+    pub enable_events: bool,
+    
+    /// Processing timeout in milliseconds (None = no timeout)
+    pub timeout_ms: Option<u64>,
 }
 
 impl Default for EngineConfig {
@@ -33,7 +48,22 @@ impl Default for EngineConfig {
             auto_create_channels: true,
             enable_stats: true,
             log_level: "info".to_string(),
+            pool_enabled: Self::default_pool_enabled(),
+            max_pool_depth: 100,
+            enable_events: true,
+            timeout_ms: None,
         }
+    }
+}
+
+impl EngineConfig {
+    fn default_pool_enabled() -> HashMap<PoolType, bool> {
+        let mut map = HashMap::new();
+        // Enable all pools by default
+        for pool_type in PoolType::processing_order() {
+            map.insert(pool_type, true);
+        }
+        map
     }
 }
 
@@ -72,6 +102,35 @@ impl EngineConfig {
         self.log_level = level.to_string();
         self
     }
+    
+    /// Set pool enabled state
+    pub fn with_pool_enabled(mut self, pool_type: PoolType, enabled: bool) -> Self {
+        self.pool_enabled.insert(pool_type, enabled);
+        self
+    }
+    
+    /// Set maximum pool flow depth
+    pub fn with_max_pool_depth(mut self, depth: usize) -> Self {
+        self.max_pool_depth = depth;
+        self
+    }
+    
+    /// Enable/disable event system
+    pub fn with_enable_events(mut self, enabled: bool) -> Self {
+        self.enable_events = enabled;
+        self
+    }
+    
+    /// Set processing timeout
+    pub fn with_timeout_ms(mut self, timeout_ms: Option<u64>) -> Self {
+        self.timeout_ms = timeout_ms;
+        self
+    }
+    
+    /// Check if a pool is enabled
+    pub fn is_pool_enabled(&self, pool_type: &PoolType) -> bool {
+        *self.pool_enabled.get(pool_type).unwrap_or(&false)
+    }
 }
 
 /// Engine statistics
@@ -94,6 +153,15 @@ pub struct EngineStats {
     
     /// Average processing time (ms)
     pub avg_processing_time_ms: u64,
+    
+    /// Active packages per pool type
+    pub pools_active: HashMap<PoolType, usize>,
+    
+    /// Total events emitted
+    pub events_emitted: usize,
+    
+    /// Error count by type
+    pub errors_by_type: HashMap<String, usize>,
 }
 
 impl EngineStats {
@@ -124,6 +192,21 @@ impl EngineStats {
             let current_avg = self.avg_processing_time_ms;
             self.avg_processing_time_ms = (current_avg * (n - 1) + time_ms) / n;
         }
+    }
+    
+    /// Record pool activity
+    pub fn record_pool_activity(&mut self, pool_type: PoolType) {
+        *self.pools_active.entry(pool_type).or_insert(0) += 1;
+    }
+    
+    /// Record an event emission
+    pub fn record_event_emitted(&mut self) {
+        self.events_emitted += 1;
+    }
+    
+    /// Record an error
+    pub fn record_error(&mut self, error_type: &str) {
+        *self.errors_by_type.entry(error_type.to_string()).or_insert(0) += 1;
     }
 }
 
@@ -172,6 +255,15 @@ pub struct ProcessingContext {
     
     /// Route target
     pub route_target: Option<RouteTarget>,
+    
+    /// Current pool in processing pipeline
+    pub current_pool: Option<PoolType>,
+    
+    /// Current flow depth (prevents infinite loops)
+    pub depth: usize,
+    
+    /// Processing errors encountered
+    pub errors: Vec<ProcessingError>,
 }
 
 impl ProcessingContext {
@@ -180,6 +272,58 @@ impl ProcessingContext {
         Self {
             channel_type: None,
             route_target: None,
+            current_pool: None,
+            depth: 0,
+            errors: Vec::new(),
+        }
+    }
+    
+    /// Check if max depth is exceeded
+    pub fn is_depth_exceeded(&self, max_depth: usize) -> bool {
+        self.depth > max_depth
+    }
+    
+    /// Add an error to the context
+    pub fn add_error(&mut self, error: ProcessingError) {
+        self.errors.push(error);
+    }
+    
+    /// Increment depth
+    pub fn increment_depth(&mut self) {
+        self.depth += 1;
+    }
+}
+
+/// Processing error
+#[derive(Debug, Clone)]
+pub struct ProcessingError {
+    /// Pool where the error occurred
+    pub pool_type: Option<PoolType>,
+    
+    /// Error message
+    pub message: String,
+    
+    /// Error type
+    pub error_type: String,
+}
+
+impl ProcessingError {
+    /// Create a new processing error
+    pub fn new(pool_type: Option<PoolType>, message: impl fmt::Display, error_type: &str) -> Self {
+        Self {
+            pool_type,
+            message: message.to_string(),
+            error_type: error_type.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for ProcessingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(pool) = self.pool_type {
+            write!(f, "[{}] {}: {}", pool, self.error_type, self.message)
+        } else {
+            write!(f, "[{}] {}", self.error_type, self.message)
         }
     }
 }
@@ -249,5 +393,35 @@ mod tests {
         let context = ProcessingContext::new();
         assert!(context.channel_type.is_none());
         assert!(context.route_target.is_none());
+        assert_eq!(context.depth, 0);
+        assert!(context.errors.is_empty());
+    }
+    
+    #[test]
+    fn test_processing_context_depth() {
+        let mut context = ProcessingContext::new();
+        assert!(!context.is_depth_exceeded(10));
+        
+        context.increment_depth();
+        assert_eq!(context.depth, 1);
+        assert!(!context.is_depth_exceeded(10));
+        
+        for _ in 0..10 {
+            context.increment_depth();
+        }
+        assert!(context.is_depth_exceeded(10));
+    }
+    
+    #[test]
+    fn test_processing_error() {
+        let error = ProcessingError::new(Some(PoolType::Input), "Test error", "TestType");
+        assert_eq!(error.pool_type, Some(PoolType::Input));
+        assert_eq!(error.message, "Test error");
+        assert_eq!(error.error_type, "TestType");
+        
+        let display = error.to_string();
+        assert!(display.contains("input"));
+        assert!(display.contains("TestType"));
+        assert!(display.contains("Test error"));
     }
 }

@@ -1446,9 +1446,11 @@ dependencies = [
  "hyper 1.8.1",
  "indicatif",
  "lazy_static",
+ "loquat-proto",
  "nix 0.27.1",
  "parking_lot",
  "prost",
+ "prost-types",
  "ratatui",
  "regex",
  "rusqlite",
@@ -1547,6 +1549,7 @@ version = "0.2.0"
 dependencies = [
  "prost",
  "prost-types",
+ "serde",
  "tonic",
  "tonic-build",
 ]
