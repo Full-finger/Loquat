@@ -1,8 +1,13 @@
-//! PingPong Worker - responds to /ping commands (v2.0)
+//! PingPong Worker - responds to /ping commands (v2.0 with four-dimensional TargetSite)
 //!
-//! PingPongWorker demonstrates the complete ping-pong flow:
+//! PingPongWorker demonstrates complete ping-pong flow:
 //! Input: /ping command
 //! Output: pong response
+//!
+//! With new TargetSite system:
+//! - Command motif -> Motif::Command
+//! - Specific command -> State::Custom("command:ping")
+//! - Response ready -> State::ResponseReady
 
 use crate::events::Package;
 use crate::events::payloads::TextPayload;
@@ -29,8 +34,8 @@ impl PingPongWorker {
     /// Create a new PingPongWorker with custom response
     pub fn with_response(response: &str) -> Self {
         let matcher = Matcher::all_of(vec![
-            Matcher::has_tag("command"),
-            Matcher::has_tag("command:ping"),
+            Matcher::has_motif("Command"),
+            Matcher::has_state("command:ping"),
         ]);
         
         Self {
@@ -65,12 +70,12 @@ impl Worker for PingPongWorker {
             // Create response payload
             let response_payload = TextPayload::new(&self.response);
             
-            // Set the response as the new payload
+            // Set as new payload
             package.payload = Some(Box::new(response_payload));
             package.payload_type = Some("TextPayload".to_string());
             
-            // Add response tag
-            package.target_sites.push(TargetSite::tag("response"));
+            // Add response ready state tag
+            package.target_sites.push(TargetSite::state_response_ready());
             
             // Trace this worker
             package.trace.push(self.name().to_string());
@@ -101,14 +106,14 @@ mod tests {
         let worker = PingPongWorker::new();
         
         let package = Package::new()
-            .with_target_site(TargetSite::tag("command"))
-            .with_target_site(TargetSite::tag("command:ping"));
+            .with_target_site(TargetSite::motif_command())
+            .with_target_site(TargetSite::state_custom("command:ping"));
         
         assert!(worker.matches_package(&package));
         
         let package = Package::new()
-            .with_target_site(TargetSite::tag("command"))
-            .with_target_site(TargetSite::tag("command:help"));
+            .with_target_site(TargetSite::motif_command())
+            .with_target_site(TargetSite::state_custom("command:help"));
         
         assert!(!worker.matches_package(&package));
     }
@@ -119,8 +124,8 @@ mod tests {
         
         let mut package = Package::new()
             .with_payload(TextPayload::new("/ping"))
-            .with_target_site(TargetSite::tag("command"))
-            .with_target_site(TargetSite::tag("command:ping"));
+            .with_target_site(TargetSite::motif_command())
+            .with_target_site(TargetSite::state_custom("command:ping"));
         
         let result = worker.handle_batch(vec![package]).await;
         
@@ -135,9 +140,9 @@ mod tests {
                 panic!("Expected TextPayload");
             }
             
-            // Check tags
-            assert!(pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-                crate::events::SiteType::Tag(tag) if tag == "response")));
+            // Check tags - should have ResponseReady state
+            assert!(pkg.target_sites.iter().any(|t| matches!(t, 
+                TargetSite::State(crate::events::StateTag::ResponseReady))));
             
             // Check trace
             assert!(pkg.trace.contains(&"ping_pong".to_string()));
@@ -152,8 +157,8 @@ mod tests {
         
         let mut package = Package::new()
             .with_payload(TextPayload::new("/ping"))
-            .with_target_site(TargetSite::tag("command"))
-            .with_target_site(TargetSite::tag("command:ping"));
+            .with_target_site(TargetSite::motif_command())
+            .with_target_site(TargetSite::state_custom("command:ping"));
         
         let result = worker.handle_batch(vec![package]).await;
         

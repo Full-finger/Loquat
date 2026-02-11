@@ -4,26 +4,30 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 /// Pool type classification - 9 pool types in processing order
+/// 
+/// Processing flow: PreInput → Input → PostInput → PreProcess → MidProcess → Process → PostProcess → Output → PostOutput
+/// Public pools (third-party workers can register): Input, PostInput, PreProcess, Process, Output
+/// Internal pools (system workers only): PreInput, MidProcess, PostProcess, PostOutput
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PoolType {
-    /// 预输入池
+    /// Pre-input pool - system preprocessing (public)
     PreInput,
-    /// 输入池 - 第三方可注册
+    /// Input pool - third-party workers can register
     Input,
-    /// 输入中间池
-    InputMiddle,
-    /// 预处理池（交换池）- 第三方可注册
+    /// Post-input pool - target transformation (public)
+    PostInput,
+    /// Pre-process pool - before processing checks (public)
     PreProcess,
-    /// 处理中间池
-    ProcessMiddle,
-    /// 处理池 - 第三方可注册
+    /// Mid-process pool - intermediate processing (internal)
+    MidProcess,
+    /// Process pool - core business logic (public)
     Process,
-    /// 后处理池
+    /// Post-process pool - after processing (internal)
     PostProcess,
-    /// 输出池 - 第三方可注册
+    /// Output pool - prepare output (public)
     Output,
-    /// 后输出池
+    /// Post-output pool - after output (internal)
     PostOutput,
 }
 
@@ -33,9 +37,9 @@ impl PoolType {
         vec![
             Self::PreInput,
             Self::Input,
-            Self::InputMiddle,
+            Self::PostInput,
             Self::PreProcess,
-            Self::ProcessMiddle,
+            Self::MidProcess,
             Self::Process,
             Self::PostProcess,
             Self::Output,
@@ -47,7 +51,7 @@ impl PoolType {
     pub fn allows_third_party(&self) -> bool {
         matches!(
             self,
-            Self::Input | Self::PreProcess | Self::Process | Self::Output
+            Self::Input | Self::PostInput | Self::PreProcess | Self::Process | Self::Output
         )
     }
     
@@ -56,9 +60,9 @@ impl PoolType {
         match self {
             Self::PreInput => 0,
             Self::Input => 1,
-            Self::InputMiddle => 2,
+            Self::PostInput => 2,
             Self::PreProcess => 3,
-            Self::ProcessMiddle => 4,
+            Self::MidProcess => 4,
             Self::Process => 5,
             Self::PostProcess => 6,
             Self::Output => 7,
@@ -72,9 +76,9 @@ impl std::fmt::Display for PoolType {
         match self {
             Self::PreInput => write!(f, "pre_input"),
             Self::Input => write!(f, "input"),
-            Self::InputMiddle => write!(f, "input_middle"),
+            Self::PostInput => write!(f, "post_input"),
             Self::PreProcess => write!(f, "pre_process"),
-            Self::ProcessMiddle => write!(f, "process_middle"),
+            Self::MidProcess => write!(f, "mid_process"),
             Self::Process => write!(f, "process"),
             Self::PostProcess => write!(f, "post_process"),
             Self::Output => write!(f, "output"),
@@ -100,9 +104,9 @@ mod tests {
     fn test_pool_type_allows_third_party() {
         assert!(!PoolType::PreInput.allows_third_party());
         assert!(PoolType::Input.allows_third_party());
-        assert!(!PoolType::InputMiddle.allows_third_party());
+        assert!(PoolType::PostInput.allows_third_party());
         assert!(PoolType::PreProcess.allows_third_party());
-        assert!(!PoolType::ProcessMiddle.allows_third_party());
+        assert!(!PoolType::MidProcess.allows_third_party());
         assert!(PoolType::Process.allows_third_party());
         assert!(!PoolType::PostProcess.allows_third_party());
         assert!(PoolType::Output.allows_third_party());

@@ -8,6 +8,7 @@ pub mod types;
 pub mod standard_pool;
 pub mod validator;
 
-pub use traits::*;
+// Re-export Pool trait for external use
+pub use traits::Pool;
 pub use types::*;
 pub use standard_pool::*;

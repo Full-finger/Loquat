@@ -133,8 +133,8 @@ mod tests {
         let safe_package = Package::new();
         assert!(worker.is_output_safe(&safe_package));
 
-        // Package with target sites that would match
-        let unsafe_package = Package::new().with_target_site(TargetSite::worker("test_worker"));
+        // Package with target sites that would match (any state tag)
+        let unsafe_package = Package::new().with_target_site(TargetSite::state_user_vip());
         assert!(!worker.is_output_safe(&unsafe_package));
     }
 }

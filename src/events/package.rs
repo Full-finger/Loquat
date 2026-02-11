@@ -125,7 +125,8 @@ impl Default for Package {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{SiteType, BlockType};
+    use crate::events::BlockType;
+    use crate::events::payloads::TextPayload;
 
     #[test]
     fn test_package_creation() {
@@ -138,7 +139,7 @@ mod tests {
     
     #[test]
     fn test_package_builder() {
-        let site = TargetSite::new("worker1", SiteType::Worker("worker1".to_string()));
+        let site = TargetSite::domain_text();
         let block = Block::new(BlockType::Default);
         
         let package = Package::new()
@@ -147,5 +148,40 @@ mod tests {
         
         assert_eq!(package.target_sites.len(), 1);
         assert_eq!(package.blocks.len(), 1);
+    }
+    
+    #[test]
+    fn test_package_with_payload() {
+        let payload = TextPayload::new("Hello world");
+        let package = Package::new()
+            .with_payload(payload)
+            .with_target_site(TargetSite::domain_text());
+        
+        assert_eq!(package.payload_type, Some("TextPayload".to_string()));
+        assert!(package.payload.is_some());
+        
+        let retrieved = package.get_payload::<TextPayload>();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().content, "Hello world");
+    }
+    
+    #[test]
+    fn test_package_trace() {
+        let package = Package::new()
+            .trace_worker("worker1")
+            .trace_worker("worker2");
+        
+        assert_eq!(package.trace.len(), 2);
+        assert_eq!(package.trace[0], "worker1");
+        assert_eq!(package.trace[1], "worker2");
+    }
+    
+    #[test]
+    fn test_has_payload_type() {
+        let package = Package::new()
+            .with_payload(TextPayload::new("test"));
+        
+        assert!(package.has_payload_type("TextPayload"));
+        assert!(!package.has_payload_type("BlobPayload"));
     }
 }

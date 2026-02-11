@@ -1,12 +1,14 @@
-//! Matcher system for Worker package matching (v2.0)
+//! Matcher system for Worker package matching (v2.0 with four-dimensional support)
 //!
 //! Matchers determine if a Worker should process a given Package based on:
-//! - Target sites (tags)
-//! - Payload types
-//! - Payload content (regex, prefix, etc.)
+//! - Domain tags (material type: text, image, audio, etc.)
+//! - Motif tags (structural feature: command, mention, url, etc.)
+//! - State tags (functional state: intent_weather, spam_suspected, etc.)
+//! - Context tags (contextual info: group, night_mode, etc.)
+//! - Payload types and content
 //! - Trace history
 
-use crate::events::{Package, TargetSite, SiteType};
+use crate::events::{Package, TargetSite};
 use regex::Regex;
 
 /// Matcher - determines if a Worker should process a Package
@@ -15,8 +17,29 @@ pub enum Matcher {
     /// Exact match on a specific target site
     Exact(TargetSite),
     
-    /// Match if package has any of these tags
-    HasTag(Vec<String>),
+    /// Match if package has specific domain tag
+    HasDomain(String),
+    
+    /// Match if package has specific motif tag
+    HasMotif(String),
+    
+    /// Match if package has specific state tag
+    HasState(String),
+    
+    /// Match if package has specific context tag
+    HasContext(String),
+    
+    /// Match if package has any of these domain tags
+    HasAnyDomain(Vec<String>),
+    
+    /// Match if package has any of these motif tags
+    HasAnyMotif(Vec<String>),
+    
+    /// Match if package has any of these state tags
+    HasAnyState(Vec<String>),
+    
+    /// Match if package has any of these context tags
+    HasAnyContext(Vec<String>),
     
     /// Match if package has a specific payload type
     HasPayloadType(String),
@@ -57,17 +80,68 @@ impl Matcher {
                 package.target_sites.iter().any(|t| t == site)
             }
             
-            Matcher::HasTag(tags) => {
-                let package_tags: Vec<String> = package.target_sites
-                    .iter()
-                    .filter(|t| matches!(&t.site_type, SiteType::Tag(_)))
-                    .map(|t| match &t.site_type {
-                        SiteType::Tag(tag) => tag.clone(),
-                        _ => unreachable!(),
-                    })
-                    .collect();
-                
-                tags.iter().any(|tag| package_tags.contains(tag))
+            Matcher::HasDomain(tag) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::Domain(dt) => dt.tag_string().eq_ignore_ascii_case(tag),
+                    _ => false,
+                })
+            }
+            
+            Matcher::HasMotif(tag) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::Motif(mt) => mt.tag_string().eq_ignore_ascii_case(tag),
+                    _ => false,
+                })
+            }
+            
+            Matcher::HasState(tag) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::State(st) => st.tag_string().eq_ignore_ascii_case(tag),
+                    _ => false,
+                })
+            }
+            
+            Matcher::HasContext(tag) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::Context(ct) => ct.tag_string().eq_ignore_ascii_case(tag),
+                    _ => false,
+                })
+            }
+            
+            Matcher::HasAnyDomain(tags) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::Domain(dt) => {
+                        tags.iter().any(|tag| dt.tag_string().eq_ignore_ascii_case(tag))
+                    }
+                    _ => false,
+                })
+            }
+            
+            Matcher::HasAnyMotif(tags) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::Motif(mt) => {
+                        tags.iter().any(|tag| mt.tag_string().eq_ignore_ascii_case(tag))
+                    }
+                    _ => false,
+                })
+            }
+            
+            Matcher::HasAnyState(tags) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::State(st) => {
+                        tags.iter().any(|tag| st.tag_string().eq_ignore_ascii_case(tag))
+                    }
+                    _ => false,
+                })
+            }
+            
+            Matcher::HasAnyContext(tags) => {
+                package.target_sites.iter().any(|t| match t {
+                    TargetSite::Context(ct) => {
+                        tags.iter().any(|tag| ct.tag_string().eq_ignore_ascii_case(tag))
+                    }
+                    _ => false,
+                })
             }
             
             Matcher::HasPayloadType(type_name) => {
@@ -126,9 +200,44 @@ impl Matcher {
         }
     }
     
-    /// Create a HasTag matcher
-    pub fn has_tag(tag: &str) -> Self {
-        Self::HasTag(vec![tag.to_string()])
+    /// Create a HasDomain matcher
+    pub fn has_domain(tag: &str) -> Self {
+        Self::HasDomain(tag.to_string())
+    }
+    
+    /// Create a HasMotif matcher
+    pub fn has_motif(tag: &str) -> Self {
+        Self::HasMotif(tag.to_string())
+    }
+    
+    /// Create a HasState matcher
+    pub fn has_state(tag: &str) -> Self {
+        Self::HasState(tag.to_string())
+    }
+    
+    /// Create a HasContext matcher
+    pub fn has_context(tag: &str) -> Self {
+        Self::HasContext(tag.to_string())
+    }
+    
+    /// Create a HasAnyDomain matcher
+    pub fn has_any_domain(tags: Vec<&str>) -> Self {
+        Self::HasAnyDomain(tags.into_iter().map(|s| s.to_string()).collect())
+    }
+    
+    /// Create a HasAnyMotif matcher
+    pub fn has_any_motif(tags: Vec<&str>) -> Self {
+        Self::HasAnyMotif(tags.into_iter().map(|s| s.to_string()).collect())
+    }
+    
+    /// Create a HasAnyState matcher
+    pub fn has_any_state(tags: Vec<&str>) -> Self {
+        Self::HasAnyState(tags.into_iter().map(|s| s.to_string()).collect())
+    }
+    
+    /// Create a HasAnyContext matcher
+    pub fn has_any_context(tags: Vec<&str>) -> Self {
+        Self::HasAnyContext(tags.into_iter().map(|s| s.to_string()).collect())
     }
     
     /// Create a HasPayloadType matcher
@@ -174,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_exact_matcher() {
-        let site = TargetSite::tag("test_tag");
+        let site = TargetSite::state_custom("test_tag");
         let package = Package::new()
             .with_target_site(site.clone());
         
@@ -183,12 +292,12 @@ mod tests {
     }
 
     #[test]
-    fn test_has_tag_matcher() {
+    fn test_has_domain_matcher() {
         let package = Package::new()
-            .with_target_site(TargetSite::tag("text"))
-            .with_target_site(TargetSite::tag("command"));
+            .with_target_site(TargetSite::domain_text())
+            .with_target_site(TargetSite::motif_command());
         
-        let matcher = Matcher::has_tag("command");
+        let matcher = Matcher::has_motif("Command");
         assert!(matcher.matches(&package));
     }
 
@@ -234,11 +343,11 @@ mod tests {
     #[test]
     fn test_all_of_matcher() {
         let package = Package::new()
-            .with_target_site(TargetSite::tag("text"))
+            .with_target_site(TargetSite::domain_text())
             .with_payload(TextPayload::new("/ping"));
         
         let matcher = Matcher::all_of(vec![
-            Matcher::has_tag("text"),
+            Matcher::has_domain("Text"),
             Matcher::text_starts_with("/"),
         ]);
         
@@ -248,14 +357,14 @@ mod tests {
     #[test]
     fn test_any_of_matcher() {
         let package1 = Package::new()
-            .with_target_site(TargetSite::tag("image"));
+            .with_target_site(TargetSite::domain_image());
         
         let package2 = Package::new()
-            .with_target_site(TargetSite::tag("text"));
+            .with_target_site(TargetSite::domain_text());
         
         let matcher = Matcher::any_of(vec![
-            Matcher::has_tag("image"),
-            Matcher::has_tag("text"),
+            Matcher::has_domain("Image"),
+            Matcher::has_domain("Text"),
         ]);
         
         assert!(matcher.matches(&package1));

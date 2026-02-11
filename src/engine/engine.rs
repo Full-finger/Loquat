@@ -126,14 +126,111 @@ impl StandardEngine {
         None
     }
     
-    async fn process_pipeline(&self, package: Package, _context: &ProcessingContext) -> Result<Package> {
-        let package_id = &package.package_id;
-        let message = format!("Package {} processed (stream disabled)", package_id);
+    async fn process_pipeline(&self, package: Package, context: &ProcessingContext) -> Result<Package> {
+        let package_id = package.package_id.clone();
+        let start_time = std::time::Instant::now();
+        
+        // Emit package started event
+        if self.config.enable_events {
+            let _ = self.emit_event_internal(EngineEvent::PackageStarted(
+                crate::engine::events::PackageStartedEvent {
+                    package_id: package_id.clone(),
+                    entry_pool: PoolType::Input,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                },
+            )).await;
+        }
+        
+        // Route the package
+        let routed_package = self.route_package(package, context).await?;
+        
+        // Process through pools if enabled
+        let processed_package = if self.config.enable_stats {
+            self.process_through_pools(routed_package).await?
+        } else {
+            routed_package
+        };
+        
+        // Calculate processing time
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        
+        // Emit package completed event
+        if self.config.enable_events {
+            let _ = self.emit_event_internal(EngineEvent::PackageCompleted(
+                crate::engine::events::PackageCompletedEvent {
+                    package_id: processed_package.package_id.clone(),
+                    duration_ms,
+                    pools_processed: vec![PoolType::Input],
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                },
+            )).await;
+        }
+        
+        let message = format!("Package {} processed in {}ms", package_id, duration_ms);
         let mut log_context = LogContext::new();
         log_context.component = Some("Engine".to_string());
-        log_context.add("package_id", package_id.to_string());
-        log_context.add("event_type", "process_skipped");
-        self.logger.log(LogLevel::Warn, &message, &log_context);
+        log_context.add("package_id", package_id);
+        log_context.add("duration_ms", duration_ms.to_string());
+        self.logger.log(LogLevel::Info, &message, &log_context);
+        
+        Ok(processed_package)
+    }
+    
+    async fn route_package(&self, package: Package, context: &ProcessingContext) -> Result<Package> {
+        // In v2.0, routing is simplified
+        // The router is currently disabled but we log the route target
+        if let Some(route_target) = &context.route_target {
+            let message = format!("Package routed to: {:?}", route_target);
+            let mut log_context = LogContext::new();
+            log_context.component = Some("Engine".to_string());
+            log_context.add("package_id", package.package_id.clone());
+            self.logger.log(LogLevel::Debug, &message, &log_context);
+        }
+        
+        Ok(package)
+    }
+    
+    async fn process_through_pools(&self, package: Package) -> Result<Package> {
+        let pools = self.pools.read().await;
+        
+        if pools.is_empty() {
+            let package_id = package.package_id.clone();
+            let message = "No pools registered, package passed through";
+            let mut log_context = LogContext::new();
+            log_context.component = Some("Engine".to_string());
+            log_context.add("package_id", package_id);
+            self.logger.log(LogLevel::Warn, message, &log_context);
+            return Ok(package);
+        }
+        
+        // Process through input pool first
+        if let Some(input_pool) = pools.get(&PoolType::Input) {
+            let package_id = package.package_id.clone();
+            let result = input_pool.process_batch(vec![package]).await;
+            if !result.is_empty() {
+                let processed_pkg = result.into_iter().next().unwrap();
+                let message = "Package processed through input pool";
+                let mut log_context = LogContext::new();
+                log_context.component = Some("Engine".to_string());
+                log_context.add("package_id", processed_pkg.package_id.clone());
+                self.logger.log(LogLevel::Debug, message, &log_context);
+                return Ok(processed_pkg);
+            }
+            
+            // Return package unchanged if processing failed
+            let message = "Package processing failed, returning original";
+            let mut log_context = LogContext::new();
+            log_context.component = Some("Engine".to_string());
+            log_context.add("package_id", package_id);
+            self.logger.log(LogLevel::Warn, message, &log_context);
+            return Ok(Package::new());
+        }
         
         Ok(package)
     }

@@ -1,7 +1,12 @@
-//! CommandParser Worker - parses text commands (v2.0)
+//! CommandParser Worker - parses text commands (v2.0 with four-dimensional TargetSite)
 //!
 //! CommandParser detects and parses text commands like "/ping hello"
 //! and adds appropriate tags to the package.
+//!
+//! With the new TargetSite system:
+//! - Text content -> Domain::Text
+//! - Command pattern -> Motif::Command
+//! - Specific command -> State::Custom("command:ping")
 
 use crate::events::Package;
 use crate::events::payloads::TextPayload;
@@ -31,7 +36,7 @@ impl CommandParser {
     /// Create a new CommandParser with custom prefix
     pub fn with_prefix(prefix: &str) -> Self {
         let matcher = Matcher::all_of(vec![
-            Matcher::has_tag("text"),
+            Matcher::has_domain("Text"),
             Matcher::text_starts_with(prefix),
         ]);
         
@@ -45,7 +50,7 @@ impl CommandParser {
     /// Create a CommandParser with custom options
     pub fn with_options(prefix: &str, add_command_tag: bool) -> Self {
         let matcher = Matcher::all_of(vec![
-            Matcher::has_tag("text"),
+            Matcher::has_domain("Text"),
             Matcher::text_starts_with(prefix),
         ]);
         
@@ -104,6 +109,12 @@ impl Worker for CommandParser {
         &self.matcher
     }
     
+    /// Override matches to check if package has text domain
+    fn matches(&self, target_site: &TargetSite) -> bool {
+        // Check if target site is Domain::Text
+        matches!(target_site, TargetSite::Domain(crate::events::DomainTag::Text))
+    }
+    
     async fn handle_batch(&self, mut packages: Vec<Package>) -> WorkerResult {
         for package in &mut packages {
             // Get text payload
@@ -115,13 +126,17 @@ impl Worker for CommandParser {
             
             // Parse command
             if let Some((command, _args)) = Self::parse_command(&text_payload.content, &self.command_prefix) {
-                // Add "command" tag
-                package.target_sites.push(TargetSite::tag("command"));
+                // Replace Domain::Text with more specific tags to avoid dead loop
+                // Remove the original Domain::Text if present
+                package.target_sites.retain(|t| !matches!(t, TargetSite::Domain(crate::events::DomainTag::Text)));
                 
-                // Add specific command tag if enabled
+                // Add "command" motif tag
+                package.target_sites.push(TargetSite::motif_command());
+                
+                // Add specific command tag if enabled (as state tag)
                 if self.add_command_tag {
                     let command_tag = format!("command:{}", command);
-                    package.target_sites.push(TargetSite::tag(&command_tag));
+                    package.target_sites.push(TargetSite::state_custom(&command_tag));
                 }
                 
                 // Add command to extra metadata
@@ -191,13 +206,13 @@ mod tests {
         
         let package = Package::new()
             .with_payload(TextPayload::new("/ping"))
-            .with_target_site(TargetSite::tag("text"));
+            .with_target_site(TargetSite::domain_text());
         
         assert!(parser.matches_package(&package));
         
         let package = Package::new()
             .with_payload(TextPayload::new("ping"))
-            .with_target_site(TargetSite::tag("text"));
+            .with_target_site(TargetSite::domain_text());
         
         assert!(!parser.matches_package(&package));
     }
@@ -208,7 +223,7 @@ mod tests {
         
         let mut package = Package::new()
             .with_payload(TextPayload::new("/ping hello"))
-            .with_target_site(TargetSite::tag("text"));
+            .with_target_site(TargetSite::domain_text());
         
         let result = parser.handle_batch(vec![package]).await;
         
@@ -216,11 +231,13 @@ mod tests {
             assert_eq!(packages.len(), 1);
             let pkg = &packages[0];
             
-            // Check tags
-            assert!(pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-                crate::events::SiteType::Tag(tag) if tag == "command")));
-            assert!(pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-                crate::events::SiteType::Tag(tag) if tag == "command:ping")));
+            // Check tags - should have Command motif
+            assert!(pkg.target_sites.iter().any(|t| matches!(t, 
+                TargetSite::Motif(crate::events::MotifTag::Command))));
+            
+            // Check tags - should have state for specific command
+            assert!(pkg.target_sites.iter().any(|t| matches!(t, 
+                TargetSite::State(crate::events::StateTag::Custom(tag)) if tag == "command:ping")));
             
             // Check extra metadata
             assert!(pkg.extra.get("command").is_some());
@@ -235,7 +252,7 @@ mod tests {
         
         let mut package = Package::new()
             .with_payload(TextPayload::new("/ping"))
-            .with_target_site(TargetSite::tag("text"));
+            .with_target_site(TargetSite::domain_text());
         
         let result = parser.handle_batch(vec![package]).await;
         
@@ -243,13 +260,13 @@ mod tests {
             assert_eq!(packages.len(), 1);
             let pkg = &packages[0];
             
-            // Should have "command" tag
-            assert!(pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-                crate::events::SiteType::Tag(tag) if tag == "command")));
+            // Should have Command motif
+            assert!(pkg.target_sites.iter().any(|t| matches!(t, 
+                TargetSite::Motif(crate::events::MotifTag::Command))));
             
-            // Should NOT have "command:ping" tag
-            assert!(!pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-                crate::events::SiteType::Tag(tag) if tag == "command:ping")));
+            // Should NOT have state for specific command
+            assert!(!pkg.target_sites.iter().any(|t| matches!(t, 
+                TargetSite::State(crate::events::StateTag::Custom(tag)) if tag == "command:ping")));
         } else {
             panic!("Expected Modify result");
         }

@@ -1,16 +1,20 @@
-//! ConversionWorker - configuration-driven tag transformation (v2.0)
+//! ConversionWorker - configuration-driven tag transformation (v2.0 with four-dimensional support)
 //!
-//! ConversionWorker allows tag transformation through YAML configuration
+//! ConversionWorker allows target site transformation through configuration
 //! without writing code. It's the "meta worker" from the design document.
+//!
+//! With the new four-dimensional TargetSite system (Domain/Motif/State/Context),
+//! conversion rules can transform across all four dimensions.
 
 use crate::events::Package;
+use crate::events::TargetSite;
 use crate::workers::{Matcher, Worker, WorkerResult, WorkerType};
 use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Conversion rule for tag transformation
+/// Conversion rule for target site transformation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionRule {
     /// Rule name (for debugging)
@@ -19,18 +23,30 @@ pub struct ConversionRule {
     /// Matcher conditions (when to apply this rule)
     pub conditions: ConversionConditions,
     
-    /// Actions to take (what tags to add/remove)
+    /// Actions to take (what target sites to add/remove)
     pub actions: ConversionActions,
 }
 
 /// Conditions for applying conversion rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionConditions {
-    /// Match if package has all these tags
+    /// Match if package has all these domain tags
     #[serde(default)]
-    pub has_tags: Vec<String>,
+    pub has_domains: Vec<String>,
     
-    /// Match if package has this payload type
+    /// Match if package has all these motif tags
+    #[serde(default)]
+    pub has_motifs: Vec<String>,
+    
+    /// Match if package has all these state tags
+    #[serde(default)]
+    pub has_states: Vec<String>,
+    
+    /// Match if package has all these context tags
+    #[serde(default)]
+    pub has_contexts: Vec<String>,
+    
+    /// Match if package has a specific payload type
     #[serde(default)]
     pub has_payload_type: Option<String>,
     
@@ -58,17 +74,62 @@ pub struct ConversionConditions {
 impl ConversionConditions {
     /// Check if all conditions are satisfied
     pub fn matches(&self, package: &Package) -> bool {
-        // Check tags
-        if !self.has_tags.is_empty() {
-            let package_tags: Vec<String> = package.target_sites
+        // Check domain tags
+        if !self.has_domains.is_empty() {
+            let package_domains: Vec<String> = package.target_sites
                 .iter()
-                .filter_map(|t| match &t.site_type {
-                    crate::events::SiteType::Tag(tag) => Some(tag.clone()),
+                .filter_map(|t| match t {
+                    TargetSite::Domain(dt) => Some(dt.tag_string()),
                     _ => None,
                 })
                 .collect();
             
-            if !self.has_tags.iter().all(|tag| package_tags.contains(tag)) {
+            if !self.has_domains.iter().all(|tag| package_domains.contains(&tag)) {
+                return false;
+            }
+        }
+        
+        // Check motif tags
+        if !self.has_motifs.is_empty() {
+            let package_motifs: Vec<String> = package.target_sites
+                .iter()
+                .filter_map(|t| match t {
+                    TargetSite::Motif(mt) => Some(mt.tag_string()),
+                    _ => None,
+                })
+                .collect();
+            
+            if !self.has_motifs.iter().all(|tag| package_motifs.contains(&tag)) {
+                return false;
+            }
+        }
+        
+        // Check state tags
+        if !self.has_states.is_empty() {
+            let package_states: Vec<String> = package.target_sites
+                .iter()
+                .filter_map(|t| match t {
+                    TargetSite::State(st) => Some(st.tag_string()),
+                    _ => None,
+                })
+                .collect();
+            
+            if !self.has_states.iter().all(|tag| package_states.contains(&tag)) {
+                return false;
+            }
+        }
+        
+        // Check context tags
+        if !self.has_contexts.is_empty() {
+            let package_contexts: Vec<String> = package.target_sites
+                .iter()
+                .filter_map(|t| match t {
+                    TargetSite::Context(ct) => Some(ct.tag_string()),
+                    _ => None,
+                })
+                .collect();
+            
+            if !self.has_contexts.iter().all(|tag| package_contexts.contains(&tag)) {
                 return false;
             }
         }
@@ -124,16 +185,39 @@ impl ConversionConditions {
     }
 }
 
+/// Target site specification for conversion actions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetSiteSpec {
+    /// Dimension: domain, motif, state, or context
+    pub dimension: String,
+    
+    /// Tag name (e.g., "text", "command", "intent_weather")
+    pub tag: String,
+}
+
+impl TargetSiteSpec {
+    /// Try to convert to a TargetSite
+    pub fn to_target_site(&self) -> Option<TargetSite> {
+        match self.dimension.to_lowercase().as_str() {
+            "domain" => Some(TargetSite::domain_custom(&self.tag)),
+            "motif" => Some(TargetSite::motif_custom(&self.tag)),
+            "state" => Some(TargetSite::state_custom(&self.tag)),
+            "context" => Some(TargetSite::context_custom(&self.tag)),
+            _ => None,
+        }
+    }
+}
+
 /// Actions to take when conditions are met
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversionActions {
-    /// Tags to add to package
+    /// Target sites to add to package
     #[serde(default)]
-    pub add_tags: Vec<String>,
+    pub add_sites: Vec<TargetSiteSpec>,
     
-    /// Tags to remove from package
+    /// Target sites to remove from package
     #[serde(default)]
-    pub remove_tags: Vec<String>,
+    pub remove_sites: Vec<TargetSiteSpec>,
     
     /// Set new payload (JSON string representation)
     #[serde(default)]
@@ -207,7 +291,7 @@ impl Worker for ConversionWorker {
         WorkerType::Process
     }
     
-    fn matches_package(&self, package: &Package) -> bool {
+    fn matches_package(&self, _package: &Package) -> bool {
         // ConversionWorker matches all packages
         // Internal rules filter which conversions to apply
         true
@@ -217,28 +301,39 @@ impl Worker for ConversionWorker {
         for package in &mut packages {
             for rule in self.rules.iter() {
                 if rule.conditions.matches(package) {
-                    // Add tags
-                    for tag in &rule.actions.add_tags {
-                        package.target_sites.push(crate::events::TargetSite::tag(tag));
+                    // Add target sites
+                    for site_spec in &rule.actions.add_sites {
+                        if let Some(target_site) = site_spec.to_target_site() {
+                            package.target_sites.push(target_site);
+                        } else {
+                            tracing::warn!(
+                                "ConversionWorker: invalid target site spec: {:?}",
+                                site_spec
+                            );
+                        }
                     }
                     
-                    // Remove tags
-                    for tag in &rule.actions.remove_tags {
-                        package.target_sites.retain(|t| match &t.site_type {
-                            crate::events::SiteType::Tag(existing_tag) => existing_tag != tag,
-                            _ => true,
-                        });
+                    // Remove target sites
+                    for site_spec in &rule.actions.remove_sites {
+                        if let Some(target_site) = site_spec.to_target_site() {
+                            package.target_sites.retain(|ts| ts != &target_site);
+                        }
                     }
                     
                     // Set payload if specified
                     if let Some(payload_json) = &rule.actions.set_payload {
-                        // For now, just log the payload change
+                        // For now, just log payload change
                         // In a full implementation, this would convert JSON to appropriate payload type
-                        tracing::debug!("ConversionWorker: would set payload to {:?}", payload_json);
+                        tracing::debug!(
+                            "ConversionWorker: would set payload to {:?}",
+                            payload_json
+                        );
                     }
                     
-                    tracing::debug!("ConversionWorker: applied rule '{}' to package '{}'", 
-                        rule.name, package.package_id);
+                    tracing::debug!(
+                        "ConversionWorker: applied rule '{}' to package '{}'",
+                        rule.name, package.package_id
+                    );
                 }
             }
         }
@@ -251,12 +346,14 @@ impl Worker for ConversionWorker {
 mod tests {
     use super::*;
     use crate::events::payloads::TextPayload;
-    use crate::events::TargetSite;
 
     #[test]
-    fn test_conversion_conditions_tags() {
+    fn test_conversion_conditions_domains() {
         let conditions = ConversionConditions {
-            has_tags: vec!["text".to_string(), "command".to_string()],
+            has_domains: vec!["Text".to_string()],
+            has_motifs: Vec::new(),
+            has_states: Vec::new(),
+            has_contexts: Vec::new(),
             has_payload_type: None,
             text_contains: None,
             text_starts_with: None,
@@ -266,11 +363,35 @@ mod tests {
         };
         
         let matching_package = Package::new()
-            .with_target_site(TargetSite::tag("text"))
-            .with_target_site(TargetSite::tag("command"));
+            .with_target_site(TargetSite::domain_text());
         
         let non_matching_package = Package::new()
-            .with_target_site(TargetSite::tag("image"));
+            .with_target_site(TargetSite::domain_image());
+        
+        assert!(conditions.matches(&matching_package));
+        assert!(!conditions.matches(&non_matching_package));
+    }
+
+    #[test]
+    fn test_conversion_conditions_motifs() {
+        let conditions = ConversionConditions {
+            has_domains: Vec::new(),
+            has_motifs: vec!["Command".to_string()],
+            has_states: Vec::new(),
+            has_contexts: Vec::new(),
+            has_payload_type: None,
+            text_contains: None,
+            text_starts_with: None,
+            text_ends_with: None,
+            text_matches: None,
+            has_trace: Vec::new(),
+        };
+        
+        let matching_package = Package::new()
+            .with_target_site(TargetSite::motif_command());
+        
+        let non_matching_package = Package::new()
+            .with_target_site(TargetSite::motif_url());
         
         assert!(conditions.matches(&matching_package));
         assert!(!conditions.matches(&non_matching_package));
@@ -279,7 +400,10 @@ mod tests {
     #[test]
     fn test_conversion_conditions_text() {
         let conditions = ConversionConditions {
-            has_tags: Vec::new(),
+            has_domains: Vec::new(),
+            has_motifs: Vec::new(),
+            has_states: Vec::new(),
+            has_contexts: Vec::new(),
             has_payload_type: None,
             text_contains: Some("world".to_string()),
             text_starts_with: None,
@@ -299,15 +423,29 @@ mod tests {
     }
 
     #[test]
+    fn test_target_site_spec() {
+        let spec = TargetSiteSpec {
+            dimension: "domain".to_string(),
+            tag: "text".to_string(),
+        };
+        
+        let target_site = spec.to_target_site().unwrap();
+        assert_eq!(target_site.dimension(), "domain");
+        assert!(matches!(target_site, TargetSite::Domain(_)));
+    }
+
+    #[test]
     fn test_conversion_config_yaml() {
         let yaml = r#"
 rules:
   - name: "detect_command"
     conditions:
-      has_tags: ["text"]
+      has_domains: ["Text"]
       text_starts_with: "/"
     actions:
-      add_tags: ["command"]
+      add_sites:
+        - dimension: "motif"
+          tag: "command"
 "#;
         
         let config = ConversionConfig::from_yaml(yaml).unwrap();
@@ -323,7 +461,9 @@ rules:
     conditions:
       text_starts_with: "/"
     actions:
-      add_tags: ["command"]
+      add_sites:
+        - dimension: "motif"
+          tag: "command"
 "#;
         
         let worker = ConversionWorker::from_yaml("test_worker", yaml).unwrap();
@@ -336,8 +476,7 @@ rules:
         
         if let WorkerResult::Modify(packages) = result {
             assert_eq!(packages.len(), 1);
-            assert!(packages[0].target_sites.iter()
-                .any(|t| matches!(&t.site_type, crate::events::SiteType::Tag(tag) if tag == "command")));
+            assert!(packages[0].target_sites.iter().any(|t| matches!(t, TargetSite::Motif(_))));
         } else {
             panic!("Expected Modify result");
         }

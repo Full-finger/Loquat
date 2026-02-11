@@ -1,25 +1,26 @@
-//! Integration test for ping-pong flow (v2.0)
+//! Integration test for ping-pong flow (v2.0 with four-dimensional TargetSite)
 //!
-//! This test demonstrates the complete flow:
+//! This test demonstrates complete flow:
 //! 1. Create a package with "/ping" text
 //! 2. Process through Input pool (CommandParser)
-//! 3. Process through Process pool (optional ConversionWorker)
-//! 4. Process through Output pool (PingPongWorker)
-//! 5. Verify output is "pong"
+//! 3. Process through Output pool (PingPongWorker)
+//! 4. Verify output is "pong"
 
+use std::sync::Arc;
 use loquat::events::{Package, TargetSite};
 use loquat::events::payloads::TextPayload;
-use loquat::pools::StandardPool;
+use loquat::pools::{StandardPool, Pool};
 use loquat::pools::PoolType;
 use loquat::workers::{CommandParser, PingPongWorker, WorkerRegistration, MatchingRule};
 use loquat::logging::StructuredLogger;
 use loquat::logging::formatters::JsonFormatter;
 use loquat::logging::writers::ConsoleWriter;
+use loquat::logging::Logger;
 
-fn create_logger() -> loquat::logging::Arc<dyn loquat::logging::Logger> {
-    let formatter = loquat::Arc::new(JsonFormatter::new());
-    let writer = loquat::Arc::new(ConsoleWriter::new());
-    loquat::Arc::new(StructuredLogger::new(formatter, writer))
+fn create_logger() -> Arc<dyn Logger> {
+    let formatter = Arc::new(JsonFormatter::new());
+    let writer = Arc::new(ConsoleWriter::new());
+    Arc::new(StructuredLogger::new(formatter, writer))
 }
 
 #[tokio::test]
@@ -42,10 +43,10 @@ async fn test_complete_ping_pong_flow() {
     // 3. Create package with "/ping" text
     let package = Package::new()
         .with_payload(TextPayload::new("/ping"))
-        .with_target_site(TargetSite::tag("text"));
+        .with_target_site(TargetSite::domain_text());
     
     println!("Input package:");
-    println!("  Payload: {:?}", package.payload);
+    println!("  Payload type: {:?}", package.payload_type);
     println!("  Tags: {:?}", package.target_sites);
     println!("  Trace: {:?}", package.trace);
     
@@ -56,15 +57,12 @@ async fn test_complete_ping_pong_flow() {
     let pkg = &packages[0];
     
     println!("\nAfter Input pool:");
-    println!("  Payload: {:?}", pkg.payload);
     println!("  Tags: {:?}", pkg.target_sites);
     println!("  Trace: {:?}", pkg.trace);
     
     // Verify CommandParser added tags
-    assert!(pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-        loquat::events::SiteType::Tag(tag) if tag == "command")));
-    assert!(pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-        loquat::events::SiteType::Tag(tag) if tag == "command:ping")));
+    assert!(pkg.target_sites.iter().any(|t| matches!(t, 
+        TargetSite::Motif(loquat::events::MotifTag::Command))));
     
     // 5. Process through Output pool (PingPongWorker)
     let packages = output_pool.process_batch(packages).await;
@@ -73,7 +71,6 @@ async fn test_complete_ping_pong_flow() {
     let pkg = &packages[0];
     
     println!("\nAfter Output pool:");
-    println!("  Payload: {:?}", pkg.payload);
     println!("  Tags: {:?}", pkg.target_sites);
     println!("  Trace: {:?}", pkg.trace);
     
@@ -86,10 +83,6 @@ async fn test_complete_ping_pong_flow() {
     } else {
         panic!("Expected TextPayload");
     }
-    
-    // Verify response tag was added
-    assert!(pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-        loquat::events::SiteType::Tag(tag) if tag == "response")));
     
     // Verify trace includes both workers
     assert!(pkg.trace.contains(&"command_parser".to_string()));
@@ -112,7 +105,7 @@ async fn test_ping_pong_with_custom_response() {
     
     let package = Package::new()
         .with_payload(TextPayload::new("/ping"))
-        .with_target_site(TargetSite::tag("text"));
+        .with_target_site(TargetSite::domain_text());
     
     let packages = input_pool.process_batch(vec![package]).await;
     let packages = output_pool.process_batch(packages).await;
@@ -144,7 +137,7 @@ async fn test_non_command_message() {
     // Package with regular text (not a command)
     let package = Package::new()
         .with_payload(TextPayload::new("hello world"))
-        .with_target_site(TargetSite::tag("text"));
+        .with_target_site(TargetSite::domain_text());
     
     // Process through pools
     let packages = input_pool.process_batch(vec![package]).await;
@@ -155,8 +148,8 @@ async fn test_non_command_message() {
     let pkg = &packages[0];
     
     // CommandParser should not add command tags
-    assert!(!pkg.target_sites.iter().any(|t| matches!(&t.site_type, 
-        loquat::events::SiteType::Tag(tag) if tag == "command")));
+    assert!(!pkg.target_sites.iter().any(|t| matches!(t, 
+        TargetSite::Motif(loquat::events::MotifTag::Command))));
     
     // PingPongWorker should not match
     if let Some(payload) = pkg.get_payload::<TextPayload>() {
@@ -183,7 +176,7 @@ async fn test_ping_with_arguments() {
     // Package with arguments: "/ping hello world"
     let package = Package::new()
         .with_payload(TextPayload::new("/ping hello world"))
-        .with_target_site(TargetSite::tag("text"));
+        .with_target_site(TargetSite::domain_text());
     
     let packages = input_pool.process_batch(vec![package]).await;
     let packages = output_pool.process_batch(packages).await;

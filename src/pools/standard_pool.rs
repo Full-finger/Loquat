@@ -90,7 +90,8 @@ impl Debug for StandardPool {
 
 impl OutputSafe<Package> for StandardPool {
     fn is_output_safe(&self, output: &Package) -> bool {
-        !self.workers.iter().any(|w| w.worker.is_output_safe(output))
+        // Output is safe if no worker in this pool matches the output
+        self.workers.iter().all(|w| w.worker.is_output_safe(output))
     }
 }
 
@@ -216,10 +217,13 @@ impl Pool for StandardPool {
                                 break; // Break out of worker loop
                             }
                             WorkerResult::Modify(new_packages) => {
-                                // Modified packages continue in current pool
+                            // Modified packages continue in current pool
                                 for new_pkg in new_packages {
-                                    // Validate output safety
-                                    if worker.worker.is_output_safe(&new_pkg) {
+                                    // Validate output safety - check that no worker in this pool matches any target site
+                                    let is_safe = self.workers.iter()
+                                        .all(|w| w.worker.is_output_safe(&new_pkg));
+                                    
+                                    if is_safe {
                                         next_batch.push(new_pkg);
                                     } else {
                                         // Log dead loop warning
@@ -231,7 +235,7 @@ impl Pool for StandardPool {
                                     }
                                 }
                                 processed = true;
-                                break; // Break out of worker loop
+                                // Don't break - continue to next worker in pool
                             }
                         }
                     }
