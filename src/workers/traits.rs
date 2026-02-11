@@ -110,7 +110,7 @@ mod tests {
         }
 
         async fn handle_batch(&self, _packages: Vec<Package>) -> WorkerResult {
-            WorkerResult::release()
+            WorkerResult::release(Package::new())
         }
     }
 

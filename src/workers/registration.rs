@@ -177,7 +177,7 @@ mod tests {
         }
 
         async fn handle_batch(&self, _packages: Vec<crate::events::Package>) -> WorkerResult {
-            WorkerResult::release()
+            WorkerResult::release(crate::events::Package::new())
         }
     }
 

@@ -4,12 +4,12 @@ use crate::events::Package;
 use serde::{Deserialize, Serialize};
 
 /// Worker processing result
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
+// Note: Clone is not implemented because Package cannot be cloned (contains trait object)
 // Note: Deserialize is not implemented because Package cannot be deserialized
-// (contains trait object BoxedPayload)
 pub enum WorkerResult {
     /// Processing complete, Package moves to next pool
-    Release,
+    Release(Package),
     
     /// Modified packages, continue processing in current pool
     /// Workers must ensure output packages won't be matched by themselves again
@@ -18,8 +18,8 @@ pub enum WorkerResult {
 
 impl WorkerResult {
     /// Create a Release result
-    pub fn release() -> Self {
-        Self::Release
+    pub fn release(package: Package) -> Self {
+        Self::Release(package)
     }
     
     /// Create a Modify result
@@ -29,7 +29,7 @@ impl WorkerResult {
     
     /// Check if this is a Release result
     pub fn is_release(&self) -> bool {
-        matches!(self, Self::Release)
+        matches!(self, Self::Release(_))
     }
     
     /// Check if this is a Modify result
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn test_worker_result_release() {
-        let result = WorkerResult::release();
+        let result = WorkerResult::release(Package::new());
         assert!(result.is_release());
         assert!(!result.is_modify());
     }
