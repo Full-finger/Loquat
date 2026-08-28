@@ -1,5 +1,6 @@
-# Loquat - 机器人/代理开发框架
-
+<p align="center">
+  <img src="./public/hero.svg" width="100%" alt="SnowLuma 将 QQ 原生会话桥接到 OneBot、WebUI 与自动化工具" />
+</p>
 一个基于 Rust 的清洁架构机器人/代理开发框架，采用 AOP（面向切面编程）和日志功能，专为处理即时消息场景而设计。
 
 ## 特性

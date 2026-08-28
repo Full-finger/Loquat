@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="hero-title">
+  <title id="hero-title">Loquat — 本地优先的任务编排运行时</title>
+  <defs>
+    <linearGradient id="hero-bg" x1="0" y1="0" x2="1200" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.55" stop-color="#f4f8fd"/>
+      <stop offset="1" stop-color="#e6eff9"/>
+    </linearGradient>
+    <linearGradient id="brand-line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#55b9e8"/>
+      <stop offset="0.38" stop-color="#a088ee"/>
+      <stop offset="0.7" stop-color="#ec8cba"/>
+      <stop offset="1" stop-color="#f2a23e"/>
+    </linearGradient>
+    <linearGradient id="core-fill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a2c47"/>
+      <stop offset="1" stop-color="#142238"/>
+    </linearGradient>
+    <clipPath id="card-clip"><rect width="404" height="276" rx="18"/></clipPath>
+    <clipPath id="bg-clip"><rect width="1200" height="400" rx="28"/></clipPath>
+    <filter id="soft-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <linearGradient id="lq-ring-grad" x1="201.3" y1="558.1" x2="515.2" y2="872" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#55b9e8"/>
+      <stop offset="0.38" stop-color="#a088ee"/>
+      <stop offset="0.7" stop-color="#ec8cba"/>
+      <stop offset="1" stop-color="#f2a23e"/>
+    </linearGradient>
+    <path id="lq-star" transform="translate(253.097 241.227) scale(2.2878)" d="M142.5709937085368,34.177156259768104 L152.22900626926986,56.83061493852255 C161.59321970737392,78.79494979597374 178.9350860952632,96.39323804756489 200.7596166918899,106.07881302599192 L222.04038328314692,115.5230693088593 C227.99926251073563,118.16757847053566 231.84048031869554,124.07478062889179 231.84048031869554,130.59411113656057 C231.84048031869554,137.11344164422934 227.99926251073563,143.0206438025855 222.04038328314692,145.66515296426184 L200.7596166918899,155.10940924712924 C178.9350860952632,164.79498422555625 161.59321970737392,182.3932724771474 152.22900626926986,204.3576073345986 L142.5709937085368,227.01106601335303 C140.0816919341762,232.84987546435772 134.34730802388654,236.6388823180345 127.99999999723018,236.6388823180345 C121.65269197057381,236.6388823180345 115.91830806028418,232.84987546435772 113.42900628592359,227.01106601335303 L103.77099372519051,204.3576073345986 C94.40678028708642,182.3932724771474 77.0649138991972,164.79498422555625 55.240383302570464,155.10940924712924 L33.95961671131345,145.66515296426184 C28.000737483724755,143.0206438025855 24.159519675764813,137.11344164422934 24.159519675764813,130.59411113656057 C24.159519675764813,124.07478062889179 28.000737483724755,118.16757847053566 33.95961671131345,115.5230693088593 L55.240383302570464,106.07881302599192 C77.0649138991972,96.39323804756489 94.40678028708642,78.79494979597374 103.77099372519051,56.83061493852255 L113.42900628592359,34.177156259768104 C115.91830806028418,28.33834680876343 121.65269197057381,24.549339955086644 127.99999999723018,24.549339955086644 C134.34730802388654,24.549339955086644 140.0816919341762,28.33834680876343 142.5709937085368,34.177156259768104 Z"/>
+    <mask id="lq-punch" maskUnits="userSpaceOnUse" x="0" y="0" width="1080" height="1080">
+      <rect width="1080" height="1080" fill="#fff"/>
+      <use href="#lq-star" fill="#000"/>
+      <circle cx="357.72" cy="715.58" r="104.63" fill="#000"/>
+    </mask>
+    <g id="lq-mark">
+      <g mask="url(#lq-punch)">
+        <circle cx="358.23" cy="715.07" r="156.93" fill="url(#lq-ring-grad)"/>
+        <rect x="377.45" y="708.21" width="84.9" height="162.44" fill="url(#lq-ring-grad)"/>
+      </g>
+    </g>
+  </defs>
+  <style>
+    .sans { font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+    .mono { font-family: "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace; }
+    @keyframes lq-float {
+      0% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+      100% { transform: translateY(0); }
+    }
+    .lq-float { animation: lq-float 7s ease-in-out infinite; }
+    @keyframes lq-blink {
+      0%, 54% { opacity: 0.9; }
+      55%, 100% { opacity: 0; }
+    }
+    .lq-cursor { animation: lq-blink 1.15s linear infinite; }
+    @keyframes lq-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .lq-live { animation: lq-pulse 2.2s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) { .lq-float, .lq-cursor, .lq-live { animation: none; } }
+  </style>
+
+  <rect width="1200" height="400" rx="28" fill="url(#hero-bg)" stroke="#d3e2f2" stroke-width="1.5"/>
+  <g clip-path="url(#bg-clip)">
+    <circle cx="1112" cy="28" r="138" fill="#a5c9ee" opacity="0.5" filter="url(#soft-glow)"/>
+    <circle cx="705" cy="392" r="120" fill="#9fc3ec" opacity="0.4" filter="url(#soft-glow)"/>
+    <ellipse cx="116" cy="192" rx="82" ry="82" fill="#a5c9ee" opacity="0.5" filter="url(#soft-glow)"/>
+  </g>
+
+  <g aria-hidden="true" fill="none" stroke-linecap="round">
+    <path d="M694 28H1154" stroke="#9db8d9" stroke-opacity="0.55"/>
+    <path d="M694 372H1154" stroke="#9db8d9" stroke-opacity="0.4"/>
+    <path d="M708 14V386" stroke="#9db8d9" stroke-opacity="0.35"/>
+    <path d="M1140 14V386" stroke="#9db8d9" stroke-opacity="0.35"/>
+  </g>
+
+  <g id="title-block">
+    <g transform="translate(-30.1 -99.6) scale(0.4078)">
+      <g class="lq-float"><use href="#lq-mark"/></g>
+    </g>
+    <g transform="translate(196 54)">
+      <text class="mono" x="0" y="0" fill="#7d90ad" font-size="14" letter-spacing="2.2">TASK ORCHESTRATION · LOCAL-FIRST RUNTIME</text>
+      <text class="sans" x="0" y="92" font-size="74" font-weight="700" letter-spacing="-3">
+        <tspan fill="#223349">Lo</tspan><tspan fill="#3f97dd">quat</tspan>
+      </text>
+      <rect x="2" y="110" width="148" height="5" rx="2.5" fill="url(#brand-line)"/>
+      <text class="sans" x="0" y="162" fill="#35435c" font-size="27" font-weight="600">把零散的自动化，结成成熟的果实。</text>
+      <text class="sans" x="0" y="199" fill="#35435c" font-size="27" font-weight="600">声明式流水线 · 本地优先 · 开箱即用。</text>
+      <text class="sans" x="0" y="244" fill="#7d90ad" font-size="16">一个运行时，编排任务、分发事件、暴露类型化 API 与实时状态。</text>
+      <g transform="translate(0 274)">
+        <rect width="128" height="34" rx="17" fill="#ffffff" stroke="#c7dcf2"/>
+        <circle cx="18" cy="17" r="4" fill="#2f7fd0"/>
+        <text class="mono" x="31" y="22" fill="#2c5170" font-size="13">Windows x64</text>
+        <g transform="translate(140 0)">
+          <rect width="174" height="34" rx="17" fill="#f4f9ff" stroke="#c7dcf2"/>
+          <circle cx="18" cy="17" r="4" fill="#5aaef0"/>
+          <text class="mono" x="31" y="22" fill="#2c5170" font-size="13">Linux x64 / arm64</text>
+        </g>
+        <g transform="translate(326 0)">
+          <rect width="120" height="34" rx="17" fill="#eef5fd" stroke="#b9d4ee"/>
+          <circle cx="18" cy="17" r="4" fill="#8ec8f7"/>
+          <text class="mono" x="31" y="22" fill="#2c5170" font-size="13">TypeScript</text>
+        </g>
+      </g>
+    </g>
+  </g>
+
+  <g id="project-proof" transform="translate(734 58)">
+    <text class="mono" x="-12" y="0" fill="#7d90ad" font-size="13" letter-spacing="1.8">LIVE FROM THE ORCHARD</text>
+    <g transform="translate(-12 18)">
+      <rect x="12" y="13" width="404" height="276" rx="18" fill="#d7e4f4" stroke="#b9cde6" opacity="0.6"/>
+      <rect x="6" y="6.5" width="404" height="276" rx="18" fill="#e6eef9" stroke="#c6d8ec" opacity="0.8"/>
+      <rect width="404" height="276" rx="18" fill="url(#core-fill)" stroke="#3f5a82" stroke-opacity="0.9"/>
+      <g clip-path="url(#card-clip)">
+        <rect x="0" y="0" width="404" height="40" fill="#1d3050"/>
+        <line x1="0" y1="40" x2="404" y2="40" stroke="#2d4266"/>
+        <text class="mono" x="18" y="25" fill="#d3e5fa" font-size="12.5">loquat › harvest-042</text>
+        <text class="mono" x="352" y="24.5" fill="#8ba3c4" font-size="10.5" text-anchor="end">attached</text>
+        <circle class="lq-live" cx="388" cy="20" r="4" fill="#74d2ff"/>
+
+        <text class="mono" x="22" y="72" font-size="13"><tspan fill="#8ba3c4">$</tspan><tspan fill="#ffc978"> loquat</tspan><tspan fill="#eef4fc"> run harvest-042</tspan><tspan fill="#8ba3c4"> --watch</tspan></text>
+        <rect class="lq-cursor" x="284" y="61" width="8" height="15" fill="#ffc978"/>
+
+        <circle cx="30" cy="104" r="5" fill="#74d2ff"/>
+        <text class="mono" x="44" y="108" fill="#eef4fc" font-size="13">pick</text>
+        <text class="mono" x="118" y="108" fill="#74d2ff" font-size="11.5">done</text>
+        <text class="mono" x="196" y="108" fill="#8ba3c4" font-size="11.5">12ms</text>
+        <rect x="236" y="98" width="144" height="6" rx="3" fill="#2a3d5e"/>
+        <rect x="236" y="98" width="24" height="6" rx="3" fill="#74d2ff" opacity="0.9"/>
+
+        <circle cx="30" cy="132" r="5" fill="#bba7ff"/>
+        <text class="mono" x="44" y="136" fill="#eef4fc" font-size="13">polish</text>
+        <text class="mono" x="118" y="136" fill="#bba7ff" font-size="11.5">done</text>
+        <text class="mono" x="196" y="136" fill="#8ba3c4" font-size="11.5">48ms</text>
+        <rect x="236" y="126" width="144" height="6" rx="3" fill="#2a3d5e"/>
+        <rect x="236" y="126" width="62" height="6" rx="3" fill="#bba7ff" opacity="0.9"/>
+
+        <circle cx="30" cy="160" r="5" fill="#f4bfd9"/>
+        <text class="mono" x="44" y="164" fill="#eef4fc" font-size="13">pack</text>
+        <text class="mono" x="118" y="164" fill="#f4bfd9" font-size="11.5">done</text>
+        <text class="mono" x="196" y="164" fill="#8ba3c4" font-size="11.5">103ms</text>
+        <rect x="236" y="154" width="144" height="6" rx="3" fill="#2a3d5e"/>
+        <rect x="236" y="154" width="122" height="6" rx="3" fill="#f4bfd9" opacity="0.9"/>
+
+        <circle cx="30" cy="188" r="5" fill="#142238" stroke="#8ba3c4" stroke-width="1.5"/>
+        <text class="mono" x="44" y="192" fill="#eef4fc" font-size="13">ship</text>
+        <text class="mono" x="118" y="192" fill="#8ba3c4" font-size="11.5">queued</text>
+        <text class="mono" x="196" y="192" fill="#63788f" font-size="11.5">—</text>
+        <rect x="236" y="182" width="144" height="6" rx="3" fill="#2a3d5e"/>
+
+        <path d="M22 218l4.5 5.5 10.5-11.5" fill="none" stroke="#ffc978" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <text class="mono" x="46" y="226" font-size="13"><tspan fill="#eef4fc">3 ripe · 1 queued · 0 failed</tspan><tspan fill="#8ba3c4"> · 163ms total</tspan></text>
+
+        <rect x="0" y="250" width="404" height="26" fill="#1d3050"/>
+        <line x1="0" y1="250" x2="404" y2="250" stroke="#2d4266"/>
+        <text class="mono" x="16" y="267" fill="#8ba3c4" font-size="10.5">orchard/local · main · queue 1 · load 0.32</text>
+        <text class="mono" x="388" y="267" fill="#5f7593" font-size="10.5" text-anchor="end">ctrl-c detach</text>
+      </g>
+    </g>
+  </g>
+
+  <a href="https://github.com/SnowLuma/SnowLuma" target="_blank">
+    <text class="mono" x="52" y="385" fill="#9db8d9" font-size="11" opacity="0.85">layout inspired by SnowLuma · github.com/SnowLuma/SnowLuma</text>
+  </a>
+</svg>
