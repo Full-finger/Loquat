@@ -1,27 +1,11 @@
-/target
-loquat-tool/target
-/logs
-.repl_history
-build_output.txt
-errors.txt
-*.log
+target/
+logs/
+temp/
+
 
 # IDE
 .idea/
 .vscode/
-*.swp
-*.swo
-*~
+.agent/
 
-# OS
-.DS_Store
-Thumbs.db
 
-# Rust
-Cargo.lock
-**/*.rs.bk
-
-# 临时文件和归档
-IMPROVEMENTS_SUMMARY.md
-EVENT_SYSTEM_IMPROVEMENT.md
-public/
