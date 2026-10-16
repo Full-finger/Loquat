@@ -102,3 +102,12 @@ func LoquatReloadPlugin(name *C.char) C.int {
 func LoquatStatus() *C.char {
 	return C.CString(core.Status())
 }
+
+//export LoquatSystemStatus
+func LoquatSystemStatus() *C.char {
+	out, err := core.SystemStatusJSON()
+	if err != nil {
+		out = fmt.Sprintf(`{"error":%q}`, err.Error())
+	}
+	return C.CString(out)
+}

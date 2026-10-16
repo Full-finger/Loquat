@@ -8,8 +8,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use pyo3::Bound;
+
+use crate::ffi;
 
 static MODULE_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -42,6 +46,7 @@ impl Business {
             let name = next_module_name("qa")?;
             let code = CString::new(source)?;
             let module = PyModule::from_code(py, &code, &file, &name)?;
+            attach_core_bridge(&module)?;
             let mtime = std::fs::metadata(path)?.modified()?;
             Ok(Loaded {
                 module: module.into(),
@@ -92,6 +97,27 @@ fn next_module_name(tag: &str) -> Result<CString, Box<dyn Error>> {
         tag,
         MODULE_SEQ.fetch_add(1, Ordering::Relaxed)
     ))?)
+}
+
+// 能力桥：把 Go 核心的能力包成 Python 可调用对象，注入扩展模块。
+// 业务（qa.py）由此使用核心能力，自身保持纯 Python。
+#[pyfunction]
+fn system_status() -> PyResult<String> {
+    let dll = ffi::core_dll().ok_or_else(|| PyRuntimeError::new_err("核心未就绪"))?;
+    match dll.system_status() {
+        Ok(s) => Ok(s),
+        Err(e) => {
+            let err: PyErr = PyRuntimeError::new_err(e.to_string());
+            Err(err)
+        }
+    }
+}
+
+// 把能力桥以 core 名字挂到扩展模块上；热重载后重新挂载。
+fn attach_core_bridge(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let bridge = PyModule::new(module.py(), "loquat_core_bridge")?;
+    bridge.add_function(wrap_pyfunction!(system_status, &bridge)?)?;
+    module.setattr("core", bridge)
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ mod ffi;
 use std::error::Error;
 use std::ffi::c_char;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, OnceLock, Arc};
 
 use business::Business;
 use ffi::CoreDll;
@@ -60,7 +60,8 @@ fn parse_incoming(payload: &[u8]) -> Option<Incoming> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let dll = unsafe { CoreDll::load("bin/core.dll")? };
+    let dll = Arc::new(unsafe { CoreDll::load("bin/core.dll")? });
+    ffi::set_core_dll(dll.clone());
     println!("[rust] core.dll 已加载");
 
     let (tx, rx) = mpsc::channel::<HostMsg>();
