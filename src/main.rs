@@ -1,113 +1,36 @@
 // loquat 宿主（Rust）：进程入口。
 // 加载 Go 核心 dll（配置中心 / 插件监督 / 消息队列都在里面），
-// 收事件，调 Python 业务（pyo3 嵌入），发动作。
+// 收事件，调 Python 业务（pyo3 嵌入，脚本改动自动热重载），发动作。
+
+mod business;
+mod ffi;
 
 use std::error::Error;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::c_char;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, OnceLock};
 
-use libloading::Library;
-use pyo3::prelude::*;
-use pyo3::types::PyModule;
-
-static EVENT_TX: OnceLock<mpsc::Sender<Vec<u8>>> = OnceLock::new();
+use business::Business;
+use ffi::CoreDll;
 
 const QA_SCRIPT: &str = "extensions/qa.py";
 
-type EventCallback = unsafe extern "C" fn(data: *const c_char, len: i32);
-type StartFn = unsafe extern "C" fn(config_path: *const c_char, cb: EventCallback) -> i32;
-type SendActionFn =
-    unsafe extern "C" fn(action: *const c_char, params: *const c_char, timeout_ms: i32) -> *mut c_char;
-type FreeFn = unsafe extern "C" fn(ptr: *mut c_char);
-type StopFn = unsafe extern "C" fn();
+static EVENT_TX: OnceLock<mpsc::Sender<HostMsg>> = OnceLock::new();
+static EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
+static REPLY_COUNT: AtomicU64 = AtomicU64::new(0);
+
+// 宿主主循环的两类输入：Go 核心的事件、控制台命令。
+enum HostMsg {
+    Event(Vec<u8>),
+    Command(String),
+}
 
 // Go 核心的事件回调：只拷贝字节进通道就返回，别在回调里干重活。
+// 禁止 unwrap/expect——panic 跨 C 边界会直接炸宿主进程（见 R3 规则）。
 extern "C" fn on_event(data: *const c_char, len: i32) {
     let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, len as usize) };
     if let Some(tx) = EVENT_TX.get() {
-        let _ = tx.send(bytes.to_vec());
-    }
-}
-
-struct CoreDll {
-    _lib: Library, // 必须保持存活，导出的函数指针才有效
-    start: StartFn,
-    send_action: SendActionFn,
-    free: FreeFn,
-    _stop: StopFn,
-}
-
-impl CoreDll {
-    unsafe fn load(path: &str) -> Result<Self, Box<dyn Error>> {
-        let lib = Library::new(path)?;
-        let start = *lib.get::<StartFn>(b"LoquatStart")?;
-        let send_action = *lib.get::<SendActionFn>(b"LoquatSendAction")?;
-        let free = *lib.get::<FreeFn>(b"LoquatFree")?;
-        let stop = *lib.get::<StopFn>(b"LoquatStop")?;
-        Ok(Self {
-            _lib: lib,
-            start,
-            send_action,
-            free,
-            _stop: stop,
-        })
-    }
-
-    fn start(&self, config_path: &str) -> Result<(), Box<dyn Error>> {
-        let cfg = CString::new(config_path)?;
-        let rc = unsafe { (self.start)(cfg.as_ptr(), on_event) };
-        if rc != 0 {
-            return Err(format!("LoquatStart 返回 {rc}（0=成功，1=已启动，2=启动失败）").into());
-        }
-        Ok(())
-    }
-
-    // 返回 NapCat 应答的 JSON（失败时含 error 字段）。调用方无需释放内存。
-    fn send_action(
-        &self,
-        action: &str,
-        params: &str,
-        timeout_ms: i32,
-    ) -> Result<String, Box<dyn Error>> {
-        let a = CString::new(action)?;
-        let p = CString::new(params)?;
-        let ptr = unsafe { (self.send_action)(a.as_ptr(), p.as_ptr(), timeout_ms) };
-        let out = if ptr.is_null() {
-            String::new()
-        } else {
-            unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() }
-        };
-        if !ptr.is_null() {
-            unsafe { (self.free)(ptr) };
-        }
-        Ok(out)
-    }
-}
-
-// Python 业务：加载 qa.py，转发 handle 调用。
-struct Business {
-    module: Py<PyModule>,
-}
-
-impl Business {
-    fn load(path: &str) -> Result<Self, Box<dyn Error>> {
-        let source = std::fs::read_to_string(path)
-            .map_err(|e| format!("读业务脚本失败 {path}: {e}"))?;
-        Python::attach(|py| {
-            let file = CString::new(path)?;
-            let name = CString::new("qa")?;
-            let code = CString::new(source)?;
-            let module = PyModule::from_code(py, &code, &file, &name)?;
-            Ok(Self { module: module.into() })
-        })
-    }
-
-    // 调 qa.handle(text) -> list[str]
-    fn handle(&self, text: &str) -> Result<Vec<String>, Box<dyn Error>> {
-        Python::attach(|py| {
-            let replies = self.module.bind(py).call_method1("handle", (text,))?;
-            Ok(replies.extract()?)
-        })
+        let _ = tx.send(HostMsg::Event(bytes.to_vec()));
     }
 }
 
@@ -140,43 +63,145 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dll = unsafe { CoreDll::load("bin/core.dll")? };
     println!("[rust] core.dll 已加载");
 
+    let (tx, rx) = mpsc::channel::<HostMsg>();
+    EVENT_TX.set(tx.clone()).expect("事件通道只能初始化一次");
+
+    // 先起 Go 核心，再初始化 Python 与 stdin 线程：
+    // 1) CPython 先于 Go 运行时初始化会在 Windows 上互相卡死；
+    // 2) 阻塞读 stdin 的线程若先于首次 FFI 启动，Go 运行时初始化会直接冻死
+    //   （实测：stdin 给 DEVNULL 则一切正常）。启动完成前命令也无意义。
+    dll.start("config/loquat.yaml", on_event)?;
+    println!("[rust] 核心已启动，等待事件（命令：help）");
+
     let business = Business::load(QA_SCRIPT)?;
     println!("[rust] 业务已加载: {QA_SCRIPT}");
 
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    EVENT_TX.set(tx).expect("事件通道只能初始化一次");
-
-    dll.start("config/loquat.yaml")?;
-    println!("[rust] 核心已启动，等待事件（Ctrl+C 退出）");
-
-    for payload in rx {
-        let Some(msg) = parse_incoming(&payload) else {
-            continue;
-        };
-        println!("[rust] 消息: [{}] {}", msg.message_type, msg.text);
-
-        let replies = match business.handle(&msg.text) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[rust] 业务处理出错: {e}");
-                continue;
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lines().map_while(Result::ok) {
+            if tx.send(HostMsg::Command(line.trim().to_string())).is_err() {
+                break;
             }
-        };
+        }
+    });
 
-        let action = match msg.message_type.as_str() {
-            "private" => "send_private_msg",
-            "group" => "send_group_msg",
-            _ => continue,
-        };
-        for reply in replies {
-            let params = if action == "send_private_msg" {
-                serde_json::json!({ "user_id": msg.chat_id, "message": reply })
-            } else {
-                serde_json::json!({ "group_id": msg.chat_id, "message": reply })
-            };
-            let resp = dll.send_action(action, &params.to_string(), 15_000)?;
-            println!("[rust] 已回复: {reply} resp={resp}");
+    for msg in rx {
+        match msg {
+            HostMsg::Event(payload) => {
+                EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
+                let Some(incoming) = parse_incoming(&payload) else {
+                    continue;
+                };
+                println!("[rust] 消息: [{}] {}", incoming.message_type, incoming.text);
+
+                let replies = match business.handle(&incoming.text) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[rust] 业务处理出错: {e}");
+                        continue;
+                    }
+                };
+
+                let action = match incoming.message_type.as_str() {
+                    "private" => "send_private_msg",
+                    "group" => "send_group_msg",
+                    _ => continue,
+                };
+                for reply in replies {
+                    let params = if action == "send_private_msg" {
+                        serde_json::json!({ "user_id": incoming.chat_id, "message": reply })
+                    } else {
+                        serde_json::json!({ "group_id": incoming.chat_id, "message": reply })
+                    };
+                    match dll.send_action(action, &params.to_string(), 15_000) {
+                        Ok(resp) => {
+                            REPLY_COUNT.fetch_add(1, Ordering::Relaxed);
+                            println!("[rust] 已回复: {reply} resp={resp}");
+                        }
+                        Err(e) => eprintln!("[rust] 发送失败: {e}"),
+                    }
+                }
+            }
+            HostMsg::Command(cmd) => run_command(&cmd, &dll, &business),
         }
     }
     Ok(())
+}
+
+fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
+    match cmd {
+        "" => {}
+        "status" => println!(
+            "[rust] 核心: {} | 事件 {} 条 | 已回复 {} 条 | 业务: {}",
+            dll.status(),
+            EVENT_COUNT.load(Ordering::Relaxed),
+            REPLY_COUNT.load(Ordering::Relaxed),
+            business.info()
+        ),
+        "reload napcat" => {
+            let rc = dll.reload_plugin("napcat");
+            println!(
+                "[rust] reload napcat -> {}",
+                if rc == 0 {
+                    "已触发，核心将退避重启适配器"
+                } else {
+                    "失败（核心未启动）"
+                }
+            );
+        }
+        "help" => println!("[rust] 命令: status | reload napcat | exit"),
+        "exit" | "quit" => {
+            dll.stop();
+            println!("[rust] 已退出");
+            std::process::exit(0);
+        }
+        other => println!("[rust] 未知命令: {other}（help 查看命令）"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 集成测试：验 FFI 触发的 reload 能让适配器子进程重生。
+    // 依赖 make build 的产物与本机配置（真实 token），缺文件则提前报错。
+    #[test]
+    fn reload_plugin_respawns_adapter() {
+        for required in ["bin/core.dll", "bin/adapter-napcat.exe", "config/loquat.yaml"] {
+            assert!(
+                std::path::Path::new(required).exists(),
+                "缺少 {required}，先跑 make build"
+            );
+        }
+        let dll = unsafe { CoreDll::load("bin/core.dll").expect("加载 dll") };
+        let (tx, rx) = mpsc::channel::<HostMsg>();
+        EVENT_TX.set(tx).expect("EVENT_TX 只能初始化一次");
+        std::thread::spawn(move || {
+            for _ in rx {}
+        });
+
+        dll.start("config/loquat.yaml", on_event).expect("核心启动");
+        wait_alive(&dll, 10_000, "初始就绪");
+
+        assert_eq!(dll.reload_plugin("napcat"), 0, "reload 返回码非零");
+        wait_alive(&dll, 10_000, "reload 后恢复");
+        dll.stop();
+    }
+
+    fn wait_alive(dll: &CoreDll, timeout_ms: u64, what: &str) {
+        let started = std::time::Instant::now();
+        let deadline = started + std::time::Duration::from_millis(timeout_ms);
+        let mut last = String::new();
+        while std::time::Instant::now() < deadline {
+            last = dll.status();
+            if last.contains("\"adapter_alive\":true") {
+                println!(
+                    "[test] {what}（耗时 {}ms）",
+                    started.elapsed().as_millis()
+                );
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        panic!("{what} 超时，最后状态: {last}");
+    }
 }

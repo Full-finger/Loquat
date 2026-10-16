@@ -6,6 +6,7 @@ RULES = {
     "ping": "pong",
     "你是谁": "我是 loquat，一个用 Go+Rust+Python 拼出来的机器人",
     "在吗": "在",
+    "原神？": "启动！",
 }
 
 
