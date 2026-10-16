@@ -75,15 +75,18 @@ qa.py（Python 业务）
 ## 目录结构
 
 ```
-Cargo.toml、src/         Rust 宿主（loquat）
+Cargo.toml、src/         Rust 宿主（loquat）：src/ffi.rs 能力桥与 FFI、src/business.rs 业务加载
 go.mod                   Go 侧（github.com/full-finger/loquat）
 cmd/core/                Go 核心（可编 exe 自测，可编 dll 嵌入）
 cmd/adapter-napcat/      NapCat 适配器
+internal/core/           核心逻辑：配置、消息队列、插件监督、系统状态采集
 internal/pluginapi/      go-plugin 插件接口与握手（含 proto）
-extensions/qa.py         问答业务
-config/loquat.yaml       配置
+extensions/              Python 业务插件，每文件一个 handle(text)
+scripts/                 构建、架构检查脚本
+Makefile                 质量入口：make lint / test / fmt / build
+config/loquat.yaml       本机配置（模板 loquat.yaml.example 入库）
 docs/                    文档
-demo/                    FFI 演示（保留）
+demo/                    FFI 演示（本地保留，不入库）
 ```
 
 module：`github.com/full-finger/loquat`

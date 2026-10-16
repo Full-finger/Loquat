@@ -37,11 +37,11 @@ help: ## 显示帮助信息
 # ── 构建与运行 ──────────────────────────────────────────────
 build: ## 构建全部产物（Go exe/dll + 适配器 + Rust 宿主）
 	$(call log,构建全部产物...)
-	bash script/build.sh
+	bash scripts/build.sh
 
 run: ## 启动宿主（先构建）
 	$(call log,启动 $(APP)...)
-	bash script/build.sh
+	bash scripts/build.sh
 	./bin/loquat.exe
 
 # ── 质量 ────────────────────────────────────────────────────
