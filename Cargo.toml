@@ -2,7 +2,7 @@
 name = "loquat"
 version = "0.1.0"
 edition = "2021"
-license = "Beerware"
+license-file = "LICENSE"
 
 [dependencies]
 libloading = "0.8"
