@@ -1,0 +1,30 @@
+# 仓库内统一存 LF，检出时按下面规则转换
+* text=auto
+
+# 源码与配置：任何平台检出都是 LF（bash 脚本遇 CRLF 会挂）
+*.sh   text eol=lf
+*.py   text eol=lf
+*.go   text eol=lf
+*.rs   text eol=lf
+*.toml text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+
+# Windows 专属脚本：一律 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 二进制：不做任何转换
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.ico   binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
