@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package pluginapi.v1;
+
+option go_package = "github.com/full-finger/loquat/internal/pluginapi;pluginapi";
+
+// 适配器插件对核心暴露的服务。
+// 事件与动作的载荷都用原始 JSON 字节，proto 不感知 OneBot 的 schema，
+// 协议演进时只动业务侧，不动这层。
+service Adapter {
+  // 上报事件流：适配器把 NapCat 的事件逐条推给核心
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+  // 下发动作：核心让适配器调用 NapCat 的 action，同步等响应
+  rpc SendAction(SendActionRequest) returns (SendActionResponse);
+}
+
+message StreamEventsRequest {}
+
+message Event {
+  // OneBot 11 事件原始 JSON
+  bytes payload = 1;
+}
+
+message SendActionRequest {
+  // action 名，如 send_private_msg / send_group_msg
+  string action = 1;
+  // params 的 JSON
+  bytes params = 2;
+  // 超时毫秒数，0 表示用适配器默认值
+  int32 timeout_ms = 3;
+}
+
+message SendActionResponse {
+  // NapCat 返回的 data 字段 JSON
+  bytes data = 1;
+  string status = 2;
+  int32 retcode = 3;
+}
