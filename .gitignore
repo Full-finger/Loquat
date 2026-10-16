@@ -23,7 +23,13 @@ venv/
 # ---- 本地内容 ----
 # 本地演示，暂不入库
 /demo/
+# 本机构建产物与含真实 token 的配置（模板除外）
+/bin/
+/config/*
+!/config/loquat.yaml.example
 
 # 编辑器 / 系统
 .DS_Store
 Thumbs.db
+
+*.yaml
