@@ -1,0 +1,7 @@
+# 首次运行自动生成本文件（从 loquat.yaml.example 复制），填好 token 后重启即可。
+napcat:
+  url: ws://127.0.0.1:3001
+  token: 请填入你的access_token
+plugins:
+  napcat:
+    path: bin/adapter-napcat.exe
