@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -61,14 +62,18 @@ var (
 // 已启动时返回错误。
 func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	mu.Lock()
-	defer mu.Unlock()
 	if active != nil {
+		mu.Unlock()
 		return errors.New("core 已启动")
 	}
+	mu.Unlock()
+
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
 	}
+	logger.Info("配置已加载", "napcat", cfg.Napcat.URL, "adapter", cfg.Plugins.Napcat.Path)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Core{
 		cfg:     cfg,
@@ -78,11 +83,22 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 		ctx:     ctx,
 		cancel:  cancel,
 	}
+	// spawn 含子进程握手，可能耗时；不持锁，避免 Status 等查询被拖死。
+	// 完成后持锁双检，保证全局只有一个实例。
 	if err := c.spawn(); err != nil {
 		cancel()
 		return err
 	}
+	mu.Lock()
+	if active != nil {
+		mu.Unlock()
+		cancel()
+		c.client.Kill()
+		return errors.New("core 已启动（并发）")
+	}
 	active = c
+	mu.Unlock()
+
 	go c.consume()
 	go c.run()
 	c.logger.Info("核心已启动", "napcat", cfg.Napcat.URL, "adapter", cfg.Plugins.Napcat.Path)
@@ -103,10 +119,12 @@ func (c *Core) spawn() error {
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		Logger:           c.logger.Named("plugin"),
 	})
+	c.logger.Info("插件客户端已创建，开始握手")
 	rpcClient, err := c.client.Client()
 	if err != nil {
 		return fmt.Errorf("插件握手: %w", err)
 	}
+	c.logger.Info("适配器握手完成")
 	raw, err := rpcClient.Dispense("adapter")
 	if err != nil {
 		return fmt.Errorf("获取插件实例: %w", err)
@@ -209,6 +227,35 @@ func Stop() {
 	c.cancel()
 	c.client.Kill()
 	c.logger.Info("核心已停止")
+}
+
+// RestartAdapters 杀掉插件客户端；run 循环检测到断流后会退避重启。
+func RestartAdapters() error {
+	mu.Lock()
+	c := active
+	mu.Unlock()
+	if c == nil {
+		return ErrNotStarted
+	}
+	c.client.Kill()
+	return nil
+}
+
+// Status 返回核心状态快照 JSON，供宿主的 status 命令展示。
+func Status() string {
+	mu.Lock()
+	c := active
+	mu.Unlock()
+	started := c != nil
+	alive := false
+	if started {
+		alive = !c.client.Exited()
+	}
+	b, err := json.Marshal(map[string]any{"started": started, "adapter_alive": alive})
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 func loadConfig(path string) (*Config, error) {

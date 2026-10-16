@@ -88,3 +88,17 @@ func LoquatStop() {
 func LoquatFree(p *C.char) {
 	C.free(unsafe.Pointer(p))
 }
+
+//export LoquatReloadPlugin
+func LoquatReloadPlugin(name *C.char) C.int {
+	// 当前只有一个适配器，name 预留给多插件场景
+	if err := core.RestartAdapters(); err != nil {
+		return 1
+	}
+	return 0
+}
+
+//export LoquatStatus
+func LoquatStatus() *C.char {
+	return C.CString(core.Status())
+}

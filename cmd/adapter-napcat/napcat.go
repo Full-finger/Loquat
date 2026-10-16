@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/gorilla/websocket"
+	"github.com/hashicorp/go-hclog"
 	"google.golang.org/grpc"
 
 	"github.com/full-finger/loquat/internal/pluginapi"
