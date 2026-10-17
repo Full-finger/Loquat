@@ -1,0 +1,58 @@
+# Loquat
+
+用 Go、Rust 和 Python 酿造的 QQ 机器人：Go 核心管适配器与队列，Rust 宿主做入口与调度，Python 承载全部业务规则。
+
+```
+QQ ──▶ NapCat（WS，部署在 WSL）
+         │ OneBot 11
+         ▼
+adapter-napcat（Go，go-plugin 子进程）   ← 崩溃隔离 / 热重载
+         │ gRPC
+         ▼
+Go 核心（dll，链在 Rust 进程内）        ← 配置中心 / 消息队列 / 插件监督
+         │ FFI
+         ▼
+Rust 宿主（入口进程）                  ← 业务调度 / 控制台命令
+         │ pyo3
+         ▼
+extensions/qa.py（Python 业务）        ← 规则全在这里，改完即生效
+```
+
+架构决策与实施记录见 [docs/mvp.md](docs/mvp.md)。
+
+## 快速开始
+
+前置：Go 1.24+、Rust、Python 3.10+、protoc（含 go 代码生成插件）、一个 NapCat（WS 服务端模式）。
+
+```bash
+make build                 # 构建四件套到 bin/
+cp config/loquat.yaml.example config/loquat.yaml
+# 编辑 config/loquat.yaml，填入 NapCat 地址与 access_token
+make run                   # 或直接 ./bin/loquat.exe
+```
+
+QQ 里私聊机器人发 `ping`，回复 `pong` 即为成功。
+
+## 控制台命令
+
+| 命令 | 作用 |
+|------|------|
+| `status` | 核心与适配器状态、事件/回复计数 |
+| `reload napcat` | 热重载适配器（子进程级，自动恢复） |
+| `help` / `exit` | 帮助 / 退出 |
+
+## 开发
+
+```bash
+make lint    # 三语言静态检查 + 架构边界规则
+make test    # go test + cargo test
+make fmt     # 格式化
+```
+
+业务开发只碰 `extensions/qa.py`：保存后**下一条消息自动生效**（惰性热重载），Go/Rust 零重编。
+需要新的核心能力（如系统指标）时：Go 核心加导出 → `src/ffi.rs` 绑定 → `src/business.rs` 注入桥，
+业务侧通过全局 `core` 调用。
+
+## 许可证
+
+[Soda-Ware](LICENSE)（MIT 基础 + 请喝汽水条款）。
