@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +45,9 @@ func buildTestAdapter() (string, error) {
 		return "", err
 	}
 	bin := filepath.Join(dir, "adapter-test")
+	if runtime.GOOS == "windows" {
+		bin += ".exe" // go build -o 在 Windows 上不会自动补扩展名
+	}
 	cmd := exec.Command("go", "build", "-o", bin, "./cmd/adapter-napcat")
 	cmd.Dir = "../.."
 	if out, err := cmd.CombinedOutput(); err != nil {
