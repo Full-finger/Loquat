@@ -64,16 +64,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     ffi::set_core_dll(dll.clone());
     println!("[rust] core.dll 已加载");
 
-    // Ctrl+C / 关闭窗口：先停核心（连带杀掉适配器子进程）再退出。
-    // 不装这个处理器，宿主被系统硬杀，适配器子进程会变成孤儿，
-    // 锁住自己的 exe 导致下一次构建报“文件被占用”。
-    let dll_for_signal = Arc::clone(&dll);
-    ctrlc::set_handler(move || {
-        dll_for_signal.stop();
-        std::process::exit(0);
-    })
-    .expect("设置 Ctrl+C 处理器失败");
-
     let (tx, rx) = mpsc::channel::<HostMsg>();
     EVENT_TX.set(tx.clone()).expect("事件通道只能初始化一次");
 
@@ -85,7 +75,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("[rust] 核心已启动，等待事件（命令：help）");
 
     let business = Business::load(EXTENSIONS_DIR)?;
+    business::suppress_sigint();
     println!("[rust] 业务已加载: {}", business.info());
+
+    // Ctrl+C / 关闭窗口：先停核心（连带杀掉适配器子进程）再退出。
+    // 必须在 CPython 初始化之后注册：SetConsoleCtrlHandler 按注册逆序调用，
+    // 后注册的先执行——让我们的处理器排到 CPython 前面，否则它会把 Ctrl+C
+    // 吞成 KeyboardInterrupt 或返回“已处理”截断调用链，导致退出失效。
+    let dll_for_signal = Arc::clone(&dll);
+    ctrlc::set_handler(move || {
+        dll_for_signal.stop();
+        std::process::exit(0);
+    })
+    .expect("设置 Ctrl+C 处理器失败");
 
     std::thread::spawn(move || {
         for line in std::io::stdin().lines().map_while(Result::ok) {
@@ -126,7 +128,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     match dll.send_action(action, &params.to_string(), 15_000) {
                         Ok(resp) => {
                             REPLY_COUNT.fetch_add(1, Ordering::Relaxed);
-                            println!("[rust] 已回复: {reply} resp={resp}");
+                            println!("[rust] 已回复: {} resp={resp}", brief(&reply, 60));
                         }
                         Err(e) => eprintln!("[rust] 发送失败: {e}"),
                     }
@@ -136,6 +138,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+// 日志预览用：图片码等长内容只留开头，避免刷屏。
+fn brief(s: &str, max_chars: usize) -> String {
+    if s.starts_with("[CQ:image") {
+        return "[图片]".to_string();
+    }
+    let mut out: String = s.chars().take(max_chars).collect();
+    if s.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
 }
 
 fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
