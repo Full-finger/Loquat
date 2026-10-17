@@ -3,6 +3,7 @@
 //! 插件约定（extensions/ 下每个 .py）：
 //!   handle(text) -> list[str]   必须实现；返回空列表 = 不归我管，路由链继续
 //!   PRIORITY = <int>            可选；越小越先被路由（缺省 100，同优先级按文件名）
+//!   ENABLED = <bool>            可选；False 时被路由链跳过（缺省 true，热重载可翻转）
 //!   全局 core                    宿主注入的能力桥（Go 核心能力），热重载后自动重挂
 //!
 //! 路由语义：按 (PRIORITY, 文件名) 排序逐个调用，第一个返回非空的插件接管。
@@ -25,6 +26,7 @@ use crate::ffi;
 static MODULE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 const DEFAULT_PRIORITY: i64 = 100;
+const DEFAULT_ENABLED: bool = true;
 
 // 能力桥：把 Go 核心的能力包成 Python 可调用对象，注入扩展模块。
 #[pyfunction]
@@ -72,6 +74,7 @@ struct LoadedPlugin {
     path: PathBuf,
     name: String,
     priority: i64,
+    enabled: bool,
     module: Py<PyModule>,
     mtime: SystemTime,
 }
@@ -123,9 +126,10 @@ impl Business {
                 // 已加载：mtime 变了才重载，重载失败沿用旧版本
                 if mtime > existing.mtime {
                     match Self::load_module(&path) {
-                        Ok((module, priority)) => {
+                        Ok((module, priority, enabled)) => {
                             existing.module = module;
                             existing.priority = priority;
+                            existing.enabled = enabled;
                             existing.mtime = mtime;
                             self.reloads.fetch_add(1, Ordering::Relaxed);
                             eprintln!(
@@ -139,12 +143,16 @@ impl Business {
                 continue;
             }
             match Self::load_module(&path) {
-                Ok((module, priority)) => {
-                    eprintln!("[rust] 插件已加载: {name}（优先级 {priority}）");
+                Ok((module, priority, enabled)) => {
+                    eprintln!(
+                        "[rust] 插件已加载: {name}（优先级 {priority}，{}）",
+                        if enabled { "启用" } else { "禁用" }
+                    );
                     plugins.push(LoadedPlugin {
                         path: path.clone(),
                         name,
                         priority,
+                        enabled,
                         module,
                         mtime,
                     });
@@ -157,7 +165,7 @@ impl Business {
         Ok(())
     }
 
-    fn load_module(path: &Path) -> Result<(Py<PyModule>, i64), Box<dyn Error>> {
+    fn load_module(path: &Path) -> Result<(Py<PyModule>, i64, bool), Box<dyn Error>> {
         let source =
             std::fs::read_to_string(path).map_err(|e| format!("读插件失败 {path:?}: {e}"))?;
         Python::attach(|py| {
@@ -171,7 +179,11 @@ impl Business {
                 .getattr("PRIORITY")
                 .and_then(|v| v.extract::<i64>())
                 .unwrap_or(DEFAULT_PRIORITY);
-            Ok((module.into(), priority))
+            let enabled = module
+                .getattr("ENABLED")
+                .and_then(|v| v.extract::<bool>())
+                .unwrap_or(DEFAULT_ENABLED);
+            Ok((module.into(), priority, enabled))
         })
     }
 
@@ -182,7 +194,7 @@ impl Business {
             eprintln!("[rust] 插件目录扫描失败（沿用已加载插件）: {e}");
         }
         let plugins = self.plugins.lock().expect("业务锁中毒");
-        for plugin in plugins.iter() {
+        for plugin in plugins.iter().filter(|p| p.enabled) {
             match Self::call(&plugin.module, text) {
                 Ok(replies) if !replies.is_empty() => return Ok(replies),
                 Ok(_) => continue,
@@ -201,7 +213,16 @@ impl Business {
 
     pub fn info(&self) -> String {
         let plugins = self.plugins.lock().expect("业务锁中毒");
-        let names: Vec<String> = plugins.iter().map(|p| p.name.clone()).collect();
+        let names: Vec<String> = plugins
+            .iter()
+            .map(|p| {
+                if p.enabled {
+                    p.name.clone()
+                } else {
+                    format!("{}[禁用]", p.name)
+                }
+            })
+            .collect();
         format!(
             "{}（{} 个插件，重载 {} 次）：{}",
             self.dir.display(),
@@ -209,6 +230,17 @@ impl Business {
             self.reloads.load(Ordering::Relaxed),
             names.join(" → ")
         )
+    }
+
+    /// 运行时启停插件（临时：重启或插件文件变更后回到文件内 ENABLED 声明）。
+    /// 返回是否找到对应插件。
+    pub fn set_enabled(&self, name: &str, enabled: bool) -> bool {
+        let mut plugins = self.plugins.lock().expect("业务锁中毒");
+        if let Some(p) = plugins.iter_mut().find(|p| p.name == name) {
+            p.enabled = enabled;
+            return true;
+        }
+        false
     }
 }
 
@@ -224,6 +256,23 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn plugin_can_be_disabled() {
+        let dir = plugin_dir("disable");
+        std::fs::write(dir.join("p.py"), "def handle(text):
+    return ['ok']
+").unwrap();
+        let business = Business::load(dir.to_str().unwrap()).unwrap();
+        assert_eq!(business.handle("x").unwrap(), vec!["ok".to_string()]);
+
+        assert!(business.set_enabled("p.py", false));
+        assert!(business.handle("x").unwrap().is_empty());
+        assert!(business.set_enabled("p.py", true));
+        assert_eq!(business.handle("x").unwrap(), vec!["ok".to_string()]);
+        assert!(!business.set_enabled("不存在.py", true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn business_hot_reload() {
         let dir = plugin_dir("hot_reload");
         let plugin = dir.join("p1.py");

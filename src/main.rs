@@ -173,7 +173,24 @@ fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
                 }
             );
         }
-        "help" => println!("[rust] 命令: status | reload napcat | exit"),
+        "plugins" => println!("[rust] {}", business.info()),
+        c if c.starts_with("disable ") => {
+            let name = c["disable ".len()..].trim();
+            let found = business.set_enabled(name, false);
+            println!(
+                "[rust] {name} -> {}",
+                if found { "已禁用（重启后回到文件内 ENABLED 声明）" } else { "未找到该插件" }
+            );
+        }
+        c if c.starts_with("enable ") => {
+            let name = c["enable ".len()..].trim();
+            let found = business.set_enabled(name, true);
+            println!(
+                "[rust] {name} -> {}",
+                if found { "已启用" } else { "未找到该插件" }
+            );
+        }
+        "help" => println!("[rust] 命令: status | plugins | enable/disable <插件名> | reload napcat | exit"),
         "exit" | "quit" => {
             dll.stop();
             println!("[rust] 已退出");
