@@ -6,12 +6,14 @@ import base64
 import gc
 import io
 import json
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 PRIORITY = 10  # 状态查询优先于日常问答
 
 KEYWORDS = ("状态", "服务器状态")
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 FONT_CANDIDATES = (
     "C:/Windows/Fonts/msyh.ttc",    # 微软雅黑
     "C:/Windows/Fonts/simhei.ttf",  # 黑体
@@ -36,9 +38,34 @@ def handle(text: str) -> list[str]:
     d = json.loads(core.system_status())  # noqa: F821 —— core 由宿主运行时注入
     if "error" in d:
         return [f"状态采集失败：{d['error']}"]
-    png = _render(d)
-    b64 = base64.b64encode(png).decode()
-    return [f"[CQ:image,file=base64://{b64}]"]
+    return [_image_cq(_render(d))]
+
+
+def _image_cq(png: bytes) -> str:
+    """优先写 data/status.png 并以 WSL 路径引用（NapCat 在 WSL 里）；
+    写文件失败时兜底为 base64 内联。"""
+    try:
+        path = _write_snapshot(png)
+        return f"[CQ:image,file=file://{_to_wsl(path)}]"
+    except OSError as e:
+        print(f"[status] 写入快照失败，回退 base64: {e}")
+        b64 = base64.b64encode(png).decode()
+        return f"[CQ:image,file=base64://{b64}]"
+
+
+def _write_snapshot(png: bytes) -> Path:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    path = DATA_DIR / "status.png"
+    path.write_bytes(png)
+    return path
+
+
+def _to_wsl(path: Path) -> str:
+    r"""Windows 绝对路径转 WSL 视角：C:\x\y -> /mnt/c/x/y"""
+    s = str(path).replace("\\", "/")
+    if len(s) > 2 and s[1] == ":":
+        return f"/mnt/{s[0].lower()}{s[2:]}"
+    return s
 
 
 def _lines(d: dict) -> list[str]:
