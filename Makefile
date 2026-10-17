@@ -8,11 +8,14 @@ GOFMT   := gofmt -s -l
 GOVET   := go vet
 # Rust / Python
 CARGO   := cargo
-# ruff：优先 PATH，找不到则回退 winget 安装目录（新开 shell 后 PATH 即生效）
-RUFF    := $(shell where ruff 2>/dev/null)
-ifeq ($(RUFF),)
-RUFF    := $(wildcard C:/Users/gyh20/AppData/Local/Microsoft/WinGet/Packages/astral-sh.ruff*/ruff.exe)
+# ruff 探测：跨平台（Windows 用 where，其余 command -v）。
+# 缺失时 lint 的 ruff 步骤会显式报错，不静默跳过。
+ifeq ($(OS),Windows_NT)
+RUFF_DETECTED := $(shell where ruff 2>/dev/null)
+else
+RUFF_DETECTED := $(shell command -v ruff 2>/dev/null)
 endif
+RUFF := $(firstword $(RUFF_DETECTED))
 
 # ── 颜色输出 ────────────────────────────────────────────────
 CYAN  := \033[36m
@@ -63,6 +66,10 @@ lint: ## 三语言静态检查（vet/gofmt + clippy + ruff + 架构规则）
 	$(call log,Rust clippy...)
 	@$(CARGO) clippy -- -D warnings
 	$(call log,Python ruff...)
+	@if [ -z "$(RUFF)" ]; then \
+		echo "$(RED)ruff 未安装：pip install ruff 或 winget install astral-sh.ruff$(RESET)"; \
+		exit 1; \
+	fi
 	@$(RUFF) check extensions/
 	$(call log,架构规则...)
 	@bash scripts/check-arch.sh
