@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -41,15 +42,30 @@ type Config struct {
 
 var ErrNotStarted = errors.New("core 未启动")
 
+// pluginRuntime 打包一次 spawn 的产物：插件客户端与 Dispense 出的适配器桩。
+// 经 atomic.Pointer 整体换装——写端 Store 新实例，读端 Load 一次快照用到底，
+// 避免 client/adapter 两字段在 spawn 重启与并发调用间的散装数据竞争。
+// 读到旧快照意味着旧适配器正被替换，调用随其 Kill 返回错误，属预期行为。
+type pluginRuntime struct {
+	client  *plugin.Client
+	adapter pluginapi.AdapterClient
+}
+
 type Core struct {
 	cfg     *Config
 	logger  hclog.Logger
-	client  *plugin.Client
-	adapter pluginapi.AdapterClient
+	runtime atomic.Pointer[pluginRuntime]
 	events  chan *pluginapi.Event
 	onEvent func(payload []byte)
 	ctx     context.Context
 	cancel  context.CancelFunc
+}
+
+// killRuntime 杀掉当前插件客户端，未 spawn 成功过则无事发生。可重复调用。
+func (c *Core) killRuntime() {
+	if rt := c.runtime.Load(); rt != nil {
+		rt.client.Kill()
+	}
 }
 
 var (
@@ -93,7 +109,7 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	if active != nil {
 		mu.Unlock()
 		cancel()
-		c.client.Kill()
+		c.killRuntime()
 		return errors.New("core 已启动（并发）")
 	}
 	active = c
@@ -105,14 +121,15 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	return nil
 }
 
-// spawn 创建插件子进程并完成握手。断流重启时会被再次调用。
+// spawn 创建插件子进程并完成握手，成功后原子换装新 runtime。
+// 断流重启时会被再次调用。失败路径回收已创建的客户端，避免泄漏子进程。
 func (c *Core) spawn() error {
 	cmd := exec.Command(c.cfg.Plugins.Napcat.Path)
 	cmd.Env = append(os.Environ(),
 		"LOQUAT_NAPCAT_URL="+c.cfg.Napcat.URL,
 		"LOQUAT_NAPCAT_TOKEN="+c.cfg.Napcat.Token,
 	)
-	c.client = plugin.NewClient(&plugin.ClientConfig{
+	client := plugin.NewClient(&plugin.ClientConfig{
 		Cmd:              cmd,
 		HandshakeConfig:  pluginapi.Handshake,
 		Plugins:          map[string]plugin.Plugin{"adapter": &pluginapi.AdapterPlugin{}},
@@ -120,16 +137,23 @@ func (c *Core) spawn() error {
 		Logger:           c.logger.Named("plugin"),
 	})
 	c.logger.Info("插件客户端已创建，开始握手")
-	rpcClient, err := c.client.Client()
+	rpcClient, err := client.Client()
 	if err != nil {
+		client.Kill()
 		return fmt.Errorf("插件握手: %w", err)
 	}
 	c.logger.Info("适配器握手完成")
 	raw, err := rpcClient.Dispense("adapter")
 	if err != nil {
+		client.Kill()
 		return fmt.Errorf("获取插件实例: %w", err)
 	}
-	c.adapter = raw.(pluginapi.AdapterClient)
+	adapter, ok := raw.(pluginapi.AdapterClient)
+	if !ok {
+		client.Kill()
+		return fmt.Errorf("插件实例类型异常: %T", raw)
+	}
+	c.runtime.Store(&pluginRuntime{client: client, adapter: adapter})
 	return nil
 }
 
@@ -143,7 +167,7 @@ func (c *Core) run() {
 			return
 		}
 		c.logger.Error("事件流断开", "err", err, "backoff", backoff.String())
-		c.client.Kill()
+		c.killRuntime()
 		select {
 		case <-time.After(backoff):
 		case <-c.ctx.Done():
@@ -163,8 +187,12 @@ func (c *Core) run() {
 
 // pump 建立事件流并逐条入队；ctx 取消返回 nil，其余返回错误。
 func (c *Core) pump() error {
+	rt := c.runtime.Load()
+	if rt == nil {
+		return errors.New("插件运行时未就绪")
+	}
 	c.logger.Info("订阅适配器事件流")
-	stream, err := c.adapter.StreamEvents(c.ctx, &pluginapi.StreamEventsRequest{})
+	stream, err := rt.adapter.StreamEvents(c.ctx, &pluginapi.StreamEventsRequest{})
 	if err != nil {
 		return err
 	}
@@ -207,9 +235,13 @@ func SendAction(action string, params []byte, timeout time.Duration) (*pluginapi
 	if timeout <= 0 {
 		timeout = actionTimeout
 	}
+	rt := c.runtime.Load()
+	if rt == nil {
+		return nil, ErrNotStarted
+	}
 	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
-	return c.adapter.SendAction(ctx, &pluginapi.SendActionRequest{
+	return rt.adapter.SendAction(ctx, &pluginapi.SendActionRequest{
 		Action: action,
 		Params: params,
 	})
@@ -225,7 +257,7 @@ func Stop() {
 		return
 	}
 	c.cancel()
-	c.client.Kill()
+	c.killRuntime()
 	c.logger.Info("核心已停止")
 }
 
@@ -237,7 +269,7 @@ func RestartAdapters() error {
 	if c == nil {
 		return ErrNotStarted
 	}
-	c.client.Kill()
+	c.killRuntime()
 	return nil
 }
 
@@ -249,7 +281,9 @@ func Status() string {
 	started := c != nil
 	alive := false
 	if started {
-		alive = !c.client.Exited()
+		if rt := c.runtime.Load(); rt != nil {
+			alive = !rt.client.Exited()
+		}
 	}
 	b, err := json.Marshal(map[string]any{"started": started, "adapter_alive": alive})
 	if err != nil {
