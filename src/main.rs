@@ -85,7 +85,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // 吞成 KeyboardInterrupt 或返回“已处理”截断调用链，导致退出失效。
     let dll_for_signal = Arc::clone(&dll);
     ctrlc::set_handler(move || {
+        println!("[rust] 收到 Ctrl+C，停止核心与适配器");
         dll_for_signal.stop();
+        println!("[rust] 已退出");
         std::process::exit(0);
     })
     .expect("设置 Ctrl+C 处理器失败");
