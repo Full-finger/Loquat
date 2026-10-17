@@ -40,14 +40,14 @@ help: ## 显示帮助信息
 
 # ── 构建与运行 ──────────────────────────────────────────────
 build: ## 构建全部产物（Go exe/dll + 适配器 + Rust 宿主）
-	$(call log,构建全部产物...)
+	$(call log,Building all artifacts...)
 	go build -o $(BIN_DIR)/core.exe ./cmd/core
 	go build -o $(BIN_DIR)/adapter-napcat.exe ./cmd/adapter-napcat
 	go build -tags dll -buildmode=c-shared -ldflags="$(LD_FLAGS)" -o $(BIN_DIR)/core.dll ./cmd/core
 	$(CARGO) build
 
 run: ## 构建并启动宿主
-	$(call log,启动 $(APP)...)
+	$(call log,Starting $(APP)...)
 	$(CARGO) build
 	./target/debug/loquat.exe
 
@@ -58,39 +58,39 @@ test: ## 全部测试（go test + cargo test）
 	cargo test
 
 lint: ## 三语言静态检查（vet/gofmt + clippy + ruff + 架构规则）
-	$(call log,Go vet（含 dll 构建标签）...)
+	$(call log,Go vet (incl. dll build tags)...)
 	@$(GOVET) ./...
 	@$(GOVET) -tags dll ./...
-	$(call log,gofmt 检查...)
+	$(call log,gofmt check...)
 	@files=$$($(GOFMT) cmd internal); \
 	if [ -n "$$files" ]; then \
-		printf '%b\n' "$(RED)以下文件需要格式化：$(RESET) $$files"; \
+		printf '%b\n' "$(RED)Files need formatting: $(RESET) $$files"; \
 		exit 1; \
 	fi
 	$(call log,Rust clippy...)
 	@$(CARGO) clippy -- -D warnings
 	$(call log,Python ruff...)
 	@if [ -z "$(RUFF)" ]; then \
-		echo "$(RED)ruff 未安装：pip install ruff 或 winget install astral-sh.ruff$(RESET)"; \
+		echo "$(RED)ruff not installed: pip install ruff (or: winget install astral-sh.ruff)$(RESET)"; \
 		exit 1; \
 	fi
 	@$(RUFF) check extensions/
-	$(call log,架构规则...)
+	$(call log,Architecture rules...)
 	@bash scripts/check-arch.sh
-	$(call log,全部通过)
+	$(call log,All checks passed)
 
 fmt: ## 格式化代码（gofmt + cargo fmt）
-	$(call log,格式化...)
+	$(call log,Formatting...)
 	gofmt -s -w cmd internal
 	cargo fmt
-	$(call log,完成)
+	$(call log,Done)
 
 arch: ## 仅运行架构边界规则
-	$(call log,运行架构规则...)
+	$(call log,运行Architecture rules...)
 	bash scripts/check-arch.sh
 
 # ── 清理 ────────────────────────────────────────────────────
 clean: ## 清理构建产物
-	$(call log,清理...)
+	$(call log,Cleaning...)
 	rm -rf $(BIN_DIR)
 	cargo clean
