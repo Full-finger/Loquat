@@ -49,6 +49,7 @@ var ErrNotStarted = errors.New("core 未启动")
 type pluginRuntime struct {
 	client  *plugin.Client
 	adapter pluginapi.AdapterClient
+	pid     int // 适配器子进程 PID，供系统状态采集
 }
 
 type Core struct {
@@ -153,7 +154,11 @@ func (c *Core) spawn() error {
 		client.Kill()
 		return fmt.Errorf("插件实例类型异常: %T", raw)
 	}
-	c.runtime.Store(&pluginRuntime{client: client, adapter: adapter})
+	pid := 0
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+	c.runtime.Store(&pluginRuntime{client: client, adapter: adapter, pid: pid})
 	return nil
 }
 

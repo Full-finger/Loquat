@@ -8,7 +8,7 @@ mod ffi;
 use std::error::Error;
 use std::ffi::c_char;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, OnceLock, Arc};
+use std::sync::{mpsc, Arc, OnceLock};
 
 use business::Business;
 use ffi::CoreDll;
@@ -167,7 +167,11 @@ mod tests {
     // 依赖 make build 的产物与本机配置（真实 token），缺文件则提前报错。
     #[test]
     fn reload_plugin_respawns_adapter() {
-        for required in ["bin/core.dll", "bin/adapter-napcat.exe", "config/loquat.yaml"] {
+        for required in [
+            "bin/core.dll",
+            "bin/adapter-napcat.exe",
+            "config/loquat.yaml",
+        ] {
             assert!(
                 std::path::Path::new(required).exists(),
                 "缺少 {required}，先跑 make build"
@@ -176,9 +180,7 @@ mod tests {
         let dll = unsafe { CoreDll::load("bin/core.dll").expect("加载 dll") };
         let (tx, rx) = mpsc::channel::<HostMsg>();
         EVENT_TX.set(tx).expect("EVENT_TX 只能初始化一次");
-        std::thread::spawn(move || {
-            for _ in rx {}
-        });
+        std::thread::spawn(move || for _ in rx {});
 
         dll.start("config/loquat.yaml", on_event).expect("核心启动");
         wait_alive(&dll, 10_000, "初始就绪");
@@ -195,10 +197,7 @@ mod tests {
         while std::time::Instant::now() < deadline {
             last = dll.status();
             if last.contains("\"adapter_alive\":true") {
-                println!(
-                    "[test] {what}（耗时 {}ms）",
-                    started.elapsed().as_millis()
-                );
+                println!("[test] {what}（耗时 {}ms）", started.elapsed().as_millis());
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));

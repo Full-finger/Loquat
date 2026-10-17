@@ -14,8 +14,11 @@ use libloading::Library;
 pub type EventCallback = unsafe extern "C" fn(data: *const c_char, len: i32);
 
 type StartFn = unsafe extern "C" fn(config_path: *const c_char, cb: EventCallback) -> i32;
-type SendActionFn =
-    unsafe extern "C" fn(action: *const c_char, params: *const c_char, timeout_ms: i32) -> *mut c_char;
+type SendActionFn = unsafe extern "C" fn(
+    action: *const c_char,
+    params: *const c_char,
+    timeout_ms: i32,
+) -> *mut c_char;
 type ReloadPluginFn = unsafe extern "C" fn(name: *const c_char) -> i32;
 type StatusFn = unsafe extern "C" fn() -> *mut c_char;
 type SystemStatusFn = unsafe extern "C" fn() -> *mut c_char;

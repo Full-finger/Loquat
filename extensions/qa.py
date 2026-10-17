@@ -5,6 +5,7 @@
 # 全局 core 是宿主注入的能力桥（Go 核心能力）：
 #   core.system_status() -> str  系统状态 JSON
 
+import gc
 import json
 from typing import Any
 
@@ -43,11 +44,21 @@ def format_status(raw: str) -> str:
     d = json.loads(raw)
     if "error" in d:
         return f"状态采集失败：{d['error']}"
+
+    adapter = d.get("adapter_rss_mb")
+    adapter_line = (
+        f"适配器子进程：{adapter:.1f} MB" if isinstance(adapter, (int, float))
+        else "适配器子进程：未运行"
+    )
+
     return (
-        f"系统：{d['os']} ({d['arch']})\n"
-        f"开机时长：{d['uptime_hours']:.1f} 小时\n"
-        f"CPU：{d['cpu_percent']:.1f}%\n"
-        f"内存：已用 {d['mem_used_percent']:.1f}%（共 {d['mem_total_gb']:.1f} GB）\n"
-        f"磁盘（工作目录）：已用 {d['disk_used_percent']:.1f}%\n"
-        f"核心：{d['goroutines']} 个协程，堆 {d['go_heap_mb']:.1f} MB"
+        f"Loquat 运行状态\n"
+        f"机器：CPU {d['cpu_percent']:.1f}% | 内存 {d['mem_used_percent']:.1f}%"
+        f"（共 {d['mem_total_gb']:.1f} GB） | 磁盘 {d['disk_used_percent']:.1f}%"
+        f" | 开机 {d['uptime_hours']:.1f} 小时\n"
+        f"宿主进程（Rust+Go+Python）：{d['host_rss_mb']:.1f} MB\n"
+        f"{adapter_line}\n"
+        f"Go 核心：{d['goroutines']} 协程，堆 {d['go_heap_mb']:.1f} MB\n"
+        f"Python 解释器：{len(gc.get_objects())} 个跟踪对象\n"
+        f"系统：{d['os']} ({d['arch']})"
     )
