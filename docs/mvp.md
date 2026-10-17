@@ -43,7 +43,7 @@ qa.py（Python 业务）
 
 ### NapCat ↔ 适配器（OneBot 11，正向 WebSocket）
 
-- NapCat 是服务端：`ws://127.0.0.1:3001`，access_token 鉴权
+- NapCat 是服务端：`ws://127.0.0.1:3001`，鉴权走 `Authorization: Bearer` 头（token 不落 URL）
 - 适配器是客户端：收事件、发动作
 - MVP 只处理 message 事件，忽略 meta / notice / request
 - 动作只实现 `send_private_msg` / `send_group_msg`
