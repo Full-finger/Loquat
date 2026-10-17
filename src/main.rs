@@ -13,7 +13,7 @@ use std::sync::{mpsc, Arc, OnceLock};
 use business::Business;
 use ffi::CoreDll;
 
-const QA_SCRIPT: &str = "extensions/qa.py";
+const EXTENSIONS_DIR: &str = "extensions";
 
 static EVENT_TX: OnceLock<mpsc::Sender<HostMsg>> = OnceLock::new();
 static EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -84,8 +84,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     dll.start("config/loquat.yaml", on_event)?;
     println!("[rust] 核心已启动，等待事件（命令：help）");
 
-    let business = Business::load(QA_SCRIPT)?;
-    println!("[rust] 业务已加载: {QA_SCRIPT}");
+    let business = Business::load(EXTENSIONS_DIR)?;
+    println!("[rust] 业务已加载: {}", business.info());
 
     std::thread::spawn(move || {
         for line in std::io::stdin().lines().map_while(Result::ok) {

@@ -66,8 +66,11 @@ qa.py（Python 业务）
 ### Rust ↔ Python（pyo3 嵌入）
 
 - qa.py 源码喂给解释器执行，宿主调用其中的 `handle(text) -> list[str]`
+- **多插件责任链**：extensions/ 下每个 .py 都是一个插件，按 `PRIORITY`（缺省 100，越小越先）
+  + 文件名排序逐个调用，第一个返回非空的接管；返回空则链继续。丢文件/删文件/改文件
+  均在下一条消息前惰性同步，单插件加载失败只跳过自身
 - **能力桥**：Go 核心的能力（如 `LoquatSystemStatus`）包装成 Python 函数，
-  以 `core` 名字注入扩展模块——业务用 `core.system_status()` 取数据，自身保持纯 Python；
+  以 `core` 名字注入每个插件——业务用 `core.system_status()` 取数据，自身保持纯 Python；
   热重载后桥自动重新挂载
 - 热重载采用惰性策略：每次调用前比对脚本 mtime，变了才重新加载模块；
   重载失败沿用旧版本继续服务。不引入文件监视线程，对问答场景即改即生效
