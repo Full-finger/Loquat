@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,9 +55,13 @@ func newNapCat(url, token string, logger hclog.Logger) *NapCat {
 
 // connectLoop 维持与 NapCat 的长连接：断开就重连。该函数永不返回。
 func (n *NapCat) connectLoop() {
-	dialURL := n.url + "?access_token=" + url.QueryEscape(n.token)
+	// 鉴权走 Authorization 头而非 URL query，避免 token 落进日志（清单 #8）
+	header := http.Header{}
+	if n.token != "" {
+		header.Set("Authorization", "Bearer "+n.token)
+	}
 	for {
-		conn, _, err := websocket.DefaultDialer.Dial(dialURL, nil)
+		conn, _, err := websocket.DefaultDialer.Dial(n.url, header)
 		if err != nil {
 			n.logger.Error("连接 NapCat 失败，3s 后重试", "err", err)
 			time.Sleep(reconnectDelay)
