@@ -4,6 +4,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime"
 	"time"
@@ -23,6 +24,10 @@ func SystemStatusJSON() (string, error) {
 	cpuPercent, err := cpu.Percent(200*time.Millisecond, false)
 	if err != nil {
 		return "", fmt.Errorf("cpu: %w", err)
+	}
+	// 某些虚拟化/容器环境可能返回空切片，直接下标会 panic（清单 #9）
+	if len(cpuPercent) == 0 {
+		return "", errors.New("cpu 采样结果为空")
 	}
 	vm, err := mem.VirtualMemory()
 	if err != nil {

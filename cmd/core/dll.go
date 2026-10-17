@@ -18,7 +18,6 @@ import "C"
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"sync/atomic"
 	"time"
@@ -64,18 +63,19 @@ func LoquatSendAction(action *C.char, params *C.char, timeoutMs C.int) *C.char {
 		[]byte(C.GoString(params)),
 		time.Duration(timeoutMs)*time.Millisecond,
 	)
-	var out string
+	// 错误与应答统一走 json.Marshal：%q 可能产出 \xNN 等非法 JSON 转义，
+	// Rust 侧 serde_json 解析会失败（清单 #6）。
+	var payload any = resp
 	if err != nil {
-		out = fmt.Sprintf(`{"error":%q}`, err.Error())
-	} else {
-		b, merr := json.Marshal(resp)
-		if merr != nil {
-			out = fmt.Sprintf(`{"error":%q}`, merr.Error())
-		} else {
-			out = string(b)
-		}
+		payload = map[string]string{"error": err.Error()}
 	}
-	return C.CString(out)
+	// Data 字段是 []byte，会序列化为 base64 字符串；当前仅用于展示，
+	// 需要原始字节时改用 protojson（清单 #7）。
+	b, merr := json.Marshal(payload)
+	if merr != nil {
+		b, _ = json.Marshal(map[string]string{"error": merr.Error()})
+	}
+	return C.CString(string(b))
 }
 
 //export LoquatStop
@@ -107,7 +107,8 @@ func LoquatStatus() *C.char {
 func LoquatSystemStatus() *C.char {
 	out, err := core.SystemStatusJSON()
 	if err != nil {
-		out = fmt.Sprintf(`{"error":%q}`, err.Error())
+		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return C.CString(string(b))
 	}
 	return C.CString(out)
 }

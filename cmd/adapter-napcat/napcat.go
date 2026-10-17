@@ -212,10 +212,11 @@ func (n *NapCat) failPending(reason error) {
 	}
 }
 
+// head 按字符截断并兜底非法 UTF-8：按字节切中文会从码字中间断开（清单 #10）。
 func head(data []byte, max int) string {
-	s := string(data)
-	if len(s) > max {
-		return s[:max] + "..."
+	runes := []rune(string(data))
+	if len(runes) > max {
+		return string(runes[:max]) + "..."
 	}
-	return s
+	return string(runes)
 }
