@@ -116,6 +116,7 @@ impl Business {
                             existing.config_enabled = config_enabled;
                             existing.mtime = mtime;
                             self.reloads.fetch_add(1, Ordering::Relaxed);
+                            pybridge::collect_garbage();
                             eprintln!(
                                 "[rust] 插件已热重载: {name}（第 {} 次）",
                                 self.reloads.load(Ordering::Relaxed)
@@ -193,6 +194,14 @@ impl Business {
             let code = CString::new(source)?;
             let module = PyModule::from_code(py, &code, &file, &name)?;
             pybridge::attach_plugin_env(&module, &config_yaml)?;
+
+            // from_code 会把模块注册进 sys.modules；我们用唯一名防串台，
+            // 代价是每次加载/热重载都留一个条目。用完即弃，防长期缓涨。
+            let sys_mod = py.import("sys")?;
+            if let Ok(modules) = sys_mod.getattr("modules") {
+                let key = name.to_string_lossy().into_owned();
+                let _ = modules.call_method1("pop", (key, py.None()));
+            }
 
             let priority = module
                 .getattr("PRIORITY")

@@ -55,6 +55,15 @@ pub fn next_module_name(tag: &str) -> Result<CString, Box<dyn Error>> {
 /// 嵌入的 CPython 不允许抢 Ctrl+C：SIGINT 由 Rust 侧 ctrlc 处理器独占。
 /// 否则同一个控制台事件会被 CPython 转成 KeyboardInterrupt 随机打进业务调用，
 /// 退出行为也会变得不确定（时而退出、时而卡住）。
+/// 显式触发一轮 Python GC（重载等批量丢弃对象后调用）。
+pub fn collect_garbage() {
+    Python::attach(|py| {
+        if let Ok(gc) = py.import("gc") {
+            let _ = gc.call_method0("collect");
+        }
+    });
+}
+
 pub fn suppress_sigint() {
     Python::attach(|py| {
         let _ = py.import("signal").and_then(|m| {
