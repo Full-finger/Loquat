@@ -1,18 +1,27 @@
-"THE SODA-WARE LICENSE" (Revision 42):
+MIT License with Soda-ware Clause
 
-full-finger wrote this file. As long as you retain this notice you
-can do whatever you want with this stuff. If we meet some day, and
-you think this stuff is worth it, you can buy me a bottle of soda
-in return. Any brand is fine — chilled is better.
+Copyright (c) 2026 full-finger
 
-──────────────────────────────────────────────────────────────────
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-"汽水软件许可证"（第 42 版）：
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-full-finger 编写了本文件。只要你保留本声明，
-就可以对这些东西做任何你想做的事。
-如果某天我们相遇，而你觉得这些东西还不错，
-请请我喝一瓶汽水。品牌不限，冰镇更佳。
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
-Loquat —— 用 Go、Rust 和 Python 酿造。
-本产品不含酒精，气泡自带。
+Soda-ware Clause:
+
+If you happen to meet one of the copyright holders in person, and you think
+this software is worth it, you are encouraged (but not obligated) to buy them
+a soda of their choice.
