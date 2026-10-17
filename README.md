@@ -28,7 +28,7 @@ extensions/qa.py（Python 业务）        ← 规则全在这里，改完即生
 make build                 # 构建四件套到 bin/
 cp config/loquat.yaml.example config/loquat.yaml
 # 编辑 config/loquat.yaml，填入 NapCat 地址与 access_token
-make run                   # 或直接 ./bin/loquat.exe
+make run                   # 或 ./target/debug/loquat.exe
 ```
 
 QQ 里私聊机器人发 `ping`，回复 `pong` 即为成功。

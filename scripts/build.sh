@@ -7,5 +7,4 @@ go build -o bin/core.exe ./cmd/core
 go build -o bin/adapter-napcat.exe ./cmd/adapter-napcat
 go build -tags dll -buildmode=c-shared -ldflags="-s -w" -o bin/core.dll ./cmd/core
 cargo build
-cp target/debug/loquat.exe bin/
 echo "构建完成：bin/core.exe bin/adapter-napcat.exe bin/core.dll bin/loquat.exe"

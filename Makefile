@@ -6,6 +6,7 @@ CONFIG  := ./config/loquat.yaml
 # Go
 GOFMT   := gofmt -s -l
 GOVET   := go vet
+LD_FLAGS := -s -w
 # Rust / Python
 CARGO   := cargo
 # ruff 探测：跨平台（Windows 用 where，其余 command -v）。
@@ -40,12 +41,15 @@ help: ## 显示帮助信息
 # ── 构建与运行 ──────────────────────────────────────────────
 build: ## 构建全部产物（Go exe/dll + 适配器 + Rust 宿主）
 	$(call log,构建全部产物...)
-	bash scripts/build.sh
+	go build -o $(BIN_DIR)/core.exe ./cmd/core
+	go build -o $(BIN_DIR)/adapter-napcat.exe ./cmd/adapter-napcat
+	go build -tags dll -buildmode=c-shared -ldflags="$(LD_FLAGS)" -o $(BIN_DIR)/core.dll ./cmd/core
+	$(CARGO) build
 
-run: ## 启动宿主（先构建）
+run: ## 构建并启动宿主
 	$(call log,启动 $(APP)...)
-	bash scripts/build.sh
-	./bin/loquat.exe
+	$(CARGO) build
+	./target/debug/loquat.exe
 
 # ── 质量 ────────────────────────────────────────────────────
 test: ## 全部测试（go test + cargo test）
