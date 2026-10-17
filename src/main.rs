@@ -4,6 +4,7 @@
 
 mod business;
 mod ffi;
+mod pybridge;
 
 use std::error::Error;
 use std::ffi::c_char;
@@ -75,7 +76,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("[rust] 核心已启动，等待事件（命令：help）");
 
     let business = Business::load(EXTENSIONS_DIR)?;
-    business::suppress_sigint();
+    pybridge::suppress_sigint();
     println!("[rust] 业务已加载: {}", business.info());
 
     // Ctrl+C / 关闭窗口：先停核心（连带杀掉适配器子进程）再退出。

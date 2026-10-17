@@ -1,0 +1,6 @@
+# 服务器状态插件配置
+enabled: true
+
+keywords:
+  - 状态
+  - 服务器状态

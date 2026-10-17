@@ -1,0 +1,9 @@
+# 日常问答插件配置：规则与启停。
+# enabled: false 或控制台 disable qa 可停用（控制台启停写 .disabled 标记）。
+enabled: true
+
+rules:
+  ping: pong
+  你是谁: 我是 loquat，一个用 Go、Rust 和 Python 拼出来的机器人
+  在吗: 在
+  原神？: 启动！

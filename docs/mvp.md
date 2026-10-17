@@ -66,12 +66,12 @@ qa.py（Python 业务）
 ### Rust ↔ Python（pyo3 嵌入）
 
 - qa.py 源码喂给解释器执行，宿主调用其中的 `handle(text) -> list[str]`
-- **多插件责任链**：extensions/ 下每个 .py 都是一个插件，按 `PRIORITY`（缺省 100，越小越先）
-  + 文件名排序逐个调用，第一个返回非空的接管；返回空则链继续。丢文件/删文件/改文件
+- **多插件责任链**：extensions/<名>/plugin.py 为入口，按 `PRIORITY`（缺省 100，越小越先）
+  + 目录名排序逐个调用，第一个返回非空的接管；返回空则链继续。丢目录/删文件/改文件
   均在下一条消息前惰性同步，单插件加载失败只跳过自身
-- **插件启停**：文件内 `ENABLED = False`（永久，重启依然禁用）或控制台
-  `disable/enable <插件名>`（运行时临时，重启回滚到文件声明）；被禁用的插件
-  仍跟踪热重载，重新启用无缝回归
+- **插件启停**：两层——插件 config.yaml 里 `enabled: false`（永久）+ 控制台
+  `disable/enable <插件名>`（写 .disabled 标记，持久）；被禁用的插件仍跟踪热重载，
+  重新启用无缝回归
 - **能力桥**：Go 核心的能力（如 `LoquatSystemStatus`）包装成 Python 函数，
   以 `core` 名字注入每个插件——业务用 `core.system_status()` 取数据，自身保持纯 Python；
   热重载后桥自动重新挂载
@@ -87,7 +87,7 @@ cmd/core/                Go 核心（可编 exe 自测，可编 dll 嵌入）
 cmd/adapter-napcat/      NapCat 适配器
 internal/core/           核心逻辑：配置、消息队列、插件监督、系统状态采集
 internal/pluginapi/      go-plugin 插件接口与握手（含 proto）
-extensions/              Python 业务插件，每文件一个 handle(text)
+extensions/              Python 业务插件（每目录自包含：plugin.py + config.yaml）
 scripts/                 构建、架构检查脚本
 Makefile                 质量入口：make lint / test / fmt / build
 config/loquat.yaml       本机配置（模板 loquat.yaml.example 入库）

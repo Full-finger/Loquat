@@ -1,6 +1,7 @@
-# extensions/status.py：服务器状态插件。
+# extensions/status/plugin.py：服务器状态插件。
 # 数据来自能力桥 core.system_status()（Go 核心 gopsutil 采集），
-# 用 Pillow 渲染为状态卡片 PNG，以 CQ base64 图片码回给 NapCat 显示。
+# 用 Pillow 渲染为状态卡片 PNG，以 CQ 图片码回给 NapCat 显示。
+# NapCat 在 WSL 里，所以图片走 /mnt/c/... 的 WSL 路径引用。
 
 import base64
 import gc
@@ -13,7 +14,11 @@ from PIL import Image, ImageDraw, ImageFont
 PRIORITY = 10  # 状态查询优先于日常问答
 
 KEYWORDS = ("状态", "服务器状态")
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# extensions/status/plugin.py -> 仓库根在三级之上
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SNAPSHOT_PATH = REPO_ROOT / "data" / "status.png"
+
 FONT_CANDIDATES = (
     "C:/Windows/Fonts/msyh.ttc",    # 微软雅黑
     "C:/Windows/Fonts/simhei.ttf",  # 黑体
@@ -42,11 +47,10 @@ def handle(text: str) -> list[str]:
 
 
 def _image_cq(png: bytes) -> str:
-    """优先写 data/status.png 并以 WSL 路径引用（NapCat 在 WSL 里）；
+    """优先把 PNG 落到 data/status.png，以 WSL 路径引用；
     写文件失败时兜底为 base64 内联。"""
     try:
-        path = _write_snapshot(png)
-        return f"[CQ:image,file=file://{_to_wsl(path)}]"
+        return f"[CQ:image,file=file://{_to_wsl(_write_snapshot(png))}]"
     except OSError as e:
         print(f"[status] 写入快照失败，回退 base64: {e}")
         b64 = base64.b64encode(png).decode()
@@ -54,39 +58,17 @@ def _image_cq(png: bytes) -> str:
 
 
 def _write_snapshot(png: bytes) -> Path:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    path = DATA_DIR / "status.png"
-    path.write_bytes(png)
-    return path
+    SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SNAPSHOT_PATH.write_bytes(png)
+    return SNAPSHOT_PATH
 
 
 def _to_wsl(path: Path) -> str:
-    r"""Windows 绝对路径转 WSL 视角：C:\x\y -> /mnt/c/x/y"""
+    r"""Windows 绝对路径转 WSL 视角：C:\a\b.png -> /mnt/c/a/b.png"""
     s = str(path).replace("\\", "/")
     if len(s) > 2 and s[1] == ":":
         return f"/mnt/{s[0].lower()}{s[2:]}"
     return s
-
-
-def _lines(d: dict) -> list[str]:
-    return [
-        f"机器      CPU {d['cpu_percent']:.1f}%   内存 {d['mem_used_percent']:.1f}%（共 {d['mem_total_gb']:.1f} GB）",
-        f"          磁盘 {d['disk_used_percent']:.1f}%   开机 {d['uptime_hours']:.1f} 小时",
-        f"宿主进程  {d['host_rss_mb']:.1f} MB（Rust + Go + Python）",
-        f"适配器    {_adapter_rss(d)}",
-        f"Go 核心   {d['goroutines']} 协程 · 堆 {d['go_heap_mb']:.1f} MB",
-        f"Python    {_py_objects()} 个跟踪对象",
-        f"系统      {d['os']} ({d['arch']})",
-    ]
-
-
-def _adapter_rss(d: dict) -> str:
-    v = d.get("adapter_rss_mb")
-    return f"{v:.1f} MB" if isinstance(v, (int, float)) else "未运行"
-
-
-def _py_objects() -> int:
-    return len(gc.get_objects())
 
 
 def _render(d: dict) -> bytes:
@@ -108,3 +90,24 @@ def _render(d: dict) -> bytes:
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return buf.getvalue()
+
+
+def _lines(d: dict) -> list[str]:
+    return [
+        f"机器      CPU {d['cpu_percent']:.1f}%   内存 {d['mem_used_percent']:.1f}%（共 {d['mem_total_gb']:.1f} GB）",
+        f"          磁盘 {d['disk_used_percent']:.1f}%   开机 {d['uptime_hours']:.1f} 小时",
+        f"宿主进程  {d['host_rss_mb']:.1f} MB（Rust + Go + Python）",
+        f"适配器    {_adapter_rss(d)}",
+        f"Go 核心   {d['goroutines']} 协程 · 堆 {d['go_heap_mb']:.1f} MB",
+        f"Python    {_py_objects()} 个跟踪对象",
+        f"系统      {d['os']} ({d['arch']})",
+    ]
+
+
+def _adapter_rss(d: dict) -> str:
+    v = d.get("adapter_rss_mb")
+    return f"{v:.1f} MB" if isinstance(v, (int, float)) else "未运行"
+
+
+def _py_objects() -> int:
+    return len(gc.get_objects())

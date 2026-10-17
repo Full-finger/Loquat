@@ -51,8 +51,9 @@ make test    # go test + cargo test
 make fmt     # 格式化
 ```
 
-业务开发只碰 `extensions/qa.py`：保存后**下一条消息自动生效**（惰性热重载），Go/Rust 零重编。
-需要新的核心能力（如系统指标）时：Go 核心加导出 → `src/ffi.rs` 绑定 → `src/business.rs` 注入桥，
+业务开发只碰 `extensions/<名>/`：`plugin.py` 写逻辑、`config.yaml` 写参数，
+保存后**下一条消息自动生效**（惰性热重载），Go/Rust 零重编。
+需要新的核心能力（如系统指标）时：Go 核心加导出 → `src/ffi.rs` 绑定 → `src/pybridge.rs` 注入桥，
 业务侧通过全局 `core` 调用。
 
 ## 许可证
