@@ -1,0 +1,7 @@
+# 本项目的测试必须串行运行：FFI 测试（初始化 Go 运行时）与业务测试
+# （初始化 CPython）共享同一进程，并行会触发 Windows 上的初始化互卡，
+# 以及全局 OnceLock 的重复初始化 panic。
+# 见 docs/checkList/26101701.md #3。
+
+[env]
+RUST_TEST_THREADS = "1"
