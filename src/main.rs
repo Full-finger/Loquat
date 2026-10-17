@@ -64,6 +64,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     ffi::set_core_dll(dll.clone());
     println!("[rust] core.dll 已加载");
 
+    // Ctrl+C / 关闭窗口：先停核心（连带杀掉适配器子进程）再退出。
+    // 不装这个处理器，宿主被系统硬杀，适配器子进程会变成孤儿，
+    // 锁住自己的 exe 导致下一次构建报“文件被占用”。
+    let dll_for_signal = Arc::clone(&dll);
+    ctrlc::set_handler(move || {
+        dll_for_signal.stop();
+        std::process::exit(0);
+    })
+    .expect("设置 Ctrl+C 处理器失败");
+
     let (tx, rx) = mpsc::channel::<HostMsg>();
     EVENT_TX.set(tx.clone()).expect("事件通道只能初始化一次");
 
