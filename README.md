@@ -25,10 +25,10 @@ extensions/<名>/plugin.py（Python 业务）    ← 规则全在这里，改完
 前置：Go 1.24+、Rust、Python 3.10+、protoc（含 go 代码生成插件）、一个 NapCat（WS 服务端模式）。
 
 ```bash
-make build                 # 构建四件套到 bin/
+just build                 # 构建四件套到 bin/
 cp config/loquat.yaml.example config/loquat.yaml
 # 编辑 config/loquat.yaml，填入 NapCat 地址与 access_token
-make run                   # 或 ./target/debug/loquat.exe
+just run                   # 或 ./target/debug/loquat.exe
 ```
 
 QQ 里私聊机器人发 `ping`，回复 `pong` 即为成功。
@@ -46,9 +46,10 @@ QQ 里私聊机器人发 `ping`，回复 `pong` 即为成功。
 ## 开发
 
 ```bash
-make lint    # 三语言静态检查 + 架构边界规则
-make test    # go test + cargo test
-make fmt     # 格式化
+just lint        # 三语言静态检查 + 架构边界规则 + 清单一致性
+just test        # go test + cargo test
+just fmt         # 格式化
+just checklist   # 生成未解决事项总览（docs/checkList/OPEN.md）
 ```
 
 业务开发只碰 `extensions/<名>/`：`plugin.py` 写逻辑，`config.yaml` 写参数，

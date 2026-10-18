@@ -89,7 +89,7 @@ internal/core/           核心逻辑：配置、消息队列、插件监督、�
 internal/pluginapi/      go-plugin 插件接口与握手（含 proto）
 extensions/              Python 业务插件（每目录自包含：plugin.py + config.yaml）
 scripts/                 构建、架构检查脚本
-Makefile                 质量入口：make lint / test / fmt / build
+justfile                 质量入口：just lint / test / fmt / build
 config/loquat.yaml       本机配置（模板 loquat.yaml.example 入库）
 docs/                    文档
 demo/                    FFI 演示（本地保留，不入库）
