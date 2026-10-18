@@ -1,4 +1,0 @@
-# 编译器配置
-# Makefile 构建时优先读取这里的 go 路径；留空或删除本文件则用 PATH 里的 go。
-# 无论用哪个 go，Makefile 都会清空 GOROOT 环境变量，避免编译器版本混用。
-go = "F:/go/bin/go.exe"
