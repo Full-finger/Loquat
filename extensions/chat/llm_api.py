@@ -27,6 +27,6 @@ def chat(cfg: dict, history: list) -> str | None:
         with urllib.request.urlopen(req, timeout=cfg.get("timeout_seconds", 60)) as resp:
             data = json.loads(resp.read())
         return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 —— 有意兜底：网络/超时/JSON/键缺失任何失败都降级为 None，不打挂机器人
         print(f"[chat] LLM 调用失败: {e}")
         return None

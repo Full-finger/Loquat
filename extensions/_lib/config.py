@@ -85,9 +85,9 @@ def _type_ok(v, t: str) -> bool:
 
 def _range_warn(key: str, v, field: dict):
     lo, hi = field.get("min"), field.get("max")
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        if (lo is not None and v < lo) or (hi is not None and v > hi):
-            print(f"[config] {key}: {v} 超出范围 [{lo}, {hi}]")
+    if (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and ((lo is not None and v < lo) or (hi is not None and v > hi))):
+        print(f"[config] {key}: {v} 超出范围 [{lo}, {hi}]")
     return v
 
 
