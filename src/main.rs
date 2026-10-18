@@ -4,7 +4,9 @@
 
 mod business;
 mod ffi;
+mod pluginload;
 mod pybridge;
+mod sharedlib;
 
 use std::error::Error;
 use std::ffi::c_char;
@@ -39,6 +41,8 @@ extern "C" fn on_event(data: *const c_char, len: i32) {
 struct Incoming {
     message_type: String,
     chat_id: i64,
+    user_id: i64,
+    self_id: i64,
     text: String,
 }
 
@@ -48,14 +52,28 @@ fn parse_incoming(payload: &[u8]) -> Option<Incoming> {
         return None;
     }
     let message_type = v.get("message_type")?.as_str()?.to_string();
-    let chat_id = match message_type.as_str() {
+    let self_id = v.get("self_id").and_then(|s| s.as_i64()).unwrap_or(0);
+    let user_id = match message_type.as_str() {
         "private" => v.get("user_id")?.as_i64()?,
+        "group" => v
+            .get("sender")
+            .and_then(|s| s.get("user_id"))
+            .and_then(|u| u.as_i64())?,
+        _ => return None,
+    };
+    if user_id == self_id {
+        return None; // 机器人自己的消息，丢弃防自问自答
+    }
+    let chat_id = match message_type.as_str() {
+        "private" => user_id,
         "group" => v.get("group_id")?.as_i64()?,
         _ => return None,
     };
     Some(Incoming {
         message_type,
         chat_id,
+        user_id,
+        self_id,
         text: v.get("raw_message")?.as_str()?.to_string(),
     })
 }
@@ -109,7 +127,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 println!("[rust] 消息: [{}] {}", incoming.message_type, incoming.text);
 
-                let replies = match business.handle(&incoming.text) {
+                let ctx = business::MsgCtx {
+                    text: &incoming.text,
+                    message_type: &incoming.message_type,
+                    chat_id: incoming.chat_id,
+                    user_id: incoming.user_id,
+                    self_id: incoming.self_id,
+                };
+                let replies = match business.handle(&ctx) {
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("[rust] 业务处理出错: {e}");

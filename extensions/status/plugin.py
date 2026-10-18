@@ -2,6 +2,7 @@
 # 数据来自能力桥 core.system_status()（Go 核心 gopsutil 采集），
 # 用 Pillow 渲染为状态卡片 PNG，以 CQ 图片码回给 NapCat 显示。
 # NapCat 在 WSL 里，所以图片走 /mnt/c/... 的 WSL 路径引用。
+# 配置走 SCHEMA 声明 + loquat_cfglib 校验（库见 extensions/_lib/config.py）。
 
 import base64
 import gc
@@ -9,11 +10,10 @@ import io
 import json
 from pathlib import Path
 
+import loquat_cfglib
 from PIL import Image, ImageDraw, ImageFont
 
 PRIORITY = 10  # 状态查询优先于日常问答
-
-KEYWORDS = ("状态", "服务器状态")
 
 # extensions/status/plugin.py -> 仓库根在三级之上
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +23,14 @@ FONT_CANDIDATES = (
     "C:/Windows/Fonts/msyh.ttc",    # 微软雅黑
     "C:/Windows/Fonts/simhei.ttf",  # 黑体
 )
+
+# config 由宿主注入（本目录 config.yaml 的原始值；enabled 为宿主保留键）
+config: dict
+
+SCHEMA = [
+    {"key": "keywords", "type": "list", "default": ["状态", "服务器状态"],
+     "desc": "触发状态查询的关键词（完全匹配）"},
+]
 
 
 def _font(size: int):
@@ -34,11 +42,12 @@ def _font(size: int):
     return ImageFont.load_default()
 
 
-def handle(text: str) -> list[str]:
-    t = text.strip()
+def handle(ctx: dict) -> list[str]:
+    t = (ctx.get("text") or "").strip()
     if t.startswith("/"):
         t = t.lstrip("/").strip()
-    if t not in KEYWORDS:
+    keywords = loquat_cfglib.resolve(SCHEMA, config)["keywords"]  # noqa: F821
+    if t not in keywords:
         return []
     d = json.loads(core.system_status())  # noqa: F821 —— core 由宿主运行时注入
     if "error" in d:

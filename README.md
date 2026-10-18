@@ -15,7 +15,7 @@ Go 核心（dll，链在 Rust 进程内）        ← 配置中心 / 消息队�
 Rust 宿主（入口进程）                  ← 业务调度 / 控制台命令
          │ pyo3
          ▼
-extensions/qa.py（Python 业务）        ← 规则全在这里，改完即生效
+extensions/<名>/plugin.py（Python 业务）    ← 规则全在这里，改完即生效
 ```
 
 架构决策与实施记录见 [docs/mvp.md](docs/mvp.md)。
@@ -51,8 +51,11 @@ make test    # go test + cargo test
 make fmt     # 格式化
 ```
 
-业务开发只碰 `extensions/<名>/`：`plugin.py` 写逻辑、`config.yaml` 写参数，
+业务开发只碰 `extensions/<名>/`：`plugin.py` 写逻辑，`config.yaml` 写参数，
 保存后**下一条消息自动生效**（惰性热重载），Go/Rust 零重编。
+配置声明写在插件里的 SCHEMA：校验、默认值、缺失时的模板生成全由它派生，
+配套库在 `extensions/_lib/config.py`（宿主注册为 `loquat_cfglib`）。
+插件目录内可放多个 .py 互相 import（勿与标准库/已装包重名），改动同样热重载。
 需要新的核心能力（如系统指标）时：Go 核心加导出 → `src/ffi.rs` 绑定 → `src/pybridge.rs` 注入桥，
 业务侧通过全局 `core` 调用。
 
