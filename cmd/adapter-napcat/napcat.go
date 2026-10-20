@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,7 @@ const (
 	eventsBuffer   = 256              // 事件缓冲上限，满了丢弃
 	defaultTimeout = 10 * time.Second // SendAction 默认超时
 	reconnectDelay = 3 * time.Second  // MVP 固定重连间隔，第 4 步升级指数退避
+	confirmTimeout = 5 * time.Second  // 等首条消息确认鉴权的上限
 )
 
 type NapCat struct {
@@ -70,6 +72,21 @@ func (n *NapCat) connectLoop() {
 		n.mu.Lock()
 		n.conn = conn
 		n.mu.Unlock()
+
+		// 这版 NapCat 先完成 WS 升级再验 token：token 错时它回一条
+		// retcode=1403 失败帧再断开，Dial 成功不代表可用，先等首条消息确认。
+		if !n.confirm(conn) {
+			n.mu.Lock()
+			if n.conn == conn {
+				n.conn = nil
+			}
+			n.mu.Unlock()
+			_ = conn.Close()
+			n.failPending(errors.New("NapCat 连接未通过确认，动作未完成"))
+			n.logger.Error("NapCat 连接不可用，3s 后重试")
+			time.Sleep(reconnectDelay)
+			continue
+		}
 		n.logger.Info("已连接 NapCat", "url", n.url)
 
 		n.readLoop(conn) // 阻塞直到连接断开
@@ -78,6 +95,40 @@ func (n *NapCat) connectLoop() {
 		n.logger.Info("与 NapCat 断开，3s 后重连")
 		time.Sleep(reconnectDelay)
 	}
+}
+
+// confirm 等首条消息确认鉴权：收到鉴权失败帧或连接提前断开返回 false；
+// 超时无消息的连接按已连接处理（可能只是不发事件），返回 true 并告警。
+// 读到的合法首条帧交给 dispatch，不丢。
+func (n *NapCat) confirm(conn *websocket.Conn) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(confirmTimeout))
+	_, data, err := conn.ReadMessage()
+	_ = conn.SetReadDeadline(time.Time{}) // 后续读取交给 readLoop，不再限时
+	switch {
+	case err == nil:
+		if authFailed(data) {
+			n.logger.Error("NapCat 鉴权失败，请检查 token", "reply", head(data, 120))
+			return false
+		}
+		n.dispatch(data)
+		return true
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		n.logger.Warn("NapCat 连接后超时无消息，无法确认鉴权，按已连接处理")
+		return true
+	default:
+		n.logger.Error("NapCat 连接未确认即断开", "err", err)
+		return false
+	}
+}
+
+// authFailed 识别 NapCat 的鉴权失败帧：status=failed 且无 echo。
+// 动作响应都带 echo，没有 echo 的失败帧只能是连接层的拒绝（如 token 错）。
+func authFailed(data []byte) bool {
+	var probe struct {
+		Status string `json:"status"`
+		Echo   string `json:"echo"`
+	}
+	return json.Unmarshal(data, &probe) == nil && probe.Status == "failed" && probe.Echo == ""
 }
 
 // readLoop 只在持有连接的 goroutine 里读；写走 writeJSON 加锁。
