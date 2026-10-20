@@ -66,9 +66,13 @@ qa.py（Python 业务）
 ### Rust ↔ Python（pyo3 嵌入）
 
 - qa.py 源码喂给解释器执行，宿主调用其中的 `handle(text) -> list[str]`
-- **多插件责任链**：extensions/<名>/plugin.py 为入口，按 `PRIORITY`（缺省 100，越小越先）
+- **多插件责任链**：extensions/<名>/plugin.py 为入口（首行 `# loquat-plugin` 签名，
+  无签名目录忽略），按 `PRIORITY`（缺省 100，越小越先）
   + 目录名排序逐个调用，第一个返回非空的接管；返回空则链继续。丢目录/删文件/改文件
   均在下一条消息前惰性同步，单插件加载失败只跳过自身
+- **插件安装**：声明了 SCHEMA 且 config.yaml 缺失 = 未安装，不加载，
+  控制台提示 `install <插件名>`；install 按 SCHEMA 生成 config.yaml 并写 .disabled 保持未启用，
+  `enable <插件名>` 激活。config.yaml 是运行时状态，不入库
 - **插件启停**：两层——插件 config.yaml 里 `enabled: false`（永久）+ 控制台
   `disable/enable <插件名>`（写 .disabled 标记，持久）；被禁用的插件仍跟踪热重载，
   重新启用无缝回归
@@ -87,7 +91,7 @@ cmd/core/                Go 核心（可编 exe 自测，可编 dll 嵌入）
 cmd/adapter-napcat/      NapCat 适配器
 internal/core/           核心逻辑：配置、消息队列、插件监督、系统状态采集
 internal/pluginapi/      go-plugin 插件接口与握手（含 proto）
-extensions/              Python 业务插件（每目录自包含：plugin.py + config.yaml）
+extensions/              Python 业务插件（每目录自包含：plugin.py；config.yaml 运行时生成，不入库）
 scripts/                 构建、架构检查脚本
 justfile                 质量入口：just lint / test / fmt / build
 config/loquat.yaml       本机配置（模板 loquat.yaml.example 入库）

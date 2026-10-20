@@ -22,6 +22,7 @@ type SendActionFn = unsafe extern "C" fn(
 type ReloadPluginFn = unsafe extern "C" fn(name: *const c_char) -> i32;
 type StatusFn = unsafe extern "C" fn() -> *mut c_char;
 type SystemStatusFn = unsafe extern "C" fn() -> *mut c_char;
+type LogPipeFn = unsafe extern "C" fn() -> usize;
 type FreeFn = unsafe extern "C" fn(ptr: *mut c_char);
 type StopFn = unsafe extern "C" fn();
 
@@ -46,6 +47,7 @@ pub struct CoreDll {
     reload_plugin: ReloadPluginFn,
     status: StatusFn,
     system_status: SystemStatusFn,
+    log_pipe: LogPipeFn,
     free: FreeFn,
     stop: StopFn,
 }
@@ -63,6 +65,7 @@ impl CoreDll {
         let reload_plugin = *lib.get::<ReloadPluginFn>(b"LoquatReloadPlugin")?;
         let status = *lib.get::<StatusFn>(b"LoquatStatus")?;
         let system_status = *lib.get::<SystemStatusFn>(b"LoquatSystemStatus")?;
+        let log_pipe = *lib.get::<LogPipeFn>(b"LoquatLogPipe")?;
         let free = *lib.get::<FreeFn>(b"LoquatFree")?;
         let stop = *lib.get::<StopFn>(b"LoquatStop")?;
         Ok(Self {
@@ -72,6 +75,7 @@ impl CoreDll {
             reload_plugin,
             status,
             system_status,
+            log_pipe,
             free,
             stop,
         })
@@ -114,6 +118,12 @@ impl CoreDll {
     pub fn system_status(&self) -> Result<String, Box<dyn Error>> {
         let ptr = unsafe { (self.system_status)() };
         Ok(take_c_string(ptr, &self.free))
+    }
+
+    /// 核心日志管道的读端句柄（Windows HANDLE）；0 表示不可用。
+    /// 须在 start 之前调用：它是首次 FFI，顺带完成 Go 运行时初始化。
+    pub fn log_pipe(&self) -> usize {
+        unsafe { (self.log_pipe)() }
     }
 
     pub fn stop(&self) {

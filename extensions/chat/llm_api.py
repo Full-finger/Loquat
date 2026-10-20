@@ -4,6 +4,8 @@
 import json
 import urllib.request
 
+import loquat_log
+
 
 def chat(cfg: dict, history: list) -> str | None:
     """调一次 /chat/completions；失败打印日志并返回 None。"""
@@ -28,5 +30,5 @@ def chat(cfg: dict, history: list) -> str | None:
             data = json.loads(resp.read())
         return data["choices"][0]["message"]["content"].strip()
     except Exception as e:  # noqa: BLE001 —— 有意兜底：网络/超时/JSON/键缺失任何失败都降级为 None，不打挂机器人
-        print(f"[chat] LLM 调用失败: {e}")
+        loquat_log.error("chat", f"LLM 调用失败: {e}")
         return None

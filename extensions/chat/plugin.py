@@ -1,3 +1,4 @@
+# loquat-plugin
 # extensions/chat/plugin.py：LLM 对话插件（OpenAI 兼容 /chat/completions）。
 # 私聊全部回话；群聊仅当消息含触发词或 @机器人 时回话，
 # 未触发的群消息也记入会话历史，给模型当上下文。

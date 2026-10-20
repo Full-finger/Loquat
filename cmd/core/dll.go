@@ -18,6 +18,7 @@ import "C"
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"sync/atomic"
 	"time"
@@ -30,6 +31,25 @@ import (
 
 var started atomic.Bool
 
+// 日志管道：核心的 hclog 写入写端，读端句柄交给宿主泵出。
+// 三边日志收敛到宿主的 stderr 锁下单一写者，避免并发绞行。
+var (
+	logPipeRead  *os.File
+	logPipeWrite *os.File
+)
+
+//export LoquatLogPipe
+func LoquatLogPipe() C.uintptr_t {
+	if logPipeRead == nil {
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			return 0
+		}
+		logPipeRead, logPipeWrite = pr, pw
+	}
+	return C.uintptr_t(logPipeRead.Fd())
+}
+
 // c-shared 要求 package main 且有 main，但不会被调用。
 func main() {}
 
@@ -38,8 +58,12 @@ func LoquatStart(configPath *C.char, cb C.loquat_event_cb) C.int {
 	if !started.CompareAndSwap(false, true) {
 		return 1 // 已启动
 	}
+	var out io.Writer = os.Stderr
+	if logPipeWrite != nil {
+		out = logPipeWrite // 宿主已接管日志泵，走管道统一打印
+	}
 	logger := hclog.New(&hclog.LoggerOptions{
-		Output: os.Stderr,
+		Output: out,
 		Level:  hclog.Info,
 		Name:   "core",
 	})

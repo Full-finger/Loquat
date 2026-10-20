@@ -1,3 +1,4 @@
+# loquat-plugin
 # extensions/status/plugin.py：服务器状态插件。
 # 数据来自能力桥 core.system_status()（Go 核心 gopsutil 采集），
 # 用 Pillow 渲染为状态卡片 PNG，以 CQ 图片码回给 NapCat 显示。
@@ -11,6 +12,7 @@ import json
 from pathlib import Path
 
 import loquat_cfglib
+import loquat_log
 from PIL import Image, ImageDraw, ImageFont
 
 PRIORITY = 10  # 状态查询优先于日常问答
@@ -61,7 +63,7 @@ def _image_cq(png: bytes) -> str:
     try:
         return f"[CQ:image,file=file://{_to_wsl(_write_snapshot(png))}]"
     except OSError as e:
-        print(f"[status] 写入快照失败，回退 base64: {e}")
+        loquat_log.warn("status", f"写入快照失败，回退 base64: {e}")
         b64 = base64.b64encode(png).decode()
         return f"[CQ:image,file=base64://{b64}]"
 

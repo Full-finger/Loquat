@@ -13,7 +13,7 @@ fn plugin_dir(tag: &str) -> PathBuf {
 fn write_plugin(dir: &Path, folder: &str, code: &str) {
     let d = dir.join(folder);
     std::fs::create_dir_all(&d).unwrap();
-    std::fs::write(d.join(ENTRY_FILE), code).unwrap();
+    std::fs::write(d.join(ENTRY_FILE), format!("{SIGNATURE}\n{code}")).unwrap();
 }
 
 fn write_file(dir: &Path, name: &str, content: &str) {
@@ -184,11 +184,12 @@ fn local_modules_isolated_between_plugins() {
 }
 
 #[test]
-fn schema_generates_config_template() {
+fn install_generates_config_and_gates_loading() {
     let dir = plugin_dir("template");
-    // 把真实的 _lib/config.py 拷进临时 extensions 目录（cargo test 工作目录 = 包根）
+    // 把真实的 _lib/config.py、log.py 拷进临时 extensions 目录（cargo test 工作目录 = 包根）
     std::fs::create_dir_all(dir.join("_lib")).unwrap();
     std::fs::copy("extensions/_lib/config.py", dir.join("_lib").join("config.py")).unwrap();
+    std::fs::copy("extensions/_lib/log.py", dir.join("_lib").join("log.py")).unwrap();
     write_plugin(
         &dir,
         "cfgtest",
@@ -196,6 +197,12 @@ fn schema_generates_config_template() {
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
 
+    // 未安装：不加载，消息路由不到
+    assert!(business.handle(&ctx("x")).unwrap().is_empty());
+
+    // 安装：按 SCHEMA 生成 config.yaml，保持未启用
+    let msg = business.install("cfgtest").unwrap();
+    assert!(msg.contains("enable cfgtest"), "提示应引导 enable: {msg}");
     let cfg_path = dir.join("cfgtest").join("config.yaml");
     assert!(cfg_path.is_file(), "config.yaml 应被生成");
     let text = std::fs::read_to_string(&cfg_path).unwrap();
@@ -204,7 +211,24 @@ fn schema_generates_config_template() {
     let docs = yaml_rust2::YamlLoader::load_from_str(&text).unwrap();
     assert_eq!(docs[0]["greeting"].as_str(), Some("你好呀"));
     assert_eq!(docs[0]["enabled"].as_bool(), Some(true));
+    assert!(dir.join("cfgtest").join(".disabled").is_file(), "安装后应保持未启用");
+
+    // 未启用：路由不到；enable 后生效
+    assert!(business.handle(&ctx("x")).unwrap().is_empty());
+    assert!(business.set_enabled("cfgtest", true));
     assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["你好呀".to_string()]);
+
+    // 重复安装报错
+    assert!(business.install("cfgtest").is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unsigned_dirs_are_ignored() {
+    let dir = plugin_dir("unsigned");
+    write_file(&dir.join("p"), ENTRY_FILE, "def handle(ctx):\n    return ['ok']\n");
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    assert!(business.handle(&ctx("x")).unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

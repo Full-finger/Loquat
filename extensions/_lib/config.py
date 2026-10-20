@@ -15,6 +15,8 @@
 import json
 from pathlib import Path
 
+import loquat_log
+
 _TYPES = ("string", "int", "float", "bool", "list", "dict")
 
 
@@ -32,19 +34,19 @@ def resolve(schema: list, raw: dict) -> dict:
             continue
         v = raw[key]
         if not _type_ok(v, field.get("type", "string")):
-            print(f"[config] {key}: 应为 {field.get('type', 'string')}，"
-                  f"实际 {type(v).__name__}，回退默认值")
+            loquat_log.warn("config", f"{key}: 应为 {field.get('type', 'string')}，"
+                            f"实际 {type(v).__name__}，回退默认值")
             out[key] = default
             continue
         opts = field.get("options")
         if opts and v not in opts:
-            print(f"[config] {key}: {v!r} 不在可选值 {opts} 内，回退默认值")
+            loquat_log.warn("config", f"{key}: {v!r} 不在可选值 {opts} 内，回退默认值")
             out[key] = default
             continue
         out[key] = _range_warn(key, v, field)
     for key in raw:
         if key not in known and key != "enabled":
-            print(f"[config] 忽略未知字段 {key}（不在 SCHEMA 里）")
+            loquat_log.warn("config", f"忽略未知字段 {key}（不在 SCHEMA 里）")
     return out
 
 
@@ -55,8 +57,8 @@ def ensure_file(schema: list, dir_path: str, raw: dict) -> bool:
     if path.exists():
         return False
     header = (
-        "# 本文件由宿主按 plugin.py 的 SCHEMA 生成：改值即可，字段说明以 SCHEMA 为准。\n"
-        "# 手写的注释与排版在重新生成时不保留；误删本文件会再生成。\n"
+        "# 本文件由 install 命令按 plugin.py 的 SCHEMA 生成：改值即可，字段说明以 SCHEMA 为准。\n"
+        "# 手写的注释与排版在重新生成时不保留；删除本文件插件会回到未安装状态（再提示 install）。\n"
         "# enabled 是宿主保留键。\n\n"
         "enabled: true\n\n"
     )
@@ -87,7 +89,7 @@ def _range_warn(key: str, v, field: dict):
     lo, hi = field.get("min"), field.get("max")
     if (isinstance(v, (int, float)) and not isinstance(v, bool)
             and ((lo is not None and v < lo) or (hi is not None and v > hi))):
-        print(f"[config] {key}: {v} 超出范围 [{lo}, {hi}]")
+        loquat_log.warn("config", f"{key}: {v} 超出范围 [{lo}, {hi}]")
     return v
 
 

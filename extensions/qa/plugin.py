@@ -1,3 +1,4 @@
+# loquat-plugin
 # extensions/qa/plugin.py：日常问答插件。
 # 约定：handle(ctx) -> list[str]，ctx 含 text/message_type/chat_id/user_id/self_id；
 # 返回空列表 = 不归我管，路由链继续。可选声明 PRIORITY（越小越先，缺省 100）。

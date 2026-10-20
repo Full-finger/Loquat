@@ -4,6 +4,7 @@
 
 mod business;
 mod ffi;
+mod log;
 mod pluginload;
 mod pybridge;
 mod sharedlib;
@@ -81,7 +82,10 @@ fn parse_incoming(payload: &[u8]) -> Option<Incoming> {
 fn main() -> Result<(), Box<dyn Error>> {
     let dll = Arc::new(unsafe { CoreDll::load("bin/core.dll")? });
     ffi::set_core_dll(dll.clone());
-    println!("[rust] core.dll 已加载");
+    // 接管核心日志泵：此后三边日志都在宿主 stderr 锁下单一写者打印。
+    // 这是首次 FFI 调用，顺带完成 Go 运行时初始化（须在 stdin 线程前）。
+    log::pump_from_handle(dll.log_pipe());
+    log_info!("core.dll 已加载");
 
     let (tx, rx) = mpsc::channel::<HostMsg>();
     EVENT_TX.set(tx.clone()).expect("事件通道只能初始化一次");
@@ -91,11 +95,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // 2) 阻塞读 stdin 的线程若先于首次 FFI 启动，Go 运行时初始化会直接冻死
     //   （实测：stdin 给 DEVNULL 则一切正常）。启动完成前命令也无意义。
     dll.start("config/loquat.yaml", on_event)?;
-    println!("[rust] 核心已启动，等待事件（命令：help）");
+    log_info!("核心已启动，等待事件（命令：help）");
 
     let business = Business::load(EXTENSIONS_DIR)?;
     pybridge::suppress_sigint();
-    println!("[rust] 业务已加载: {}", business.info());
+    log_info!("业务已加载: {}", business.info());
 
     // Ctrl+C / 关闭窗口：先停核心（连带杀掉适配器子进程）再退出。
     // 必须在 CPython 初始化之后注册：SetConsoleCtrlHandler 按注册逆序调用，
@@ -103,9 +107,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // 吞成 KeyboardInterrupt 或返回“已处理”截断调用链，导致退出失效。
     let dll_for_signal = Arc::clone(&dll);
     ctrlc::set_handler(move || {
-        println!("[rust] 收到 Ctrl+C，停止核心与适配器");
+        log_info!("收到 Ctrl+C，停止核心与适配器");
         dll_for_signal.stop();
-        println!("[rust] 已退出");
+        log_info!("已退出");
         std::process::exit(0);
     })
     .expect("设置 Ctrl+C 处理器失败");
@@ -125,7 +129,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let Some(incoming) = parse_incoming(&payload) else {
                     continue;
                 };
-                println!("[rust] 消息: [{}] {}", incoming.message_type, incoming.text);
+                log_info!("消息: [{}] {}", incoming.message_type, incoming.text);
 
                 let ctx = business::MsgCtx {
                     text: &incoming.text,
@@ -137,7 +141,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let replies = match business.handle(&ctx) {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("[rust] 业务处理出错: {e}");
+                        log_error!("业务处理出错: {e}");
                         continue;
                     }
                 };
@@ -156,9 +160,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     match dll.send_action(action, &params.to_string(), 15_000) {
                         Ok(resp) => {
                             REPLY_COUNT.fetch_add(1, Ordering::Relaxed);
-                            println!("[rust] 已回复: {} resp={resp}", brief(&reply, 60));
+                            log_info!("已回复: {} resp={resp}", brief(&reply, 60));
                         }
-                        Err(e) => eprintln!("[rust] 发送失败: {e}"),
+                        Err(e) => log_error!("发送失败: {e}"),
                     }
                 }
             }
@@ -180,11 +184,13 @@ fn brief(s: &str, max_chars: usize) -> String {
     out
 }
 
+// 控制台命令的应答是 REPL 输出，不是日志：裸文本走 stdout，不带时间戳。
+// 异步事件（消息/回复）与运行日志才走 stderr 的统一日志格式。
 fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
     match cmd {
         "" => {}
         "status" => println!(
-            "[rust] 核心: {} | 事件 {} 条 | 已回复 {} 条 | 业务: {}",
+            "核心: {} | 事件 {} 条 | 已回复 {} 条 | 业务: {}",
             dll.status(),
             EVENT_COUNT.load(Ordering::Relaxed),
             REPLY_COUNT.load(Ordering::Relaxed),
@@ -193,7 +199,7 @@ fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
         "reload napcat" => {
             let rc = dll.reload_plugin("napcat");
             println!(
-                "[rust] reload napcat -> {}",
+                "reload napcat -> {}",
                 if rc == 0 {
                     "已触发，核心将退避重启适配器"
                 } else {
@@ -201,30 +207,39 @@ fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
                 }
             );
         }
-        "plugins" => println!("[rust] {}", business.info()),
+        "plugins" => println!("{}", business.info()),
         c if c.starts_with("disable ") => {
             let name = c["disable ".len()..].trim();
             let found = business.set_enabled(name, false);
             println!(
-                "[rust] {name} -> {}",
+                "{name} -> {}",
                 if found { "已禁用（重启后回到文件内 ENABLED 声明）" } else { "未找到该插件" }
             );
+        }
+        c if c.starts_with("install ") => {
+            let name = c["install ".len()..].trim();
+            match business.install(name) {
+                Ok(msg) => println!("{msg}"),
+                Err(e) => println!("{e}"),
+            }
         }
         c if c.starts_with("enable ") => {
             let name = c["enable ".len()..].trim();
             let found = business.set_enabled(name, true);
             println!(
-                "[rust] {name} -> {}",
+                "{name} -> {}",
                 if found { "已启用" } else { "未找到该插件" }
             );
         }
-        "help" => println!("[rust] 命令: status | plugins | enable/disable <插件名> | reload napcat | exit"),
+        "help" => println!(
+            "命令: status | plugins | install <插件名> | enable/disable <插件名> | reload napcat | exit"
+        ),
         "exit" | "quit" => {
             dll.stop();
-            println!("[rust] 已退出");
+            println!("已退出");
             std::process::exit(0);
         }
-        other => println!("[rust] 未知命令: {other}（help 查看命令）"),
+        other => println!("未知命令: {other}（help 查看命令）"),
     }
 }
 

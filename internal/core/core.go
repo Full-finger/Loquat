@@ -137,13 +137,14 @@ func (c *Core) spawn() error {
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		Logger:           c.logger.Named("plugin"),
 	})
-	c.logger.Info("插件客户端已创建，开始握手")
+	// go-plugin 握手只确认子进程就绪，与 NapCat 的连接是两回事，措辞别混淆。
+	c.logger.Info("插件客户端已创建，开始 go-plugin 握手")
 	rpcClient, err := client.Client()
 	if err != nil {
 		client.Kill()
-		return fmt.Errorf("插件握手: %w", err)
+		return fmt.Errorf("go-plugin 握手: %w", err)
 	}
-	c.logger.Info("适配器握手完成")
+	c.logger.Info("go-plugin 握手完成，适配器子进程就绪")
 	raw, err := rpcClient.Dispense("adapter")
 	if err != nil {
 		client.Kill()

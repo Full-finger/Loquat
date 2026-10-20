@@ -39,6 +39,7 @@ QQ 里私聊机器人发 `ping`，回复 `pong` 即为成功。
 |------|------|
 | `status` | 核心与适配器状态、事件/回复计数 |
 | `plugins` | 列出业务插件及启停状态 |
+| `install <插件>` | 安装插件：按 SCHEMA 生成 config.yaml，保持未启用 |
 | `enable <插件>` / `disable <插件>` | 运行时启停业务插件（重启后回到文件内声明） |
 | `reload napcat` | 热重载适配器（子进程级，自动恢复） |
 | `help` / `exit` | 帮助 / 退出 |
@@ -52,9 +53,10 @@ just fmt         # 格式化
 just checklist   # 生成未解决事项总览（docs/checkList/OPEN.md）
 ```
 
-业务开发只碰 `extensions/<名>/`：`plugin.py` 写逻辑，`config.yaml` 写参数，
+业务开发只碰 `extensions/<名>/`：`plugin.py` 写逻辑（首行 `# loquat-plugin` 签名），
 保存后**下一条消息自动生效**（惰性热重载），Go/Rust 零重编。
-配置声明写在插件里的 SCHEMA：校验、默认值、缺失时的模板生成全由它派生，
+`config.yaml` 是运行时状态，不入库：声明了 SCHEMA 却缺失时插件处于未安装状态，
+`install <插件>` 按 SCHEMA 生成配置，`enable` 启用；校验、默认值、模板全由 SCHEMA 派生，
 配套库在 `extensions/_lib/config.py`（宿主注册为 `loquat_cfglib`）。
 插件目录内可放多个 .py 互相 import（勿与标准库/已装包重名），改动同样热重载。
 需要新的核心能力（如系统指标）时：Go 核心加导出 → `src/ffi.rs` 绑定 → `src/pybridge.rs` 注入桥，

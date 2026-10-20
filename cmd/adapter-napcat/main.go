@@ -12,10 +12,13 @@ import (
 )
 
 func main() {
+	// 必须用 JSON 格式：go-plugin 客户端转发插件 stderr 时按 @level 还原真实
+	// 级别；纯文本行一律降为 Debug，会被核心的 Info 级别整条吞掉。
 	logger := hclog.New(&hclog.LoggerOptions{
-		Output: os.Stderr,
-		Level:  hclog.Info,
-		Name:   "adapter-napcat",
+		Output:     os.Stderr,
+		Level:      hclog.Info,
+		Name:       "adapter-napcat",
+		JSONFormat: true,
 	})
 
 	url := os.Getenv("LOQUAT_NAPCAT_URL")

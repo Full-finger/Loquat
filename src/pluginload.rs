@@ -14,15 +14,15 @@ use pyo3::types::{PyAny, PyModule};
 
 use crate::business::CONFIG_FILE;
 use crate::pybridge;
-use crate::sharedlib;
 
 const DEFAULT_PRIORITY: i64 = 100;
 
-/// load_module 的产物：模块、优先级、config.enabled 声明、是否生成了配置模板。
+/// load_module 的产物：模块、优先级、config.enabled 声明、是否可安装
+/// （声明了 SCHEMA 且 config.yaml 缺失；此时模块不应生效，等 install 命令）。
 pub type Loaded = (Py<PyModule>, i64, bool, bool);
 
 /// 加载插件入口，注入 config / core 环境。返回模块、优先级、配置内
-/// enabled 声明与是否生成了配置模板。
+/// enabled 声明与是否可安装。
 pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
     let source =
         std::fs::read_to_string(path).map_err(|e| format!("读插件失败 {path:?}: {e}"))?;
@@ -66,8 +66,10 @@ pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
         let key = name.to_string_lossy().into_owned();
         let _ = modules.call_method1("pop", (key, py.None()));
 
-        // 带 SCHEMA 且 config.yaml 缺失时生成配置模板
-        let generated = sharedlib::ensure_config_file(dir, &module)?;
+        // 可安装 = 声明了 SCHEMA 且 config.yaml 缺失。宿主不自动生成模板，
+        // 由控制台 install 命令显式安装（生成 config.yaml + .disabled 标记）
+        let installable =
+            module.getattr("SCHEMA").is_ok() && !dir.join(CONFIG_FILE).is_file();
 
         let priority = module
             .getattr("PRIORITY")
@@ -78,7 +80,7 @@ pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
             .and_then(|c| c.get_item("enabled"))
             .and_then(|v| v.extract::<bool>())
             .unwrap_or(true);
-        Ok((module.into(), priority, enabled, generated))
+        Ok((module.into(), priority, enabled, installable))
     })
 }
 
