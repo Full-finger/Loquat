@@ -15,11 +15,14 @@ use std::time::UNIX_EPOCH;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-/// 库清单：(相对路径, 注册名)。loquat_log 必须在 loquat_cfglib 之前：
-/// config.py 顶层 `import loquat_log`，靠 sys.modules 里已有条目解析。
-const LIBS: [(&str, &str); 2] = [
+/// 库清单：(相对路径, 注册名)。按依赖序：log 最先（其余库顶层 import 它），
+/// agent 依赖 log；loquat_state 锚点由 pybridge::ensure_state_module 在
+/// 进程启动时注册，agent.py 顶层从 sys.modules 取。
+const LIBS: [(&str, &str); 4] = [
     ("_lib/log.py", "loquat_log"),
     ("_lib/config.py", "loquat_cfglib"),
+    ("_lib/agent.py", "loquat_agent"),
+    ("_lib/llm.py", "loquat_llm"),
 ];
 pub const LIB_MODULE: &str = "loquat_cfglib";
 

@@ -1,14 +1,15 @@
 # loquat-plugin
 # extensions/chat/plugin.py：LLM 对话插件（OpenAI 兼容 /chat/completions）。
-# 私聊全部回话；群聊仅当消息含触发词或 @机器人 时回话，
-# 未触发的群消息也记入会话历史，给模型当上下文。
-# 历史在内存里，重启即清空；每会话上限 history_limit 条。
-# HTTP 细节在本地模块 llm_api.py（同目录 import，宿主挂 sys.path）。
+# 本插件保留：触发规则（群聊触发词/@机器人）、SCHEMA 配置、工具声明；
+# 会话历史、QQ→LLM 文本转换、工具循环归内核库 loquat_agent（跨热重载存活），
+# HTTP 细节归 loquat_llm。
 
-import re
+import json
+from datetime import datetime
 
+import loquat_agent
 import loquat_cfglib
-from llm_api import chat as _http_chat
+import loquat_llm
 
 PRIORITY = 200  # 兜底，排在 qa/status 之后
 
@@ -35,52 +36,59 @@ SCHEMA = [
      "desc": "每会话（私聊/各群各一份）保留的最大消息条数"},
     {"key": "timeout_seconds", "type": "int", "default": 60,
      "desc": "请求超时秒数"},
+    {"key": "max_turns", "type": "int", "default": 6, "min": 1,
+     "desc": "单次会话的工具循环轮数上限，防失控"},
 ]
 
-_histories: dict = {}  # (message_type, chat_id) -> [{"role", "content"}, ...]
+@loquat_agent.tool
+def now() -> str:
+    """当前时间（年-月-日 时:分:秒 星期）"""
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %A")
 
-_CQ_RE = re.compile(r"\[CQ:[^\]]*\]")
+
+@loquat_agent.tool
+def system_status() -> str:
+    """宿主机与机器人核心的运行状态（JSON 文本）"""
+    return core.system_status()  # noqa: F821 —— core 为宿主注入的能力桥
+
+
+@loquat_agent.tool
+def send_message(ctx, message_type: str, chat_id: int, text: str) -> str:
+    """主动发一条独立消息到指定会话，不等本轮回复。
+
+    message_type: "private" 或 "group"。
+    chat_id: 目标会话号（私聊为对方 QQ 号，群聊为群号）。
+    text: 消息内容，可含 CQ 码（如 [CQ:image,file=file:///...] 发图）。
+    """
+    action = "send_private_msg" if message_type == "private" else "send_group_msg"
+    key = "user_id" if message_type == "private" else "group_id"
+    params = json.dumps({key: chat_id, "message": text}, ensure_ascii=False)
+    return core.send_action(action, params, 15_000)  # noqa: F821
+
+
+TOOLS = [now, system_status, send_message]
 
 
 def handle(ctx: dict) -> list[str]:
     cfg = loquat_cfglib.resolve(SCHEMA, config)  # noqa: F821
     raw = ctx.get("text") or ""
     is_at = f"[CQ:at,qq={ctx.get('self_id')}]" in raw
-    text = _CQ_RE.sub("", raw).strip()
+    text = loquat_agent.clean_text(ctx)
     if not text:
         return []
 
-    key = (ctx.get("message_type"), ctx.get("chat_id"))
-    if ctx.get("message_type") == "group":
-        if not (is_at or _hit_trigger(cfg, text)):
-            _push(key, f"<{ctx.get('user_id')}> {text}")
-            return []
-        content = f"<{ctx.get('user_id')}> {text}"
-    else:
-        content = text
+    if ctx.get("message_type") == "group" and not (is_at or _hit_trigger(cfg, text)):
+        loquat_agent.observe(ctx, text)  # 未触发的群消息也记历史，给模型当上下文
+        return []
 
-    history = _push(key, content)
-    reply = _http_chat(cfg, history)
+    reply = loquat_agent.respond(
+        ctx, text=text, cfg=cfg, chat_fn=loquat_llm.chat,
+        tools=TOOLS, max_turns=cfg.get("max_turns", 6),
+    )
     if reply is None:
-        history.pop()  # 失败的这条不留底
         return ["（LLM 调用失败，详见控制台日志）"]
-    history.append({"role": "assistant", "content": reply})
-    _trim(cfg, key)
-    return [reply]
+    return reply
 
 
 def _hit_trigger(cfg: dict, text: str) -> bool:
     return any(t and t in text for t in cfg.get("triggers", []))
-
-
-def _push(key, content: str) -> list:
-    history = _histories.setdefault(key, [])
-    history.append({"role": "user", "content": content})
-    return history
-
-
-def _trim(cfg: dict, key) -> None:
-    limit = cfg.get("history_limit", 20)
-    history = _histories.get(key)
-    if history and len(history) > limit:
-        del history[: len(history) - limit]

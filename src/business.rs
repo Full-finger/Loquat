@@ -26,7 +26,7 @@
 //! 路由语义：按 (PRIORITY, 目录名) 排序逐个调用，第一个返回非空的插件接管。
 
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -39,12 +39,11 @@ use crate::pluginload;
 use crate::pybridge;
 use crate::sharedlib;
 
+use crate::pluginload::{file_mtime, has_signature};
+
 const ENTRY_FILE: &str = "plugin.py";
 pub(crate) const CONFIG_FILE: &str = "config.yaml";
 const DISABLE_MARKER: &str = ".disabled";
-
-/// plugin.py 首行签名：宿主识别插件的依据。
-const SIGNATURE: &str = "# loquat-plugin";
 
 /// 传给插件 handle(ctx) 的消息上下文。
 pub struct MsgCtx<'a> {
@@ -57,9 +56,9 @@ pub struct MsgCtx<'a> {
 
 struct LoadedPlugin {
     dir_name: String,
-    path: PathBuf,        // plugin.py
+    path: PathBuf, // plugin.py
     priority: i64,
-    config_enabled: bool, // config.yaml 声明
+    config_enabled: bool,  // config.yaml 声明
     marker_disabled: bool, // .disabled 标记（控制台启停）
     module: Py<PyModule>,
     mtime: SystemTime,
@@ -103,11 +102,8 @@ impl Business {
         let mt = sharedlib::lib_mtime_millis(&self.dir);
         if mt != self.lib_mtime.load(Ordering::Relaxed) {
             match sharedlib::load(&self.dir) {
-                Ok(_) => log_info!("共享库已加载/更新: {}", sharedlib::LIB_MODULE),
-                Err(e) => log_error!(
-                    "共享库加载失败，import {} 的插件将不可用: {e}",
-                    sharedlib::LIB_MODULE
-                ),
+                Ok(_) => log_info!("共享库已加载/更新（_lib 全量重注册）"),
+                Err(e) => log_error!("共享库加载失败，import 共享库的插件将不可用: {e}"),
             }
             self.lib_mtime.store(mt, Ordering::Relaxed);
             for p in plugins.iter_mut() {
@@ -197,7 +193,10 @@ impl Business {
 
             let (config_changed, toggled) = {
                 let existing = &plugins[idx];
-                (mtime > existing.mtime, marker_now != existing.marker_disabled)
+                (
+                    mtime > existing.mtime,
+                    marker_now != existing.marker_disabled,
+                )
             };
             if !config_changed && !toggled {
                 continue;
@@ -232,10 +231,7 @@ impl Business {
             if toggled {
                 let existing = &mut plugins[idx];
                 existing.marker_disabled = marker_now;
-                log_info!(
-                    "插件 {name} 已{}",
-                    if marker_now { "禁用" } else { "启用" }
-                );
+                log_info!("插件 {name} 已{}", if marker_now { "禁用" } else { "启用" });
             }
         }
 
@@ -319,7 +315,10 @@ impl Business {
 
     /// 可安装插件首次发现时提示一次，后续扫描不再重复。
     fn note_installable(&self, name: &str) {
-        self.installable.lock().expect("业务锁中毒").push(name.to_string());
+        self.installable
+            .lock()
+            .expect("业务锁中毒")
+            .push(name.to_string());
         log_info!("检测到可安装插件: {name}，运行 install {name} 完成安装");
     }
 
@@ -348,7 +347,10 @@ impl Business {
         if let Err(e) = std::fs::write(dir_path.join(DISABLE_MARKER), "") {
             return Err(format!("写未启用标记失败: {e}"));
         }
-        self.installable.lock().expect("业务锁中毒").retain(|n| n != name);
+        self.installable
+            .lock()
+            .expect("业务锁中毒")
+            .retain(|n| n != name);
         // 立即加载，让 plugins/enable 马上可见可用，不等下一条消息触发扫描
         let _ = self.sync();
         Ok(format!(
@@ -378,19 +380,8 @@ impl Business {
     }
 }
 
-fn file_mtime(path: &Path) -> Result<SystemTime, std::io::Error> {
-    std::fs::metadata(path)?.modified()
-}
-
-/// 签名检查只读文件头几十字节，不整文件读。
-fn has_signature(entry_py: &Path) -> bool {
-    let mut buf = [0u8; 64];
-    match std::fs::File::open(entry_py).and_then(|mut f| std::io::Read::read(&mut f, &mut buf)) {
-        Ok(n) => String::from_utf8_lossy(&buf[..n]).trim_start().starts_with(SIGNATURE),
-        Err(_) => false,
-    }
-}
-
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod tests_agent;

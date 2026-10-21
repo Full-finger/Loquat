@@ -1,0 +1,253 @@
+//! loquat_agent（内核 agent 库）的测试：历史锚点、QQ→LLM 文本转换、工具循环。
+//! 从 tests.rs 拆出（R4 限 400 行）。helpers 与 tests.rs 各持一份，保持模块解耦。
+
+use std::path::Path;
+use std::path::PathBuf;
+
+use super::*;
+use crate::pluginload::SIGNATURE;
+
+fn plugin_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("loquat_biz_agent_test_{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn write_plugin(dir: &Path, folder: &str, code: &str) {
+    let d = dir.join(folder);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join(ENTRY_FILE), format!("{SIGNATURE}\n{code}")).unwrap();
+}
+
+fn write_file(dir: &Path, name: &str, content: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join(name), content).unwrap();
+}
+
+fn ctx_in(chat_id: i64, text: &'static str) -> MsgCtx<'static> {
+    MsgCtx {
+        text,
+        message_type: "private",
+        chat_id,
+        user_id: 1,
+        self_id: 100,
+    }
+}
+
+// 各测试用独立 chat_id：sessions 是全局锚点，串行测试下 key 撞车会互相污染。
+mod chat_ids {
+    pub const HISTORY: i64 = 101;
+    pub const TOOLS: i64 = 102;
+    pub const UNKNOWN: i64 = 103;
+    pub const MAX_TURNS: i64 = 104;
+}
+
+// 布置临时插件目录：拷真 _lib（log/config/agent）+ 测试插件。
+fn agent_test_dir(tag: &str) -> PathBuf {
+    let dir = plugin_dir(tag);
+    for f in ["log.py", "config.py", "agent.py"] {
+        write_file(
+            &dir.join("_lib"),
+            f,
+            &std::fs::read_to_string(Path::new("extensions/_lib").join(f)).unwrap(),
+        );
+    }
+    dir
+}
+
+#[test]
+fn agent_history_survives_plugin_reload() {
+    crate::pybridge::ensure_state_module();
+    let dir = agent_test_dir("agent_reload");
+    let code = concat!(
+        "import loquat_agent\n",
+        "\n",
+        "class FakeResp:\n",
+        "    def __init__(self, text):\n",
+        "        self.text = text\n",
+        "        self.tool_calls = []\n",
+        "\n",
+        "def fake_chat(cfg, history, tools):\n",
+        "    return FakeResp('H' + str(len(history)))\n",
+        "\n",
+        "def handle(ctx):\n",
+        "    text = loquat_agent.clean_text(ctx)\n",
+        "    reply = loquat_agent.respond(ctx, text=text, cfg={'history_limit': 3}, chat_fn=fake_chat)\n",
+        "    return reply or []\n",
+    );
+    write_plugin(&dir, "p", code);
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    let c = |t| ctx_in(chat_ids::HISTORY, t);
+    // m1 → 历史 [u1]；m2 → [u1,a1,u2] → 回复后裁剪 [a1,u2,a2]
+    assert_eq!(business.handle(&c("m1")).unwrap(), vec!["H1".to_string()]);
+    assert_eq!(business.handle(&c("m2")).unwrap(), vec!["H3".to_string()]);
+
+    // 重载插件：模块级状态全换，历史必须从 loquat_state 锚点回来。
+    // 若锚点失效，m3 只会看到 [u3]，返回 H1 而非 H4
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    write_plugin(&dir, "p", code);
+    assert_eq!(business.handle(&c("m3")).unwrap(), vec!["H4".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn agent_strips_cq_and_prefixes_group_sender() {
+    crate::pybridge::ensure_state_module();
+    let dir = agent_test_dir("agent_group");
+    // spy 插件：捕获 fake_chat 实际收到的 history，验证 CQ 码剥离
+    // 与群聊发言人前缀
+    write_plugin(
+        &dir,
+        "spy",
+        concat!(
+            "import json\n",
+            "import loquat_agent\n",
+            "\n",
+            "captured = []\n",
+            "\n",
+            "class FakeResp:\n",
+            "    def __init__(self, text):\n",
+            "        self.text = text\n",
+            "        self.tool_calls = []\n",
+            "\n",
+            "def fake_chat(cfg, history, tools):\n",
+            "    captured.append(json.dumps(history, ensure_ascii=False))\n",
+            "    return FakeResp('ok')\n",
+            "\n",
+            "def handle(ctx):\n",
+            "    text = loquat_agent.clean_text(ctx)\n",
+            "    loquat_agent.respond(ctx, text=text, cfg={}, chat_fn=fake_chat)\n",
+            "    return [captured[-1]] if captured else []\n",
+        ),
+    );
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    let group_ctx = MsgCtx {
+        text: "[CQ:at,qq=100] hi",
+        message_type: "group",
+        chat_id: 9,
+        user_id: 7,
+        self_id: 100,
+    };
+    assert_eq!(
+        business.handle(&group_ctx).unwrap(),
+        vec![r#"[{"role": "user", "content": "<7> hi"}]"#.to_string()]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn agent_tool_loop_executes_and_passes_schema() {
+    crate::pybridge::ensure_state_module();
+    let dir = agent_test_dir("agent_tools");
+    write_plugin(
+        &dir,
+        "p",
+        concat!(
+            "import json\n",
+            "import loquat_agent\n",
+            "\n",
+            "class FakeResp:\n",
+            "    def __init__(self, text, tool_calls):\n",
+            "        self.text = text\n",
+            "        self.tool_calls = tool_calls\n",
+            "\n",
+            "@loquat_agent.tool\n",
+            "def add(ctx, a: int, b: int) -> str:\n",
+            "    \x22\x22\x22两数相加\x22\x22\x22\n",
+            "    return str(a + b)\n",
+            "\n",
+            "def fake_chat(cfg, history, tools):\n",
+            "    tool_msgs = [m['content'] for m in history if m.get('role') == 'tool']\n",
+            "    if tool_msgs:\n",
+            "        return FakeResp('schema=%s answer=%s' % (json.dumps(tools), tool_msgs[-1]), [])\n",
+            "    return FakeResp('', [{'id': 'c1', 'type': 'function',\n",
+            "                          'function': {'name': 'add', 'arguments': '{\"a\": 2, \"b\": 3}'}}])\n",
+            "\n",
+            "def handle(ctx):\n",
+            "    text = loquat_agent.clean_text(ctx)\n",
+            "    reply = loquat_agent.respond(ctx, text=text, cfg={'history_limit': 20},\n",
+            "                                 chat_fn=fake_chat, tools=[add])\n",
+            "    return reply or []\n",
+        ),
+    );
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    let replies = business.handle(&ctx_in(chat_ids::TOOLS, "1+1=?")).unwrap();
+    assert_eq!(replies.len(), 1);
+    // 工具执行结果（2+3=5）被回填并在第二轮被模型消费
+    assert!(replies[0].contains("answer=5"), "实际: {replies:?}");
+    // OpenAI tools schema 随请求下发：函数名与注解推导的类型都在
+    assert!(replies[0].contains("\"add\""), "实际: {replies:?}");
+    assert!(replies[0].contains("\"integer\""), "实际: {replies:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn agent_unknown_tool_error_feeds_back_to_model() {
+    crate::pybridge::ensure_state_module();
+    let dir = agent_test_dir("agent_unknown_tool");
+    write_plugin(
+        &dir,
+        "p",
+        concat!(
+            "import loquat_agent\n",
+            "\n",
+            "class FakeResp:\n",
+            "    def __init__(self, text, tool_calls):\n",
+            "        self.text = text\n",
+            "        self.tool_calls = tool_calls\n",
+            "\n",
+            "def fake_chat(cfg, history, tools):\n",
+            "    if any(m.get('role') == 'tool' for m in history):\n",
+            "        last = [m['content'] for m in history if m.get('role') == 'tool'][-1]\n",
+            "        return FakeResp('saw=%s' % last, [])\n",
+            "    return FakeResp('', [{'id': 'x', 'type': 'function',\n",
+            "                          'function': {'name': 'nope', 'arguments': '{}'}}])\n",
+            "\n",
+            "def handle(ctx):\n",
+            "    text = loquat_agent.clean_text(ctx)\n",
+            "    reply = loquat_agent.respond(ctx, text=text, cfg={}, chat_fn=fake_chat, tools=[])\n",
+            "    return reply or []\n",
+        ),
+    );
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    // dispatch 对未知工具回填错误文本，模型第二轮看到并转述
+    let replies = business.handle(&ctx_in(chat_ids::UNKNOWN, "hi")).unwrap();
+    assert_eq!(replies, vec!["saw=错误：未知工具 'nope'".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn agent_tool_loop_caps_at_max_turns() {
+    crate::pybridge::ensure_state_module();
+    let dir = agent_test_dir("agent_max_turns");
+    write_plugin(
+        &dir,
+        "p",
+        concat!(
+            "import loquat_agent\n",
+            "\n",
+            "class FakeResp:\n",
+            "    def __init__(self, text, tool_calls):\n",
+            "        self.text = text\n",
+            "        self.tool_calls = tool_calls\n",
+            "\n",
+            "def fake_chat(cfg, history, tools):\n",
+            "    return FakeResp('', [{'id': 'x', 'type': 'function',\n",
+            "                          'function': {'name': 'loop', 'arguments': '{}'}}])\n",
+            "\n",
+            "def handle(ctx):\n",
+            "    text = loquat_agent.clean_text(ctx)\n",
+            "    reply = loquat_agent.respond(ctx, text=text, cfg={}, chat_fn=fake_chat,\n",
+            "                                 tools=[], max_turns=2)\n",
+            "    return reply or ['EMPTY']\n",
+        ),
+    );
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    // 模型永远只发 tool_call：max_turns 用尽强制收尾，本轮无文本回复
+    assert_eq!(
+        business.handle(&ctx_in(chat_ids::MAX_TURNS, "hi")).unwrap(),
+        vec!["EMPTY".to_string()]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -8,6 +8,7 @@
 use std::error::Error;
 use std::ffi::CString;
 use std::path::Path;
+use std::time::SystemTime;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
@@ -17,6 +18,25 @@ use crate::pybridge;
 
 const DEFAULT_PRIORITY: i64 = 100;
 
+/// plugin.py 首行签名：宿主识别插件的依据。
+pub(crate) const SIGNATURE: &str = "# loquat-plugin";
+
+/// 文件修改时间；失败（不存在等）由调用方处理。
+pub(crate) fn file_mtime(path: &Path) -> Result<SystemTime, std::io::Error> {
+    std::fs::metadata(path)?.modified()
+}
+
+/// 签名检查只读文件头几十字节，不整文件读。
+pub(crate) fn has_signature(entry_py: &Path) -> bool {
+    let mut buf = [0u8; 64];
+    match std::fs::File::open(entry_py).and_then(|mut f| std::io::Read::read(&mut f, &mut buf)) {
+        Ok(n) => String::from_utf8_lossy(&buf[..n])
+            .trim_start()
+            .starts_with(SIGNATURE),
+        Err(_) => false,
+    }
+}
+
 /// load_module 的产物：模块、优先级、config.enabled 声明、是否可安装
 /// （声明了 SCHEMA 且 config.yaml 缺失；此时模块不应生效，等 install 命令）。
 pub type Loaded = (Py<PyModule>, i64, bool, bool);
@@ -24,8 +44,7 @@ pub type Loaded = (Py<PyModule>, i64, bool, bool);
 /// 加载插件入口，注入 config / core 环境。返回模块、优先级、配置内
 /// enabled 声明与是否可安装。
 pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
-    let source =
-        std::fs::read_to_string(path).map_err(|e| format!("读插件失败 {path:?}: {e}"))?;
+    let source = std::fs::read_to_string(path).map_err(|e| format!("读插件失败 {path:?}: {e}"))?;
     let config_path = path.parent().unwrap_or(Path::new(".")).join(CONFIG_FILE);
     // 没有配置文件 = 空配置，不算错误
     let config_yaml = match std::fs::read_to_string(&config_path) {
@@ -68,8 +87,7 @@ pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
 
         // 可安装 = 声明了 SCHEMA 且 config.yaml 缺失。宿主不自动生成模板，
         // 由控制台 install 命令显式安装（生成 config.yaml + .disabled 标记）
-        let installable =
-            module.getattr("SCHEMA").is_ok() && !dir.join(CONFIG_FILE).is_file();
+        let installable = module.getattr("SCHEMA").is_ok() && !dir.join(CONFIG_FILE).is_file();
 
         let priority = module
             .getattr("PRIORITY")

@@ -1,7 +1,11 @@
 //! business 的插件加载与责任链路由测试。
 //! 从 business.rs 内联迁出：R4 规则限 400 行，内联测试挤爆上限。
 
+use std::path::Path;
+use std::path::PathBuf;
+
 use super::*;
+use crate::pluginload::SIGNATURE;
 
 fn plugin_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loquat_biz_test_{tag}"));
@@ -57,11 +61,7 @@ fn ctx_fields_reach_plugin() {
 #[test]
 fn business_hot_reload() {
     let dir = plugin_dir("hot_reload");
-    write_plugin(
-        &dir,
-        "p",
-        "def handle(ctx):\n    return ['v1']\n",
-    );
+    write_plugin(&dir, "p", "def handle(ctx):\n    return ['v1']\n");
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     assert_eq!(business.handle(&ctx("k")).unwrap(), vec!["v1".to_string()]);
 
@@ -90,11 +90,17 @@ fn chain_routes_by_priority_and_survives_removal() {
     write_plugin(&dir, "mm_none", "def handle(ctx):\n    return []\n");
 
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["高优先级".to_string()]);
+    assert_eq!(
+        business.handle(&ctx("x")).unwrap(),
+        vec!["高优先级".to_string()]
+    );
 
     // 删掉高优先级插件后，同步应落到兜底
     std::fs::remove_dir_all(dir.join("aa_high")).unwrap();
-    assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["兜底".to_string()]);
+    assert_eq!(
+        business.handle(&ctx("x")).unwrap(),
+        vec!["兜底".to_string()]
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -127,7 +133,10 @@ fn config_yaml_is_injected_and_gates_enabled() {
     )
     .unwrap();
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["你好呀".to_string()]);
+    assert_eq!(
+        business.handle(&ctx("x")).unwrap(),
+        vec!["你好呀".to_string()]
+    );
 
     // enabled: false —— 路由链跳过
     std::fs::write(
@@ -188,7 +197,11 @@ fn install_generates_config_and_gates_loading() {
     let dir = plugin_dir("template");
     // 把真实的 _lib/config.py、log.py 拷进临时 extensions 目录（cargo test 工作目录 = 包根）
     std::fs::create_dir_all(dir.join("_lib")).unwrap();
-    std::fs::copy("extensions/_lib/config.py", dir.join("_lib").join("config.py")).unwrap();
+    std::fs::copy(
+        "extensions/_lib/config.py",
+        dir.join("_lib").join("config.py"),
+    )
+    .unwrap();
     std::fs::copy("extensions/_lib/log.py", dir.join("_lib").join("log.py")).unwrap();
     write_plugin(
         &dir,
@@ -211,12 +224,18 @@ fn install_generates_config_and_gates_loading() {
     let docs = yaml_rust2::YamlLoader::load_from_str(&text).unwrap();
     assert_eq!(docs[0]["greeting"].as_str(), Some("你好呀"));
     assert_eq!(docs[0]["enabled"].as_bool(), Some(true));
-    assert!(dir.join("cfgtest").join(".disabled").is_file(), "安装后应保持未启用");
+    assert!(
+        dir.join("cfgtest").join(".disabled").is_file(),
+        "安装后应保持未启用"
+    );
 
     // 未启用：路由不到；enable 后生效
     assert!(business.handle(&ctx("x")).unwrap().is_empty());
     assert!(business.set_enabled("cfgtest", true));
-    assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["你好呀".to_string()]);
+    assert_eq!(
+        business.handle(&ctx("x")).unwrap(),
+        vec!["你好呀".to_string()]
+    );
 
     // 重复安装报错
     assert!(business.install("cfgtest").is_err());
@@ -224,9 +243,65 @@ fn install_generates_config_and_gates_loading() {
 }
 
 #[test]
+fn config_yaml_change_reloads_and_takes_effect() {
+    let dir = plugin_dir("cfg_reload");
+    write_plugin(
+        &dir,
+        "p",
+        concat!(
+            "import loquat_cfglib\n",
+            "\n",
+            "SCHEMA = [{'key': 'rules', 'type': 'dict', 'default': {}}]\n",
+            "\n",
+            "def handle(ctx):\n",
+            "    t = (ctx.get('text') or '').strip()\n",
+            "    rules = loquat_cfglib.resolve(SCHEMA, config)['rules']\n",
+            "    return [rules[t]] if t in rules else []\n",
+        ),
+    );
+    // 插件依赖 loquat_cfglib：测试目录也要带 _lib，否则 lib_mtime 为 0
+    // 会被当作"无变更"跳过共享库加载
+    for f in ["log.py", "config.py"] {
+        write_file(
+            &dir.join("_lib"),
+            f,
+            &std::fs::read_to_string(Path::new("extensions/_lib").join(f)).unwrap(),
+        );
+    }
+    write_file(
+        &dir.join("p"),
+        CONFIG_FILE,
+        "enabled: true\nrules:\n  ping: pong\n",
+    );
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    assert_eq!(
+        business.handle(&ctx("ping")).unwrap(),
+        vec!["pong".to_string()]
+    );
+
+    // 改 config.yaml：下一条消息处理前惰性重载，新配置立即生效
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    write_file(
+        &dir.join("p"),
+        CONFIG_FILE,
+        "enabled: true\nrules:\n  ping: pong2\n",
+    );
+    assert_eq!(
+        business.handle(&ctx("ping")).unwrap(),
+        vec!["pong2".to_string()]
+    );
+    assert_eq!(business.reloads.load(Ordering::Relaxed), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn unsigned_dirs_are_ignored() {
     let dir = plugin_dir("unsigned");
-    write_file(&dir.join("p"), ENTRY_FILE, "def handle(ctx):\n    return ['ok']\n");
+    write_file(
+        &dir.join("p"),
+        ENTRY_FILE,
+        "def handle(ctx):\n    return ['ok']\n",
+    );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     assert!(business.handle(&ctx("x")).unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&dir);

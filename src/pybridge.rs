@@ -4,19 +4,23 @@
 //! （YAML 文本）注入为模块全局、屏蔽 CPython 对 Ctrl+C 的反应
 //! （SIGINT 由 Rust 侧 ctrlc 处理器独占，见 src/main.rs）。
 
+use crate::log_error;
 use std::error::Error;
 use std::ffi::CString;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyDict, PyModule};
 use pyo3::Bound;
 use yaml_rust2::Yaml;
 
 use crate::ffi;
 
 static MODULE_SEQ: AtomicU64 = AtomicU64::new(0);
+static STATE_INIT: OnceLock<()> = OnceLock::new();
 
 // 能力桥：把 Go 核心的能力包成 Python 可调用对象，注入扩展模块。
 #[pyfunction]
@@ -31,6 +35,15 @@ fn system_status() -> PyResult<String> {
     }
 }
 
+/// 下发动作（发消息等），返回 NapCat 应答 JSON；失败抛异常由插件决定降级。
+/// 供插件声明发送类 agent 工具用（如主动发图）。
+#[pyfunction]
+fn send_action(action: String, params: String, timeout_ms: i64) -> PyResult<String> {
+    let dll = ffi::core_dll().ok_or_else(|| PyRuntimeError::new_err("核心未就绪"))?;
+    dll.send_action(&action, &params, timeout_ms as i32)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
 /// 把插件环境挂到模块上：config（来自插件目录的 config.yaml 文本）
 /// 与 core（Go 核心能力桥）。热重载后重新挂载。
 pub fn attach_plugin_env(module: &Bound<'_, PyModule>, config_yaml: &str) -> PyResult<()> {
@@ -39,7 +52,29 @@ pub fn attach_plugin_env(module: &Bound<'_, PyModule>, config_yaml: &str) -> PyR
 
     let bridge = PyModule::new(module.py(), "loquat_core_bridge")?;
     bridge.add_function(wrap_pyfunction!(system_status, &bridge)?)?;
+    bridge.add_function(wrap_pyfunction!(send_action, &bridge)?)?;
     module.setattr("core", bridge)
+}
+
+/// 会话状态锚点：向 sys.modules 注册 loquat_state 模块（含 sessions dict），
+/// 进程生命周期内永不重载。_lib 库热重载是整模块替换，模块属性存状态会丢，
+/// 会话状态锚在这里，库重载后从 sys.modules 取回（docs/agent.md §状态锚点）。
+/// 必须在首次加载 _lib 库之前调用（main 里 Business::load 之前）。
+pub fn ensure_state_module() {
+    STATE_INIT.get_or_init(|| {
+        Python::attach(|py| {
+            let result = (|| -> PyResult<()> {
+                let module = PyModule::new(py, "loquat_state")?;
+                module.setattr("sessions", PyDict::new(py))?;
+                let modules = py.import("sys")?.getattr("modules")?;
+                modules.set_item("loquat_state", &module)?;
+                Ok(())
+            })();
+            if let Err(e) = result {
+                log_error!("loquat_state 锚点注册失败（历史将随热重载丢失）: {e}");
+            }
+        });
+    });
 }
 
 /// 生成全局唯一的 Python 模块名：from_code 按名字复用 sys.modules 里的

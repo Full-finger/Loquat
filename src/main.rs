@@ -29,6 +29,14 @@ enum HostMsg {
     Command(String),
 }
 
+// worker 池：事件处理挪出主循环，慢回复（LLM 最长 60s）不再阻塞
+// 其他聊天与控制台命令（清单 26101801 #1）。
+// chat_id hash 定 worker：同一会话恒在同一线程串行（插件模块级状态免锁），
+// 跨会话并行。并行度来自 LLM/HTTP 等待（socket 等待自动放 GIL）。
+const WORKER_COUNT: usize = 4;
+// 每 worker 的有界队列：积压超限丢消息并记日志（与 Go 核心队列同语义）。
+const WORKER_QUEUE_CAP: usize = 64;
+
 // Go 核心的事件回调：只拷贝字节进通道就返回，别在回调里干重活。
 // 禁止 unwrap/expect——panic 跨 C 边界会直接炸宿主进程（见 R3 规则）。
 extern "C" fn on_event(data: *const c_char, len: i32) {
@@ -47,36 +55,115 @@ struct Incoming {
     text: String,
 }
 
+// 从事件 JSON 里取出 MVP 关心的字段。意外缺失走日志（清单 26101801 #2）——
+// OneBot 出新类型或字段变化时消息不再无声消失；meta/notice/request 与
+// 机器人自己的消息按约定静默忽略，不打日志。
 fn parse_incoming(payload: &[u8]) -> Option<Incoming> {
-    let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let raw = || brief(&String::from_utf8_lossy(payload), 200);
+    let v: serde_json::Value = match serde_json::from_slice(payload) {
+        Ok(v) => v,
+        Err(e) => {
+            log_error!("事件 JSON 解析失败，已丢弃: {e}; 原文: {}", raw());
+            return None;
+        }
+    };
     if v.get("post_type")?.as_str()? != "message" {
         return None;
     }
-    let message_type = v.get("message_type")?.as_str()?.to_string();
+    let message_type = match v.get("message_type").and_then(|s| s.as_str()) {
+        Some(m) => m.to_string(),
+        None => {
+            log_error!("事件缺 message_type，已丢弃; 原文: {}", raw());
+            return None;
+        }
+    };
     let self_id = v.get("self_id").and_then(|s| s.as_i64()).unwrap_or(0);
-    let user_id = match message_type.as_str() {
-        "private" => v.get("user_id")?.as_i64()?,
-        "group" => v
-            .get("sender")
-            .and_then(|s| s.get("user_id"))
-            .and_then(|u| u.as_i64())?,
-        _ => return None,
+    let (user_id, chat_id) = match message_type.as_str() {
+        "private" => match v.get("user_id").and_then(|u| u.as_i64()) {
+            Some(u) => (u, u),
+            None => {
+                log_error!("私聊事件缺 user_id，已丢弃; 原文: {}", raw());
+                return None;
+            }
+        },
+        "group" => {
+            let user = v
+                .get("sender")
+                .and_then(|s| s.get("user_id"))
+                .and_then(|u| u.as_i64());
+            let group = v.get("group_id").and_then(|g| g.as_i64());
+            match (user, group) {
+                (Some(u), Some(g)) => (u, g),
+                (None, _) => {
+                    log_error!("群事件缺 sender.user_id，已丢弃; 原文: {}", raw());
+                    return None;
+                }
+                (_, None) => {
+                    log_error!("群事件缺 group_id，已丢弃; 原文: {}", raw());
+                    return None;
+                }
+            }
+        }
+        other => {
+            log_error!("未知的 message_type={other:?}，已丢弃; 原文: {}", raw());
+            return None;
+        }
     };
     if user_id == self_id {
         return None; // 机器人自己的消息，丢弃防自问自答
     }
-    let chat_id = match message_type.as_str() {
-        "private" => user_id,
-        "group" => v.get("group_id")?.as_i64()?,
-        _ => return None,
+    let text = match v.get("raw_message").and_then(|t| t.as_str()) {
+        Some(t) => t.to_string(),
+        None => {
+            log_error!("事件缺 raw_message，已丢弃; 原文: {}", raw());
+            return None;
+        }
     };
     Some(Incoming {
         message_type,
         chat_id,
         user_id,
         self_id,
-        text: v.get("raw_message")?.as_str()?.to_string(),
+        text,
     })
+}
+
+// worker 内：跑责任链并直接发送（CoreDll 是 Send+Sync，Go 侧导出并发安全）。
+fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
+    let ctx = business::MsgCtx {
+        text: &incoming.text,
+        message_type: &incoming.message_type,
+        chat_id: incoming.chat_id,
+        user_id: incoming.user_id,
+        self_id: incoming.self_id,
+    };
+    let replies = match business.handle(&ctx) {
+        Ok(r) => r,
+        Err(e) => {
+            log_error!("业务处理出错: {e}");
+            return;
+        }
+    };
+
+    let action = match incoming.message_type.as_str() {
+        "private" => "send_private_msg",
+        "group" => "send_group_msg",
+        _ => return,
+    };
+    for reply in replies {
+        let params = if action == "send_private_msg" {
+            serde_json::json!({ "user_id": incoming.chat_id, "message": reply })
+        } else {
+            serde_json::json!({ "group_id": incoming.chat_id, "message": reply })
+        };
+        match dll.send_action(action, &params.to_string(), 15_000) {
+            Ok(resp) => {
+                REPLY_COUNT.fetch_add(1, Ordering::Relaxed);
+                log_info!("已回复: {} resp={resp}", brief(&reply, 60));
+            }
+            Err(e) => log_error!("发送失败: {e}"),
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -97,9 +184,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     dll.start("config/loquat.yaml", on_event)?;
     log_info!("核心已启动，等待事件（命令：help）");
 
-    let business = Business::load(EXTENSIONS_DIR)?;
+    pybridge::ensure_state_module();
+    let business = Arc::new(Business::load(EXTENSIONS_DIR)?);
     pybridge::suppress_sigint();
     log_info!("业务已加载: {}", business.info());
+
+    // worker 池：见顶部常量注释。catch_unwind 兜一条消息的 panic 只损失
+    // 一次迭代——线程死亡会让该 chat 后续消息静默失去去处。
+    let workers: Vec<mpsc::SyncSender<Incoming>> = (0..WORKER_COUNT)
+        .map(|_| {
+            let (tx, rx) = mpsc::sync_channel::<Incoming>(WORKER_QUEUE_CAP);
+            let worker_dll = Arc::clone(&dll);
+            let worker_business = Arc::clone(&business);
+            std::thread::spawn(move || {
+                for incoming in rx {
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        handle_message(incoming, &worker_dll, &worker_business);
+                    }));
+                }
+            });
+            tx
+        })
+        .collect();
 
     // Ctrl+C / 关闭窗口：先停核心（连带杀掉适配器子进程）再退出。
     // 必须在 CPython 初始化之后注册：SetConsoleCtrlHandler 按注册逆序调用，
@@ -131,38 +237,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 log_info!("消息: [{}] {}", incoming.message_type, incoming.text);
 
-                let ctx = business::MsgCtx {
-                    text: &incoming.text,
-                    message_type: &incoming.message_type,
-                    chat_id: incoming.chat_id,
-                    user_id: incoming.user_id,
-                    self_id: incoming.self_id,
-                };
-                let replies = match business.handle(&ctx) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        log_error!("业务处理出错: {e}");
-                        continue;
-                    }
-                };
-
-                let action = match incoming.message_type.as_str() {
-                    "private" => "send_private_msg",
-                    "group" => "send_group_msg",
-                    _ => continue,
-                };
-                for reply in replies {
-                    let params = if action == "send_private_msg" {
-                        serde_json::json!({ "user_id": incoming.chat_id, "message": reply })
-                    } else {
-                        serde_json::json!({ "group_id": incoming.chat_id, "message": reply })
-                    };
-                    match dll.send_action(action, &params.to_string(), 15_000) {
-                        Ok(resp) => {
-                            REPLY_COUNT.fetch_add(1, Ordering::Relaxed);
-                            log_info!("已回复: {} resp={resp}", brief(&reply, 60));
+                let idx = (incoming.chat_id as u64 % WORKER_COUNT as u64) as usize;
+                if let Err(e) = workers[idx].try_send(incoming) {
+                    match e {
+                        mpsc::TrySendError::Full(dropped) => {
+                            log_error!(
+                                "worker {idx} 队列已满，丢弃消息（chat_id={}）",
+                                dropped.chat_id
+                            );
                         }
-                        Err(e) => log_error!("发送失败: {e}"),
+                        mpsc::TrySendError::Disconnected(_) => {
+                            log_error!("worker {idx} 已停止，丢弃消息");
+                        }
                     }
                 }
             }
