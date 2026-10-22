@@ -66,18 +66,58 @@ def send_message(ctx, message_type: str, chat_id: int, text: str) -> str:
     return core.send_action(action, params, 15_000)  # noqa: F821
 
 
-TOOLS = [now, system_status, send_message]
+@loquat_agent.tool
+def recall(ctx, message_id: int) -> str:
+    """撤回一条消息。
+
+    message_id 传 send_message 返回结果里的 data.message_id。
+    机器人只能撤回自己发的消息（管理员身份可撤他人的，由 NapCat 判定）。
+    """
+    params = json.dumps({"message_id": message_id})
+    return core.send_action("delete_msg", params, 15_000)  # noqa: F821
+
+
+@loquat_agent.tool
+def poke(ctx, user_id: int = 0) -> str:
+    """戳一戳对方/群成员。
+
+    私聊戳对方；群聊戳指定成员，user_id 缺省为触发这条消息的人。
+    """
+    uid = user_id or ctx.get("user_id") or 0
+    if ctx.get("message_type") == "group":
+        params = json.dumps({"group_id": ctx.get("chat_id"), "user_id": uid})
+        return core.send_action("group_poke", params, 15_000)  # noqa: F821
+    params = json.dumps({"user_id": uid})
+    return core.send_action("friend_poke", params, 15_000)  # noqa: F821
+
+
+@loquat_agent.tool
+def react(ctx, emoji_id: str) -> str:
+    """给触发本轮回复的那条消息贴一个表情回应。
+
+    emoji_id 是 QQ 表情 ID 字符串（如 "4" 抱抱、"5" 点赞、"128" 爱心）。
+    """
+    mid = ctx.get("message_id") or 0
+    if not mid:
+        return "当前消息缺少 message_id，无法回应"
+    params = json.dumps({"message_id": mid, "emoji_id": str(emoji_id)})
+    return core.send_action("set_msg_emoji_like", params, 15_000)  # noqa: F821
+
+
+TOOLS = [now, system_status, send_message, recall, poke, react]
 
 
 def handle(ctx: dict) -> list[str]:
     cfg = loquat_cfglib.resolve(SCHEMA, config)  # noqa: F821
-    raw = ctx.get("text") or ""
-    is_at = f"[CQ:at,qq={ctx.get('self_id')}]" in raw
     text = loquat_agent.clean_text(ctx)
     if not text:
         return []
 
-    if ctx.get("message_type") == "group" and not (is_at or _hit_trigger(cfg, text)):
+    # is_at_bot 由宿主解析 message 段得出（校验 qq == self_id，
+    # 兼容 CQ 码与数组格式）
+    if ctx.get("message_type") == "group" and not (
+        ctx.get("is_at_bot") or _hit_trigger(cfg, text)
+    ):
         loquat_agent.observe(ctx, text)  # 未触发的群消息也记历史，给模型当上下文
         return []
 

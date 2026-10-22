@@ -32,6 +32,8 @@ fn ctx(text: &'static str) -> MsgCtx {
         chat_id: 1,
         user_id: 1,
         self_id: 100,
+        message_id: 0,
+        is_at_bot: false,
     }
 }
 
@@ -41,7 +43,7 @@ fn ctx_fields_reach_plugin() {
     write_plugin(
         &dir,
         "p",
-        "def handle(ctx):\n    return ['|'.join(str(ctx[k]) for k in ('text', 'message_type', 'chat_id', 'user_id', 'self_id'))]\n",
+        "def handle(ctx):\n    return ['|'.join(str(ctx[k]) for k in ('text', 'message_type', 'chat_id', 'user_id', 'self_id', 'message_id'))]\n",
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let c = MsgCtx {
@@ -50,10 +52,12 @@ fn ctx_fields_reach_plugin() {
         chat_id: 42,
         user_id: 7,
         self_id: 100,
+        message_id: 12345,
+        is_at_bot: true,
     };
     assert_eq!(
         business.handle(&c).unwrap(),
-        vec!["hi|group|42|7|100".to_string()]
+        vec!["hi|group|42|7|100|12345".to_string()]
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -32,6 +32,8 @@ fn ctx_in(chat_id: i64, text: &'static str) -> MsgCtx<'static> {
         chat_id,
         user_id: 1,
         self_id: 100,
+        message_id: 0,
+        is_at_bot: false,
     }
 }
 
@@ -41,6 +43,7 @@ mod chat_ids {
     pub const TOOLS: i64 = 102;
     pub const UNKNOWN: i64 = 103;
     pub const MAX_TURNS: i64 = 104;
+    pub const PERSIST: i64 = 105;
 }
 
 // 布置临时插件目录：拷真 _lib（log/config/agent）+ 测试插件。
@@ -60,6 +63,7 @@ fn agent_test_dir(tag: &str) -> PathBuf {
 fn agent_history_survives_plugin_reload() {
     crate::pybridge::ensure_state_module();
     let dir = agent_test_dir("agent_reload");
+    crate::pybridge::set_persist_dir(&dir.join("sess").to_string_lossy());
     let code = concat!(
         "import loquat_agent\n",
         "\n",
@@ -95,6 +99,7 @@ fn agent_history_survives_plugin_reload() {
 fn agent_strips_cq_and_prefixes_group_sender() {
     crate::pybridge::ensure_state_module();
     let dir = agent_test_dir("agent_group");
+    crate::pybridge::set_persist_dir(&dir.join("sess").to_string_lossy());
     // spy 插件：捕获 fake_chat 实际收到的 history，验证 CQ 码剥离
     // 与群聊发言人前缀
     write_plugin(
@@ -128,6 +133,8 @@ fn agent_strips_cq_and_prefixes_group_sender() {
         chat_id: 9,
         user_id: 7,
         self_id: 100,
+        message_id: 0,
+        is_at_bot: true,
     };
     assert_eq!(
         business.handle(&group_ctx).unwrap(),
@@ -140,6 +147,7 @@ fn agent_strips_cq_and_prefixes_group_sender() {
 fn agent_tool_loop_executes_and_passes_schema() {
     crate::pybridge::ensure_state_module();
     let dir = agent_test_dir("agent_tools");
+    crate::pybridge::set_persist_dir(&dir.join("sess").to_string_lossy());
     write_plugin(
         &dir,
         "p",
@@ -186,6 +194,7 @@ fn agent_tool_loop_executes_and_passes_schema() {
 fn agent_unknown_tool_error_feeds_back_to_model() {
     crate::pybridge::ensure_state_module();
     let dir = agent_test_dir("agent_unknown_tool");
+    crate::pybridge::set_persist_dir(&dir.join("sess").to_string_lossy());
     write_plugin(
         &dir,
         "p",
@@ -221,6 +230,7 @@ fn agent_unknown_tool_error_feeds_back_to_model() {
 fn agent_tool_loop_caps_at_max_turns() {
     crate::pybridge::ensure_state_module();
     let dir = agent_test_dir("agent_max_turns");
+    crate::pybridge::set_persist_dir(&dir.join("sess").to_string_lossy());
     write_plugin(
         &dir,
         "p",
@@ -250,4 +260,66 @@ fn agent_tool_loop_caps_at_max_turns() {
         vec!["EMPTY".to_string()]
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn agent_sessions_persist_to_disk_and_reload() {
+    crate::pybridge::ensure_state_module();
+    let dir = agent_test_dir("agent_persist");
+    let sess_dir = dir.join("sess");
+    crate::pybridge::set_persist_dir(&sess_dir.to_string_lossy());
+    write_plugin(
+        &dir,
+        "p",
+        concat!(
+            "import sys\n",
+            "import loquat_agent\n",
+            "\n",
+            "class FakeResp:\n",
+            "    def __init__(self, text):\n",
+            "        self.text = text\n",
+            "        self.tool_calls = []\n",
+            "\n",
+            "def fake_chat(cfg, history, tools):\n",
+            "    return FakeResp('R' + str(len(history)))\n",
+            "\n",
+            "def handle(ctx):\n",
+            "    text = loquat_agent.clean_text(ctx)\n",
+            "    if text == 'WIPE':\n",
+            "        # 模拟重启：内存历史清空，只剩磁盘上的\n",
+            "        sys.modules['loquat_state'].sessions.clear()\n",
+            "        return ['wiped']\n",
+            "    reply = loquat_agent.respond(ctx, text=text, cfg={}, chat_fn=fake_chat)\n",
+            "    return reply or []\n",
+        ),
+    );
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    let c = |t| ctx_in(chat_ids::PERSIST, t);
+
+    // 第一轮：历史进内存，同时落盘
+    assert_eq!(business.handle(&c("m1")).unwrap(), vec!["R1".to_string()]);
+    let file = sess_dir.join(format!("private_{}.json", chat_ids::PERSIST));
+    assert!(file.exists(), "落盘文件应存在");
+    let raw = std::fs::read_to_string(&file).unwrap();
+    assert!(raw.contains("\"version\": 1"));
+    assert!(raw.contains("m1"), "落盘内容应含用户消息，实际: {raw}");
+
+    // 模拟重启：内存清空，磁盘保留；回填后历史回来
+    assert_eq!(business.handle(&c("WIPE")).unwrap(), vec!["wiped".to_string()]);
+    let (loaded, skipped) = crate::pybridge::load_sessions();
+    assert_eq!((loaded, skipped), (1, 0));
+    // 回填后的历史 [u:m1, a:R1]，再发 m2 → 3 条 → fake_chat 返回 R3
+    assert_eq!(business.handle(&c("m2")).unwrap(), vec!["R3".to_string()]);
+
+    // 损坏文件跳过：写一个坏的进去，重建后只恢复好的
+    std::fs::write(sess_dir.join("group_999.json"), "not json").unwrap();
+    sys_sessions_clear();
+    let (loaded, skipped) = crate::pybridge::load_sessions();
+    assert_eq!((loaded, skipped), (1, 1), "坏文件应计数跳过");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// 测试辅助：清空锚点 sessions（模拟重启后空内存）。
+fn sys_sessions_clear() {
+    crate::pybridge::for_test_clear_sessions();
 }

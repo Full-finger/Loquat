@@ -66,6 +66,11 @@ pub fn ensure_state_module() {
             let result = (|| -> PyResult<()> {
                 let module = PyModule::new(py, "loquat_state")?;
                 module.setattr("sessions", PyDict::new(py))?;
+                // agent 引擎计数（responds/turns）：统计口径，GIL 下并发 += 允许小误差
+                module.setattr("stats", PyDict::new(py))?;
+                // 会话历史落盘目录（相对 cwd，与 config/bin 同约定）；
+                // 可改指临时目录，测试用
+                module.setattr("persist_dir", "data/sessions")?;
                 let modules = py.import("sys")?.getattr("modules")?;
                 modules.set_item("loquat_state", &module)?;
                 Ok(())
@@ -75,6 +80,142 @@ pub fn ensure_state_module() {
             }
         });
     });
+}
+
+// 会话历史回填：遍历 persist_dir 下的 *.json 填充锚点 sessions。
+// 文件格式 {"version": 1, "messages": [...]}，文件名 <message_type>_<chat_id>.json。
+// 损坏/版本不符的文件跳过计数，不拖垮启动（清单 26102201 #2）。
+// 标准库实现，此阶段 loquat_log 尚未注册，单个文件的错误原因走 stderr。
+const LOAD_SESSIONS_SRC: &str = r#"
+import json, os, sys
+result = {"loaded": 0, "skipped": 0}
+loquat_state = sys.modules.get("loquat_state")
+if loquat_state is not None:
+    sess_dir = getattr(loquat_state, "persist_dir", "data/sessions")
+    if os.path.isdir(sess_dir):
+        for name in sorted(os.listdir(sess_dir)):
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(sess_dir, name), encoding="utf-8") as f:
+                    data = json.load(f)
+                if data.get("version") != 1:
+                    raise ValueError(f"未知版本 {data.get('version')!r}")
+                stem = name[:-5]
+                message_type, sep, chat_id = stem.rpartition("_")
+                if not sep or message_type not in ("private", "group"):
+                    raise ValueError(f"文件名不是 <message_type>_<chat_id> 形式: {stem!r}")
+                messages = data.get("messages")
+                if not isinstance(messages, list):
+                    raise ValueError("messages 不是列表")
+                loquat_state.sessions[(message_type, int(chat_id))] = messages
+                result["loaded"] += 1
+            except Exception as e:
+                print(f"[loquat] 会话文件 {name} 跳过: {e}", file=sys.stderr)
+                result["skipped"] += 1
+"#;
+
+/// 启动时回填会话历史，返回 (恢复数, 跳过数)。必须在 ensure_state_module 之后。
+pub fn load_sessions() -> (usize, usize) {
+    Python::attach(|py| {
+        let run = || -> PyResult<(usize, usize)> {
+            let module = PyModule::from_code(
+                py,
+                &CString::new(LOAD_SESSIONS_SRC)?,
+                &CString::new("loquat_load_sessions.py")?,
+                &CString::new("loquat_load_sessions")?,
+            )?;
+            let result = module.getattr("result")?;
+            let loaded = result.get_item("loaded")?.extract::<usize>()?;
+            let skipped = result.get_item("skipped")?.extract::<usize>()?;
+            Ok((loaded, skipped))
+        };
+        match run() {
+            Ok(n) => n,
+            Err(e) => {
+                log_error!("会话历史回填失败（从空历史继续）: {e}");
+                (0, 0)
+            }
+        }
+    })
+}
+
+/// 改锚点的 persist_dir（落盘/回填共用）。测试用：指到临时目录，
+/// 避免测试落盘污染真实 data/。
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn set_persist_dir(path: &str) {
+    Python::attach(|py| {
+        let set = || -> PyResult<()> {
+            use pyo3::types::PyDict;
+            let modules = py.import("sys")?.getattr("modules")?;
+            let modules: &Bound<PyDict> = modules.downcast()?;
+            if let Some(state) = modules.get_item("loquat_state")? {
+                state.setattr("persist_dir", path)?;
+            }
+            Ok(())
+        };
+        if let Err(e) = set() {
+            log_error!("persist_dir 设置失败: {e}");
+        }
+    });
+}
+
+/// 清空锚点 sessions（模拟重启后空内存）。仅测试用。
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn for_test_clear_sessions() {
+    Python::attach(|py| {
+        let clear = || -> PyResult<()> {
+            use pyo3::types::PyDict;
+            let modules = py.import("sys")?.getattr("modules")?;
+            let modules: &Bound<PyDict> = modules.downcast()?;
+            if let Some(state) = modules.get_item("loquat_state")? {
+                state.getattr("sessions")?.call_method0("clear")?;
+            }
+            Ok(())
+        };
+        if let Err(e) = clear() {
+            log_error!("sessions 清空失败: {e}");
+        }
+    });
+}
+
+/// agent 引擎侧统计（loquat_state 锚点）：有历史会话数、respond 次数、LLM 轮次。
+/// agents 控制台命令读。引擎未初始化（锚点注册失败）返回 None。
+/// 主循环调：GIL 可能被 worker 短暂持有（LLM HTTP 等待已放），最坏等一小段。
+pub struct AgentEngineStats {
+    pub sessions: usize,
+    pub responds: u64,
+    pub turns: u64,
+}
+
+pub fn agent_engine_stats() -> Option<AgentEngineStats> {
+    Python::attach(|py| {
+        let read = || -> PyResult<AgentEngineStats> {
+            use pyo3::types::PyDict;
+            let modules = py.import("sys")?.getattr("modules")?;
+            let modules: &Bound<PyDict> = modules.downcast()?;
+            let state = modules
+                .get_item("loquat_state")?
+                .ok_or_else(|| PyRuntimeError::new_err("loquat_state 未注册"))?;
+            let sessions = state.getattr("sessions")?.len()?;
+            let stats = state.getattr("stats")?;
+            let stats: &Bound<PyDict> = stats.downcast()?;
+            let get = |key: &str| -> u64 {
+                stats
+                    .get_item(key)
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.extract::<u64>().ok())
+                    .unwrap_or(0)
+            };
+            Ok(AgentEngineStats {
+                sessions,
+                responds: get("responds"),
+                turns: get("turns"),
+            })
+        };
+        read().ok()
+    })
 }
 
 /// 生成全局唯一的 Python 模块名：from_code 按名字复用 sys.modules 里的

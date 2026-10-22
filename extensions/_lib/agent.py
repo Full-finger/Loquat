@@ -6,6 +6,7 @@
 
 import inspect
 import json
+import os
 import re
 import sys
 
@@ -19,9 +20,12 @@ if _state is None:
     loquat_log.warn("agent", "loquat_state 锚点缺失，历史退化为进程内（热重载即丢）")
     import types
 
-    _state = types.SimpleNamespace(sessions={})
+    _state = types.SimpleNamespace(sessions={}, stats={}, persist_dir="data/sessions")
 
 sessions: dict = _state.sessions  # {(message_type, chat_id): [OpenAI 消息, ...]}
+# 引擎计数（responds / turns）：agents 控制台命令读。统计口径：
+# 跨 worker 并发 += 在 GIL 下可能丢增量，非记账，允许误差。
+stats: dict = _state.stats
 
 _CQ_RE = re.compile(r"\[CQ:[^\]]*\]")
 
@@ -85,7 +89,9 @@ def observe(ctx: dict, text: str) -> None:
     """记一条用户消息进会话历史，不产生回复（群聊未触发场景）。"""
     content = _llm_text(ctx, text)
     if content:
-        _append(_key(ctx), {"role": "user", "content": content})
+        key = _key(ctx)
+        _append(key, {"role": "user", "content": content})
+        _persist(key)
 
 
 def respond(
@@ -107,6 +113,7 @@ def respond(
     content = _llm_text(ctx, text)
     if not content:
         return []
+    stats["responds"] = stats.get("responds", 0) + 1
     history = _append(_key(ctx), {"role": "user", "content": content})
     start = len(history) - 1  # 本轮起点：失败时回滚到这里
 
@@ -114,6 +121,7 @@ def respond(
     schema = [t.schema() for t in tools]
     reply = None
     for _ in range(max_turns):
+        stats["turns"] = stats.get("turns", 0) + 1
         resp = chat_fn(cfg, history, schema or None)
         if resp is None:
             del history[start:]  # LLM 失败：本轮新增全部不留底
@@ -123,6 +131,7 @@ def respond(
             if reply:
                 history.append({"role": "assistant", "content": reply})
                 _trim(cfg, _key(ctx))
+                _persist(_key(ctx))
             break
         # 带 tool_calls 的 assistant 原样回填，逐个执行、结果作为 tool 消息。
         # 工具轮中途不 trim：裁剪可能拆散 tool 与其配对 assistant
@@ -139,6 +148,26 @@ def respond(
 
 def _key(ctx: dict) -> tuple:
     return (ctx.get("message_type"), ctx.get("chat_id"))
+
+
+# 会话历史落盘（原子写）：每次历史变化后调用，失败只告警不断链。
+# 聊天频率低，单会话 JSON 毫秒级，不值得引入定时器。
+# 目录每次从锚点读：宿主（及测试）可在运行时改 persist_dir。
+def _persist(key: tuple) -> None:
+    try:
+        sess_dir = getattr(_state, "persist_dir", "data/sessions")
+        os.makedirs(sess_dir, exist_ok=True)
+        path = os.path.join(sess_dir, f"{key[0]}_{key[1]}.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(
+                {"version": 1, "messages": sessions.get(key, [])},
+                f,
+                ensure_ascii=False,
+            )
+        os.replace(tmp, path)
+    except OSError as e:
+        loquat_log.warn("agent", f"会话历史落盘失败 {key}: {e}")
 
 
 # 群聊历史带发言人前缀，私聊原样：给模型区分同一群里不同发言人。

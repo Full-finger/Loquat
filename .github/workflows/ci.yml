@@ -1,0 +1,43 @@
+# 三语言质量门：与本地 just ci 同源（lint = go vet/fmt + clippy + ruff +
+# 架构规则 + 清单一致性；test = go test + cargo test）。
+#
+# 跑在 windows-latest：当前开发平台，构建链路（Go c-shared dll、ctrlc、
+# pyo3）都以它为准；跨平台硬编码清掉前（26101801#3）Linux 必挂，不开。
+#
+# 集成测试 reload_plugin_respawns_adapter 依赖 bin/ 产物与本机 NapCat
+# 配置，CI 上无这些文件时会自行跳过（26102202#11 的 skip 语义），
+# 不需要单独排除；全套验证走本地 just test。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: extractions/setup-just@v3
+
+      - name: Install ruff
+        run: pip install ruff
+        shell: bash
+
+      - name: Lint（三语言 + 架构规则 + 清单一致性）
+        run: just lint
+        shell: bash
+
+      - name: Go test
+        run: go test ./...
+        shell: bash
+
+      - name: Rust test
+        run: cargo test
+        shell: bash
