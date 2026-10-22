@@ -74,6 +74,11 @@ arch:
 checklist mode="digest":
     @python scripts/checklist.py {{mode}}
 
+# 再生成 proto 存根（internal/pluginapi）；跑完 git diff 应无变化
+# 依赖：protoc、protoc-gen-go、protoc-gen-go-grpc（见脚本头注释）
+gen-proto:
+    @{{bash}} scripts/gen-proto.sh
+
 # 格式化（gofmt + cargo fmt）
 fmt:
     @{{bash}} scripts/fmt.sh

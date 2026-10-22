@@ -2,7 +2,11 @@
 
 // Go 核心的 c-shared 形态：导出 C ABI 给 Rust 宿主。
 // 约定：Start 传配置路径和事件回调；事件以 JSON 字节经回调上行；
-// 动作经 SendAction 同步下行，返回 malloc 的 JSON 字符串，调用方须 LoquatFree。
+// 动作经 SendAction 同步下行。
+// 内存归属（嵌入方必读）：LoquatSendAction / LoquatStatus /
+// LoquatSystemStatus 三个导出都返回 malloc 分配的 C 字符串，
+// 调用方用完必须逐个调 LoquatFree 归还；LoquatLogPipe 返回的读端 fd
+// 由宿主持有（进程级一次），无需归还。
 package main
 
 /*
@@ -20,6 +24,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -33,19 +38,24 @@ var started atomic.Bool
 
 // 日志管道：核心的 hclog 写入写端，读端句柄交给宿主泵出。
 // 三边日志收敛到宿主的 stderr 锁下单一写者，避免并发绞行。
+// sync.Once 保证并发调用只建一根管道（26102202#6）。
 var (
+	logPipeOnce  sync.Once
 	logPipeRead  *os.File
 	logPipeWrite *os.File
 )
 
 //export LoquatLogPipe
 func LoquatLogPipe() C.uintptr_t {
-	if logPipeRead == nil {
+	logPipeOnce.Do(func() {
 		pr, pw, err := os.Pipe()
 		if err != nil {
-			return 0
+			return
 		}
 		logPipeRead, logPipeWrite = pr, pw
+	})
+	if logPipeRead == nil {
+		return 0
 	}
 	return C.uintptr_t(logPipeRead.Fd())
 }

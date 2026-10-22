@@ -19,9 +19,11 @@ fail() {
 	violations=$((violations + 1))
 }
 
-# R1: 适配器禁止写 stdout（fmt.Fprint* 到 stderr 允许）
-if grep -rnE 'fmt\.(Print|Printf|Println)\(' "$ROOT_DIR/cmd/adapter-napcat" --include="*.go"; then
-	fail "R1: adapter-napcat 禁止 fmt.Print*/Println（stdout 是 go-plugin 握手通道，日志用 hclog）"
+# R1: 适配器禁止写 stdout（fmt.Fprint* 到 stderr 允许）。
+# 三个口径都查：fmt.Print 三兄弟、fmt.Fprintf(os.Stdout、内置 println——
+# 内置函数不经过 fmt 包，grep fmt 拦不住它（26102202#7）
+if grep -rnE 'fmt\.(Print|Printf|Println)\(|fmt\.Fprintf\(os\.Stdout|^[[:space:]]*println\(' "$ROOT_DIR/cmd/adapter-napcat" --include="*.go"; then
+	fail "R1: adapter-napcat 禁止写 stdout（stdout 是 go-plugin 握手通道，日志用 hclog）"
 fi
 
 # R2: internal 禁止 os.Exit
@@ -29,10 +31,13 @@ if grep -rn "os\.Exit" "$ROOT_DIR/internal" --include="*.go"; then
 	fail "R2: internal/ 禁止 os.Exit（错误向上返回，退出只发生在 cmd 的 main）"
 fi
 
-# R3: FFI 回调禁止 unwrap/expect
-if sed -n '/extern "C" fn on_event/,/^}/p' "$ROOT_DIR/src/main.rs" | grep -q "unwrap\|expect"; then
-	fail "R3: on_event 回调禁止 unwrap/expect（panic 跨 C 边界会炸宿主进程）"
-fi
+# R3: FFI 回调禁止 unwrap/expect。
+# 锚 extern "C" fn 块本身而非函数名：回调搬去 ffi.rs 等文件也不失明（26102202#7）
+for f in "$ROOT_DIR"/src/*.rs; do
+	if sed -n '/extern "C" fn/,/^}/p' "$f" | grep -q "unwrap\|expect"; then
+		fail "R3: $f 的 extern \"C\" fn 内禁止 unwrap/expect（panic 跨 C 边界会炸宿主进程）"
+	fi
+done
 
 # R4: 文件行数上限
 while IFS= read -r f; do
@@ -40,7 +45,7 @@ while IFS= read -r f; do
 	if [ "$lines" -gt 400 ]; then
 		fail "R4: $f 共 ${lines} 行，超过 400 行上限，请拆分"
 	fi
-done < <(find "$ROOT_DIR/cmd" "$ROOT_DIR/internal" "$ROOT_DIR/src" \( -name "*.go" -o -name "*.rs" \) ! -name "*_test.go")
+done < <(find "$ROOT_DIR/cmd" "$ROOT_DIR/internal" "$ROOT_DIR/src" \( -name "*.go" -o -name "*.rs" \) ! -name "*_test.go" ! -name "*.pb.go")
 
 if [ "$violations" -gt 0 ]; then
 	echo -e "${RED}共 ${violations} 条规则违规，见上${RESET}"

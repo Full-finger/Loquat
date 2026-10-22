@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"os/signal"
@@ -41,6 +42,11 @@ func main() {
 		selfTestReply(payload, logger)
 	}, logger)
 	if err != nil {
+		if errors.Is(err, core.ErrFirstRun) {
+			// 首运引导非故障：模板已生成，等用户填 token，不定 Error 级（26102202#10）
+			logger.Info(err.Error())
+			os.Exit(1)
+		}
 		logger.Error("核心启动失败", "err", err)
 		os.Exit(1)
 	}
