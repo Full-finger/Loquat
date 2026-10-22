@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -60,10 +61,20 @@ type Core struct {
 	onEvent func(payload []byte)
 	ctx     context.Context
 	cancel  context.CancelFunc
+	// 串行化 spawn 的换装与 killRuntime：关掉「Stop 杀完旧的，
+	// 飞行中的 spawn 又 Store 新的」的孤儿窗口（26102202#2）
+	runtimeMu sync.Mutex
+	// run/consume 收口用：Stop 等它们退出后再返回
+	wg sync.WaitGroup
+	// 队列满丢弃的事件数：Status 的 events_dropped 口径（26102202#9）
+	eventsDropped atomic.Int64
 }
 
 // killRuntime 杀掉当前插件客户端，未 spawn 成功过则无事发生。可重复调用。
+// 与 spawn 的换装持同一把锁：杀的时候不会有新实例插入到身后。
 func (c *Core) killRuntime() {
+	c.runtimeMu.Lock()
+	defer c.runtimeMu.Unlock()
 	if rt := c.runtime.Load(); rt != nil {
 		rt.client.Kill()
 	}
@@ -116,8 +127,9 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	active = c
 	mu.Unlock()
 
-	go c.consume()
-	go c.run()
+	c.wg.Add(2)
+	go func() { defer c.wg.Done(); c.consume() }()
+	go func() { defer c.wg.Done(); c.run() }()
 	c.logger.Info("核心已启动", "napcat", cfg.Napcat.URL, "adapter", cfg.Plugins.Napcat.Path)
 	return nil
 }
@@ -159,8 +171,28 @@ func (c *Core) spawn() error {
 	if cmd.Process != nil {
 		pid = cmd.Process.Pid
 	}
+	// 入册前在锁内复查 ctx：Stop 可能已经跑完 killRuntime，此刻换装
+	// 出的新实例会成孤儿（无人认领、带着 WS 重连循环一直活）。
+	// 已取消则自己收拾自己。
+	c.runtimeMu.Lock()
+	if err := c.ctx.Err(); err != nil {
+		c.runtimeMu.Unlock()
+		client.Kill()
+		return fmt.Errorf("核心已停止，放弃入册新插件实例: %w", err)
+	}
 	c.runtime.Store(&pluginRuntime{client: client, adapter: adapter, pid: pid})
+	c.runtimeMu.Unlock()
 	return nil
+}
+
+// guard 捕获单次 panic 并记日志，让循环继续。onEvent 是宿主注入的
+// 不可信回调，panic 跨 C 边界 = 宿主进程 abort（Rust 侧 worker 已有
+// catch_unwind，Go 侧不能裸奔，26102202#4）。
+func guard(logger hclog.Logger, what string) {
+	if r := recover(); r != nil {
+		logger.Error("panic 已捕获，继续执行", "where", what, "panic", r,
+			"stack", string(debug.Stack()))
+	}
 }
 
 // run 维护事件流：断流就退避重启插件子进程，直到 ctx 取消。
@@ -168,7 +200,10 @@ func (c *Core) spawn() error {
 func (c *Core) run() {
 	backoff := firstBackoff
 	for c.ctx.Err() == nil {
-		err := c.pump()
+		err := func() (err error) {
+			defer guard(c.logger, "pump")
+			return c.pump()
+		}()
 		if c.ctx.Err() != nil {
 			return
 		}
@@ -203,7 +238,10 @@ func (c *Core) pump() error {
 		return err
 	}
 	for {
-		ev, err := stream.Recv()
+		ev, err := func() (ev *pluginapi.Event, err error) {
+			defer guard(c.logger, "stream.Recv")
+			return stream.Recv()
+		}()
 		if err != nil {
 			if c.ctx.Err() != nil {
 				return nil
@@ -213,7 +251,8 @@ func (c *Core) pump() error {
 		select {
 		case c.events <- ev:
 		default:
-			c.logger.Warn("队列已满，丢弃一条事件")
+			n := c.eventsDropped.Add(1)
+			c.logger.Warn("队列已满，丢弃一条事件", "dropped_total", n)
 		}
 	}
 }
@@ -225,7 +264,10 @@ func (c *Core) consume() {
 		case <-c.ctx.Done():
 			return
 		case ev := <-c.events:
-			c.onEvent(ev.GetPayload())
+			func() {
+				defer guard(c.logger, "onEvent")
+				c.onEvent(ev.GetPayload())
+			}()
 		}
 	}
 }
@@ -253,7 +295,12 @@ func SendAction(action string, params []byte, timeout time.Duration) (*pluginapi
 	})
 }
 
+// stopWaitTimeout：Stop 等待 run/consume 收口的上限，防个别阻塞点卡死退出路径。
+const stopWaitTimeout = 5 * time.Second
+
 // Stop 停止核心并杀掉插件子进程。重复调用安全。
+// 顺序：cancel → 杀当前插件实例 → 等 run/consume 收口。飞行中的 spawn
+// 会在锁内看到 ctx 已取消并自己回收，不会留下孤儿子进程（26102202#2）。
 func Stop() {
 	mu.Lock()
 	c := active
@@ -264,6 +311,16 @@ func Stop() {
 	}
 	c.cancel()
 	c.killRuntime()
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(stopWaitTimeout):
+		c.logger.Warn("停止等待超时，后台协程未在限期内收口", "timeout", stopWaitTimeout.String())
+	}
 	c.logger.Info("核心已停止")
 }
 
@@ -286,18 +343,31 @@ func Status() string {
 	mu.Unlock()
 	started := c != nil
 	alive := false
+	adapterPID := 0
+	dropped := int64(0)
 	if started {
 		if rt := c.runtime.Load(); rt != nil {
 			alive = !rt.client.Exited()
+			adapterPID = rt.pid
 		}
+		dropped = c.eventsDropped.Load()
 	}
-	b, err := json.Marshal(map[string]any{"started": started, "adapter_alive": alive})
+	b, err := json.Marshal(map[string]any{
+		"started": started, "adapter_alive": alive,
+		"adapter_pid": adapterPID, "events_dropped": dropped,
+	})
 	if err != nil {
 		return "{}"
 	}
 	return string(b)
 }
 
+// ErrFirstRun 标记首运引导：模板已生成，等用户填 token 重启。
+// 非故障，调用方（exe 自测入口）按 Info 级提示而非 Error（26102202#10）。
+var ErrFirstRun = errors.New("first-run bootstrap")
+
+// loadConfig 读取并校验配置；文件不存在时从模板生成一份并返回
+// ErrFirstRun 标记的引导错误。
 func loadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -305,7 +375,7 @@ func loadConfig(path string) (*Config, error) {
 		if genErr := generateFromExample(path); genErr != nil {
 			return nil, fmt.Errorf("读取配置 %s: %w（且 %v）", path, err, genErr)
 		}
-		return nil, fmt.Errorf("已从模板生成 %s，请填入真实 token 后重启", path)
+		return nil, fmt.Errorf("已从模板生成 %s，请填入真实 token 后重启: %w", path, ErrFirstRun)
 	}
 	if err != nil {
 		return nil, err

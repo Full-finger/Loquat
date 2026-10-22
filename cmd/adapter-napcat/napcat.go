@@ -27,6 +27,7 @@ const (
 	defaultTimeout = 10 * time.Second // SendAction 默认超时
 	reconnectDelay = 3 * time.Second  // MVP 固定重连间隔，第 4 步升级指数退避
 	confirmTimeout = 5 * time.Second  // 等首条消息确认鉴权的上限
+	writeTimeout   = 10 * time.Second // WS 写上限：对端半死时不能无限阻塞（26102202#3）
 )
 
 type NapCat struct {
@@ -36,22 +37,25 @@ type NapCat struct {
 	token  string
 	logger hclog.Logger
 
-	mu      sync.Mutex      // 保护 conn 的写与置空
-	conn    *websocket.Conn // 当前连接，断开后置 nil
-	pmu     sync.Mutex      // 保护 pending
-	pending map[string]chan *pluginapi.SendActionResponse
-	seq     atomic.Int64
+	mu            sync.Mutex      // 保护 conn 的写与置空
+	conn          *websocket.Conn // 当前连接，断开后置 nil
+	writeDeadline time.Duration   // 单次写上限，测试可缩短
+	pmu           sync.Mutex      // 保护 pending
+	pending       map[string]chan *pluginapi.SendActionResponse
+	seq           atomic.Int64
+	dropped       atomic.Int64 // 事件队列满丢弃计数（本进程口径，日志观测用）
 
 	events chan *pluginapi.Event
 }
 
 func newNapCat(url, token string, logger hclog.Logger) *NapCat {
 	return &NapCat{
-		url:     url,
-		token:   token,
-		logger:  logger,
-		pending: make(map[string]chan *pluginapi.SendActionResponse),
-		events:  make(chan *pluginapi.Event, eventsBuffer),
+		url:           url,
+		token:         token,
+		logger:        logger,
+		pending:       make(map[string]chan *pluginapi.SendActionResponse),
+		events:        make(chan *pluginapi.Event, eventsBuffer),
+		writeDeadline: writeTimeout,
 	}
 }
 
@@ -164,7 +168,8 @@ func (n *NapCat) dispatch(data []byte) {
 		select {
 		case n.events <- &pluginapi.Event{Payload: data}:
 		default:
-			n.logger.Warn("事件队列已满，丢弃一条事件")
+			nd := n.dropped.Add(1)
+			n.logger.Warn("事件队列已满，丢弃一条事件", "dropped_total", nd)
 		}
 	case probe.Echo != "":
 		var resp struct {
@@ -251,7 +256,15 @@ func (n *NapCat) writeJSON(v any) error {
 	if n.conn == nil {
 		return errors.New("ws 未连接")
 	}
-	return n.conn.WriteJSON(v)
+	// 写前设 deadline：对端半死（挂起、网络异常）时写会无限阻塞，
+	// 且这把锁重连路径也要拿，不设限整个适配器僵死（26102202#3）
+	_ = n.conn.SetWriteDeadline(time.Now().Add(n.writeDeadline))
+	if err := n.conn.WriteJSON(v); err != nil {
+		// 主动断开，让读循环走既有的重连与 failPending 语义
+		_ = n.conn.Close()
+		return fmt.Errorf("ws 写失败，连接已关闭待重连: %w", err)
+	}
+	return nil
 }
 
 // failPending 在连接断开时唤醒所有等响应的调用方，避免它们干等超时。
