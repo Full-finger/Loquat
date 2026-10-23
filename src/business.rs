@@ -7,9 +7,9 @@
 //!                           识别插件的依据，无签名目录忽略）；必须实现
 //!                           handle(ctx) -> list[str]
 //!                           （ctx: dict，含 text/message_type/chat_id/
-//!                           user_id/self_id/message_id/is_at_bot；返回空列表 = 不归我管，
-//!                           路由链继续）；可声明 PRIORITY = <int>
-//!                           （越小越先，缺省 100）
+//!                           user_id/self_id/message_id/is_at_bot/images；
+//!                           返回空列表 = 不归我管，路由链继续）；
+//!                           可声明 PRIORITY = <int>（越小越先，缺省 100）
 //!   config.yaml             可选：插件配置（运行时状态，不入库）。声明了
 //!                           SCHEMA 却缺失 = 未安装：不加载，控制台
 //!                           install <名> 按 SCHEMA 生成，enable <名> 启用。
@@ -56,6 +56,8 @@ pub struct MsgCtx<'a> {
     pub message_id: i64,
     /// 是否 at 了机器人（校验 qq == self_id；at 别人/全体为 false）
     pub is_at_bot: bool,
+    /// 消息里的图片 URL（event.rs 正规提取，上限 4 张）
+    pub images: &'a [String],
 }
 
 struct LoadedPlugin {
@@ -274,6 +276,7 @@ impl Business {
             dict.set_item("self_id", ctx.self_id)?;
             dict.set_item("message_id", ctx.message_id)?;
             dict.set_item("is_at_bot", ctx.is_at_bot)?;
+            dict.set_item("images", ctx.images.to_vec())?;
             let replies = module.bind(py).call_method1("handle", (dict,))?;
             Ok(replies.extract()?)
         })
@@ -391,3 +394,6 @@ mod tests;
 
 #[cfg(test)]
 mod tests_agent;
+
+#[cfg(test)]
+mod tests_webtools;

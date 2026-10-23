@@ -1,7 +1,7 @@
 # extensions/_lib/agent.py：agent 会话引擎，宿主注册为 loquat_agent。
 # 内核配套库，非插件（无签名、不进责任链），设计见 docs/agent.md。
-# 职责：会话历史管理（跨热重载存活）、QQ 文本 → LLM 文本转换、
-# 工具循环（@tool 声明 + dispatch）。
+# 职责：会话历史管理（跨热重载存活）、QQ 文本/图片 → LLM 消息转换
+# （识图按 cfg["vision"] 开关）、工具循环（@tool 声明 + dispatch）。
 # LLM 传输由调用方注入（chat_fn 契约同 llm_api.chat），本库不含 HTTP。
 
 import inspect
@@ -85,12 +85,12 @@ def clean_text(ctx: dict) -> str:
     return _CQ_RE.sub("", ctx.get("text") or "").strip()
 
 
-def observe(ctx: dict, text: str) -> None:
+def observe(ctx: dict, text: str, cfg: dict | None = None) -> None:
     """记一条用户消息进会话历史，不产生回复（群聊未触发场景）。"""
-    content = _llm_text(ctx, text)
-    if content:
+    msg = _user_message(ctx, text, cfg)
+    if msg:
         key = _key(ctx)
-        _append(key, {"role": "user", "content": content})
+        _append(key, msg)
         _persist(key)
 
 
@@ -110,11 +110,11 @@ def respond(
     tools 为 @tool 声明的工具集；超过 max_turns 强制收尾并告警。
     返回 [最终回复]；LLM 失败返回 None，本轮新增的消息全部回滚。
     """
-    content = _llm_text(ctx, text)
-    if not content:
+    msg = _user_message(ctx, text, cfg)
+    if msg is None:
         return []
     stats["responds"] = stats.get("responds", 0) + 1
-    history = _append(_key(ctx), {"role": "user", "content": content})
+    history = _append(_key(ctx), msg)
     start = len(history) - 1  # 本轮起点：失败时回滚到这里
 
     registry = {t.name: t for t in tools}
@@ -177,6 +177,23 @@ def _llm_text(ctx: dict, text: str) -> str:
     if ctx.get("message_type") == "group":
         return f"<{ctx.get('user_id')}> {text}"
     return text
+
+
+# 构造用户消息：识图（cfg["vision"]）开启且有图片时拼 OpenAI 多模态
+# content parts（text + image_url），否则图片以"[图片]"占位进文本——
+# 非视觉模型至少知道对方发过图。无文本无图片返回 None（本轮不进模型）。
+def _user_message(ctx: dict, text: str, cfg: dict | None) -> dict | None:
+    content = _llm_text(ctx, text)
+    images = [u for u in (ctx.get("images") or [])
+              if isinstance(u, str) and u.startswith("http")]
+    if not images:
+        return {"role": "user", "content": content} if content else None
+    if not (cfg or {}).get("vision"):
+        placeholder = f"{content}\n[图片]" if content else "[图片]"
+        return {"role": "user", "content": placeholder}
+    parts = [{"type": "text", "text": content}] if content else []
+    parts += [{"type": "image_url", "image_url": {"url": u}} for u in images]
+    return {"role": "user", "content": parts}
 
 
 def _append(key: tuple, msg: dict) -> list:

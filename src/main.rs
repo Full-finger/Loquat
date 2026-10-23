@@ -56,6 +56,7 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
         self_id: incoming.self_id,
         message_id: incoming.message_id,
         is_at_bot: incoming.is_at_bot,
+        images: &incoming.images,
     };
     let replies = match business.handle(&ctx) {
         Ok(r) => r,

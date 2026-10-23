@@ -34,6 +34,7 @@ fn ctx(text: &'static str) -> MsgCtx {
         self_id: 100,
         message_id: 0,
         is_at_bot: false,
+        images: &[],
     }
 }
 
@@ -54,6 +55,7 @@ fn ctx_fields_reach_plugin() {
         self_id: 100,
         message_id: 12345,
         is_at_bot: true,
+        images: &[],
     };
     assert_eq!(
         business.handle(&c).unwrap(),
