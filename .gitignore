@@ -37,6 +37,8 @@ venv/
 !/config/loquat.yaml.example
 # 私人编译器配置（本机路径），缺失时构建回退 PATH 里的 go
 /compile.toml
+# pi agent 个人环境（配置与工作流），不入库
+.agent/
 # 插件配置是运行时状态（个人 token、启停声明），不入库：
 # 有 SCHEMA 的插件缺失它会被提示 install，按 SCHEMA 生成
 extensions/*/config.yaml
