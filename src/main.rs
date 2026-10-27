@@ -11,6 +11,7 @@ mod pluginload;
 mod pybridge;
 mod sharedlib;
 mod stats;
+mod webui;
 
 use std::error::Error;
 use std::ffi::c_char;
@@ -80,6 +81,7 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
         match dll.send_action(action, &params.to_string(), 15_000) {
             Ok(resp) => {
                 stats::bump_reply();
+                webui::publish_reply(&incoming.message_type, incoming.chat_id, &reply);
                 log_info!("已回复: {} resp={resp}", console::brief(&reply, 60));
             }
             Err(e) => log_error!("发送失败: {e}"),
@@ -116,6 +118,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let business = Arc::new(Business::load(EXTENSIONS_DIR)?);
     pybridge::suppress_sigint();
     log_info!("业务已加载: {}", business.info());
+
+    // WebUI：REST + 静态页 + 消息流 WS，独立线程，起不来只记日志
+    webui::spawn(Arc::clone(&dll), Arc::clone(&business));
 
     // worker 池：见顶部常量注释。catch_unwind 兜一条消息的 panic 只损失
     // 一次迭代——线程死亡会让该 chat 后续消息静默失去去处。
@@ -167,6 +172,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 };
                 log_info!("消息: [{}] {}", incoming.message_type, incoming.text);
+                webui::publish_incoming(&incoming.message_type, incoming.chat_id, &incoming.text);
 
                 let idx = (incoming.chat_id as u64 % WORKER_COUNT as u64) as usize;
                 let chat_id = incoming.chat_id;

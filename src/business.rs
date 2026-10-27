@@ -367,6 +367,24 @@ impl Business {
         ))
     }
 
+    /// WebUI 插件列表：已加载插件 + 已发现未安装的目录。
+    /// 返回 (名称, 已安装, 已启用, 优先级)。未安装的优先级未知，报缺省 100。
+    pub fn plugin_rows(&self) -> Vec<(String, bool, bool, i64)> {
+        let plugins = self.plugins.lock().expect("业务锁中毒");
+        let installable = self.installable.lock().expect("业务锁中毒");
+        let mut rows: Vec<(String, bool, bool, i64)> = plugins
+            .iter()
+            .map(|p| (p.dir_name.clone(), true, p.enabled(), p.priority))
+            .collect();
+        for name in installable.iter() {
+            if !rows.iter().any(|(n, ..)| n == name) {
+                rows.push((name.clone(), false, false, 100));
+            }
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows
+    }
+
     pub fn info(&self) -> String {
         let plugins = self.plugins.lock().expect("业务锁中毒");
         let names: Vec<String> = plugins

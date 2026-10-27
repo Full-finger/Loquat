@@ -1,0 +1,184 @@
+/* 主题：GitHub Primer Dark 风（参考 github.com 暗色主题与 Fluent 圆角）。
+ * 带蓝调的黑底，靠 1px 边框分层不用阴影；
+ * 全部映射到 --el-* 变量，Element Plus 组件自动跟随。
+ * 不引外部字体文件（面板可能内网跑），等宽栈用系统自带。 */
+
+html.dark {
+  color-scheme: dark;
+
+  /* ---- tokens（GitHub Primer Dark Dimmed，严格按官方色号）---- */
+  --bg-frame: #1c2128; /* canvas.inset：顶栏/侧栏框架 */
+  --bg-page: #22272e; /* canvas.default：主内容面板 */
+  --bg-panel: #2d333b; /* canvas.subtle：卡片 */
+  --bg-raised: #2d333b; /* hover/输入框 */
+  --border: #444c56; /* border.default（仅变量备用，界面已去描边） */
+  --text-1: #cdd9e5; /* fg.default */
+  --text-2: #909dab; /* fg.muted */
+  --text-3: #616e7b; /* fg.subtle */
+  --accent: #539bf5; /* accent.fg */
+  --pink: #986ee2; /* 点缀紫（done.fg），logo 渐变与“发”方向用 */
+  --ok: #57ab5a;
+  --warn: #c69026;
+  --danger: #e5534b;
+  --mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+
+  /* ---- Element Plus 映射 ---- */
+  --el-color-primary: var(--accent);
+  --el-color-success: var(--ok);
+  --el-color-warning: var(--warn);
+  --el-color-danger: var(--danger);
+  --el-color-error: var(--danger);
+  --el-bg-color: var(--bg-panel);
+  --el-bg-color-page: var(--bg-page);
+  --el-bg-color-overlay: var(--bg-raised);
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border);
+  --el-border-color-extra-light: var(--border);
+  --el-text-color-primary: var(--text-1);
+  --el-text-color-regular: var(--text-2);
+  --el-text-color-secondary: var(--text-3);
+  --el-text-color-placeholder: var(--text-3);
+  --el-fill-color-light: var(--bg-raised);
+  --el-fill-color-lighter: var(--bg-raised);
+  --el-fill-color-blur: var(--bg-raised);
+  --el-border-radius-base: 6px;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text-1);
+  font-size: 13px;
+  font-family:
+    system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 暗色滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+/* ---- 页头三段式：标题 + 描述 + 右侧操作 ---- */
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 20px;
+}
+.page-head h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.page-head .desc {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* ---- 指标卡（仪表盘） ---- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.stat-card {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 16px;
+}
+.stat-label {
+  color: var(--text-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.stat-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+}
+.stat-sub {
+  color: var(--text-3);
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+/* 卡片入场浮起（路由切入时重放） */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.stat-card {
+  animation: rise 0.35s cubic-bezier(0.25, 0.8, 0.35, 1) backwards;
+}
+
+.stat-card:nth-child(2) {
+  animation-delay: 0.06s;
+}
+.stat-card:nth-child(3) {
+  animation-delay: 0.12s;
+}
+.stat-card:nth-child(4) {
+  animation-delay: 0.18s;
+}
+
+.panel {
+  animation: rise 0.35s cubic-bezier(0.25, 0.8, 0.35, 1) 0.1s backwards;
+}
+
+/* ---- 面板通用 ---- */
+.panel {
+  background: var(--bg-panel);
+  border-radius: 8px;
+  padding: 16px;
+}.panel-title {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* Element 卡片去描边，背景色差分层 */
+.el-card {
+  --el-card-border-color: transparent;
+  --el-card-border-radius: 8px;
+  --el-card-bg-color: var(--bg-panel);
+}
+
+/* 弹层唯一一处阴影 */
+.el-popper.is-dark,
+.el-message,
+.el-notification {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* 页面切换淡入 */
+.fade-enter-active {
+  transition: opacity 0.12s ease;
+}
+.fade-enter-from {
+  opacity: 0;
+}

@@ -11,3 +11,7 @@ serde_json = "1"
 ctrlc = "3"
 yaml-rust2 = "0.10"
 pyo3 = { version = "0.26", features = ["auto-initialize"] }
+# WebUI：axum 跑在独立 std 线程的 tokio 运行时里，不碰主循环与 worker
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tower-http = { version = "0.6", features = ["fs"] }

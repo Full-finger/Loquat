@@ -59,7 +59,14 @@ unsafe impl std::marker::Sync for CoreDll {}
 
 impl CoreDll {
     pub unsafe fn load(path: &str) -> Result<Self, Box<dyn Error>> {
-        let lib: &'static Library = Box::leak(Box::new(Library::new(path)?));
+        // 126（找不到模块）多半是启动目录不对：宿主用相对路径找 bin/、config/、
+        // extensions/、webui/dist，报错时带上当前目录，方便定位
+        let lib: &'static Library = Box::leak(Box::new(Library::new(path).map_err(|e| {
+            let cwd = std::env::current_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "<未知>".into());
+            format!("加载 {path} 失败: {e}（宿主按相对路径找产物；当前目录: {cwd}，请在项目根目录启动）")
+        })?));
         let start = *lib.get::<StartFn>(b"LoquatStart")?;
         let send_action = *lib.get::<SendActionFn>(b"LoquatSendAction")?;
         let reload_plugin = *lib.get::<ReloadPluginFn>(b"LoquatReloadPlugin")?;

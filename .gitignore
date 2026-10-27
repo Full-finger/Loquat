@@ -12,6 +12,11 @@
 target/
 **/*.rs.bk
 
+# ---- WebUI ----
+# 前端依赖与构建产物，入库只留源码
+webui/node_modules/
+webui/dist/
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
