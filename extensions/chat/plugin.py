@@ -62,6 +62,18 @@ _ADMIN_TTL_SECONDS = 300
 _admin_cache: dict = {}  # {(chat_id, user_id): (到期 monotonic, 是否管理员)}
 
 
+def _num_id(v):
+    """ID 尽力数字化：QQ 系动作（逃生舱）的 ID 字段预期数字。
+
+    ctx 里的 ID 现在是跨平台字符串；能转 int 转 int，
+    转不动原样返回（平台扩展场景）。
+    """
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return v
+
+
 def _is_admin(ctx: dict) -> bool:
     if ctx.get("message_type") != "group":
         return True
@@ -75,7 +87,7 @@ def _is_admin(ctx: dict) -> bool:
     try:
         resp = core.send_action(  # noqa: F821 —— core 为宿主注入的能力桥
             "get_group_member_info",
-            json.dumps({"group_id": cid, "user_id": uid}),
+            json.dumps({"group_id": _num_id(cid), "user_id": _num_id(uid)}),
             10_000,
         )
         role = _role_of(resp)
@@ -159,11 +171,11 @@ def read_webpage(ctx, url: str) -> str:
 
 
 @loquat_agent.tool
-def send_message(ctx, message_type: str, chat_id: int, text: str) -> str:
+def send_message(ctx, message_type: str, chat_id: str, text: str) -> str:
     """主动发一条独立消息到指定会话，不等本轮回复。
 
     message_type: "private" 或 "group"。
-    chat_id: 目标会话号（私聊为对方 QQ 号，群聊为群号）。
+    chat_id: 目标会话号字符串（私聊为对方账号，群聊为群号）。
     text: 消息内容，可含 CQ 码（如 [CQ:image,file=file:///...] 发图）。
     仅群管理员可用（防滥用：本工具可向任意会话发消息）。
     """
@@ -171,12 +183,12 @@ def send_message(ctx, message_type: str, chat_id: int, text: str) -> str:
         return "错误：向指定会话发消息需要群管理员权限，已拒绝"
     action = "send_private_msg" if message_type == "private" else "send_group_msg"
     key = "user_id" if message_type == "private" else "group_id"
-    params = json.dumps({key: chat_id, "message": text}, ensure_ascii=False)
+    params = json.dumps({key: _num_id(chat_id), "message": text}, ensure_ascii=False)
     return core.send_action(action, params, 15_000)  # noqa: F821
 
 
 @loquat_agent.tool
-def recall(ctx, message_id: int) -> str:
+def recall(ctx, message_id) -> str:
     """撤回一条消息。
 
     message_id 传 send_message 返回结果里的 data.message_id。
@@ -185,7 +197,7 @@ def recall(ctx, message_id: int) -> str:
     """
     if not _is_admin(ctx):
         return "错误：撤回消息需要群管理员权限，已拒绝"
-    params = json.dumps({"message_id": message_id})
+    params = json.dumps({"message_id": _num_id(message_id)})
     return core.send_action("delete_msg", params, 15_000)  # noqa: F821
 
 
@@ -195,9 +207,9 @@ def poke(ctx, user_id: int = 0) -> str:
 
     私聊戳对方；群聊戳指定成员，user_id 缺省为触发这条消息的人。
     """
-    uid = user_id or ctx.get("user_id") or 0
+    uid = _num_id(user_id or ctx.get("user_id") or 0)
     if ctx.get("message_type") == "group":
-        params = json.dumps({"group_id": ctx.get("chat_id"), "user_id": uid})
+        params = json.dumps({"group_id": _num_id(ctx.get("chat_id")), "user_id": uid})
         return core.send_action("group_poke", params, 15_000)  # noqa: F821
     params = json.dumps({"user_id": uid})
     return core.send_action("friend_poke", params, 15_000)  # noqa: F821
@@ -209,7 +221,7 @@ def react(ctx, emoji_id: str) -> str:
 
     emoji_id 是 QQ 表情 ID 字符串（如 "4" 抱抱、"5" 点赞、"128" 爱心）。
     """
-    mid = ctx.get("message_id") or 0
+    mid = _num_id(ctx.get("message_id") or 0)
     if not mid:
         return "当前消息缺少 message_id，无法回应"
     params = json.dumps({"message_id": mid, "emoji_id": str(emoji_id)})
@@ -226,8 +238,7 @@ def handle(ctx: dict) -> list[str]:
     if not text:
         return []
 
-    # is_at_bot 由宿主解析 message 段得出（校验 qq == self_id，
-    # 兼容 CQ 码与数组格式）
+    # is_at_bot 由适配器判定（at 段 target == bot 自身 ID），经 ctx 透传
     if ctx.get("message_type") == "group" and not (
         ctx.get("is_at_bot") or _hit_trigger(cfg, text)
     ):

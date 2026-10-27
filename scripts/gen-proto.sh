@@ -19,7 +19,18 @@ need protoc "winget install Google.Protobuf（或从 protobuf releases 下载）
 need protoc-gen-go "go install google.golang.org/protobuf/cmd/protoc-gen-go@latest"
 need protoc-gen-go-grpc "go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest"
 
-protoc \
+# well-known types 的 include：winget 版在 protoc.exe 同级的上一级，
+# 自编译/解压版通常叫 include。找不到时交给 protoc 自带探测。
+protoc_dir="$(dirname "$(command -v protoc)")"
+includes=(-I.)
+for inc in "$protoc_dir/../include" "$protoc_dir/include"; do
+	if [ -f "$inc/google/protobuf/struct.proto" ]; then
+		includes+=("-I" "$inc")
+		break
+	fi
+done
+
+protoc "${includes[@]}" \
 	--go_out=. --go_opt=paths=source_relative \
 	--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 	internal/pluginapi/adapter.proto

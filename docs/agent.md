@@ -44,8 +44,9 @@ main 循环（mpsc，不动）
   Event → parse_incoming → 按 chat_id hash 到 worker(N=4)
   Command → 原地处理（控制台响应恢复，#1 的另一半）
 
-worker：跑责任链 business.handle(ctx) → 拿 replies → worker 内直接
-dll.send_action()（CoreDll 已是 Send+Sync，Go 侧导出并发安全）
+worker：跑责任链 business.handle(ctx) → 拿 replies → worker 内
+dll.send_message()（统一发送：文本包成段列表，核心转适配器翻译成平台消息；
+CoreDll 已是 Send+Sync，Go 侧导出并发安全）
 ```
 
 - 同一 chat 永远落同一 worker：天然串行，`chat` 插件 `_histories` 等模块级

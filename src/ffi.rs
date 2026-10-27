@@ -15,10 +15,26 @@ pub type EventCallback = unsafe extern "C" fn(data: *const c_char, len: i32);
 
 type StartFn = unsafe extern "C" fn(config_path: *const c_char, cb: EventCallback) -> i32;
 type SendActionFn = unsafe extern "C" fn(
+    platform: *const c_char,
     action: *const c_char,
     params: *const c_char,
     timeout_ms: i32,
 ) -> *mut c_char;
+type SendMessageFn = unsafe extern "C" fn(
+    platform: *const c_char,
+    chat_kind: *const c_char,
+    chat_id: *const c_char,
+    segments: *const c_char,
+    timeout_ms: i32,
+) -> *mut c_char;
+type InjectEventFn = unsafe extern "C" fn(
+    platform: *const c_char,
+    text: *const c_char,
+    at_bot: i32,
+    mode: *const c_char,
+) -> *mut c_char;
+type AdaptersConfigFn = unsafe extern "C" fn() -> *mut c_char;
+type ApplyAdaptersConfigFn = unsafe extern "C" fn(config_json: *const c_char) -> *mut c_char;
 type ReloadPluginFn = unsafe extern "C" fn(name: *const c_char) -> i32;
 type StatusFn = unsafe extern "C" fn() -> *mut c_char;
 type SystemStatusFn = unsafe extern "C" fn() -> *mut c_char;
@@ -44,6 +60,10 @@ pub struct CoreDll {
     lib: &'static Library,
     start: StartFn,
     send_action: SendActionFn,
+    send_message: SendMessageFn,
+    inject_event: InjectEventFn,
+    adapters_config: AdaptersConfigFn,
+    apply_adapters_config: ApplyAdaptersConfigFn,
     reload_plugin: ReloadPluginFn,
     status: StatusFn,
     system_status: SystemStatusFn,
@@ -69,6 +89,11 @@ impl CoreDll {
         })?));
         let start = *lib.get::<StartFn>(b"LoquatStart")?;
         let send_action = *lib.get::<SendActionFn>(b"LoquatSendAction")?;
+        let send_message = *lib.get::<SendMessageFn>(b"LoquatSendMessage")?;
+        let inject_event = *lib.get::<InjectEventFn>(b"LoquatInjectEvent")?;
+        let adapters_config = *lib.get::<AdaptersConfigFn>(b"LoquatAdaptersConfig")?;
+        let apply_adapters_config =
+            *lib.get::<ApplyAdaptersConfigFn>(b"LoquatApplyAdaptersConfig")?;
         let reload_plugin = *lib.get::<ReloadPluginFn>(b"LoquatReloadPlugin")?;
         let status = *lib.get::<StatusFn>(b"LoquatStatus")?;
         let system_status = *lib.get::<SystemStatusFn>(b"LoquatSystemStatus")?;
@@ -79,6 +104,10 @@ impl CoreDll {
             lib,
             start,
             send_action,
+            send_message,
+            inject_event,
+            adapters_config,
+            apply_adapters_config,
             reload_plugin,
             status,
             system_status,
@@ -101,13 +130,57 @@ impl CoreDll {
     /// 返回的 String 已在 Rust 侧接管，调用方无需释放内存。
     pub fn send_action(
         &self,
+        platform: &str,
         action: &str,
         params: &str,
         timeout_ms: i32,
     ) -> Result<String, Box<dyn Error>> {
+        let pl = CString::new(platform)?;
         let a = CString::new(action)?;
         let p = CString::new(params)?;
-        let ptr = unsafe { (self.send_action)(a.as_ptr(), p.as_ptr(), timeout_ms) };
+        let ptr = unsafe { (self.send_action)(pl.as_ptr(), a.as_ptr(), p.as_ptr(), timeout_ms) };
+        Ok(take_c_string(ptr, &self.free))
+    }
+
+    /// 统一发送：段列表（protojson 形态的 JSON 数组）交核心翻译成平台消息。
+    /// 成功返回 {"messageId": "..."}，失败返回 {"error": "..."}。
+    pub fn send_message(
+        &self,
+        platform: &str,
+        chat_kind: &str,
+        chat_id: &str,
+        segments_json: &str,
+        timeout_ms: i32,
+    ) -> Result<String, Box<dyn Error>> {
+        let pl = CString::new(platform)?;
+        let k = CString::new(chat_kind)?;
+        let id = CString::new(chat_id)?;
+        let s = CString::new(segments_json)?;
+        let ptr = unsafe {
+            (self.send_message)(pl.as_ptr(), k.as_ptr(), id.as_ptr(), s.as_ptr(), timeout_ms)
+        };
+        Ok(take_c_string(ptr, &self.free))
+    }
+
+    /// 适配器配置（JSON）：当前配置 + 各平台运行状态。
+    pub fn adapters_config(&self) -> String {
+        let ptr = unsafe { (self.adapters_config)() };
+        take_c_string(ptr, &self.free)
+    }
+
+    /// 应用适配器配置：写盘 + 热应用。成功返回说明文本，失败含 error 字段。
+    pub fn apply_adapters_config(&self, config_json: &str) -> Result<String, Box<dyn Error>> {
+        let c = CString::new(config_json)?;
+        let ptr = unsafe { (self.apply_adapters_config)(c.as_ptr()) };
+        Ok(take_c_string(ptr, &self.free))
+    }
+
+    /// 注入一条沙箱消息（WebUI 沙箱选项卡的输入通路）。
+    pub fn inject_event(&self, platform: &str, text: &str, at_bot: bool, mode: &str) -> Result<String, Box<dyn Error>> {
+        let pl = CString::new(platform)?;
+        let t = CString::new(text)?;
+        let m = CString::new(mode)?;
+        let ptr = unsafe { (self.inject_event)(pl.as_ptr(), t.as_ptr(), at_bot as i32, m.as_ptr()) };
         Ok(take_c_string(ptr, &self.free))
     }
 

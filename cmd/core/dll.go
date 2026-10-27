@@ -22,6 +22,7 @@ import "C"
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -30,8 +31,10 @@ import (
 	"unsafe"
 
 	"github.com/hashicorp/go-hclog"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/full-finger/loquat/internal/core"
+	"github.com/full-finger/loquat/internal/pluginapi"
 )
 
 var started atomic.Bool
@@ -91,8 +94,9 @@ func LoquatStart(configPath *C.char, cb C.loquat_event_cb) C.int {
 }
 
 //export LoquatSendAction
-func LoquatSendAction(action *C.char, params *C.char, timeoutMs C.int) *C.char {
+func LoquatSendAction(platform *C.char, action *C.char, params *C.char, timeoutMs C.int) *C.char {
 	resp, err := core.SendAction(
+		C.GoString(platform),
 		C.GoString(action),
 		[]byte(C.GoString(params)),
 		time.Duration(timeoutMs)*time.Millisecond,
@@ -109,6 +113,74 @@ func LoquatSendAction(action *C.char, params *C.char, timeoutMs C.int) *C.char {
 	if merr != nil {
 		b, _ = json.Marshal(map[string]string{"error": merr.Error()})
 	}
+	return C.CString(string(b))
+}
+
+//export LoquatSendMessage
+func LoquatSendMessage(platform *C.char, chatKind *C.char, chatID *C.char, segments *C.char, timeoutMs C.int) *C.char {
+	req := &pluginapi.SendMessageRequest{
+		Platform: C.GoString(platform),
+		Chat:     &pluginapi.ChatRef{},
+	}
+	switch C.GoString(chatKind) {
+	case "private":
+		req.Chat.Kind = &pluginapi.ChatRef_PrivateId{PrivateId: C.GoString(chatID)}
+	case "group":
+		req.Chat.Kind = &pluginapi.ChatRef_GroupId{GroupId: C.GoString(chatID)}
+	default:
+		return marshalFFIError(fmt.Sprintf("未知 chat kind: %s", C.GoString(chatKind)))
+	}
+
+	var rawSegs []json.RawMessage
+	if err := json.Unmarshal([]byte(C.GoString(segments)), &rawSegs); err != nil {
+		return marshalFFIError("segments 不是 JSON 数组: " + err.Error())
+	}
+	for i, raw := range rawSegs {
+		var seg pluginapi.Segment
+		// 段是 protojson 格式：{"text": {"text": "..."}}；错误带上序号好定位
+		if err := (protojson.UnmarshalOptions{}).Unmarshal(raw, &seg); err != nil {
+			return marshalFFIError(fmt.Sprintf("第 %d 个消息段解析失败: %v", i, err))
+		}
+		req.Segments = append(req.Segments, &seg)
+	}
+
+	resp, err := core.SendMessage(req, time.Duration(timeoutMs)*time.Millisecond)
+	if err != nil {
+		return marshalFFIError(err.Error())
+	}
+	// protojson 输出稳定字段名（messageId），宿主按同一约定解
+	b, merr := protojson.Marshal(resp)
+	if merr != nil {
+		return marshalFFIError(merr.Error())
+	}
+	return C.CString(string(b))
+}
+
+func marshalFFIError(msg string) *C.char {
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	return C.CString(string(b))
+}
+
+//export LoquatInjectEvent
+func LoquatInjectEvent(platform *C.char, text *C.char, atBot C.int, mode *C.char) *C.char {
+	if err := core.InjectEvent(C.GoString(platform), C.GoString(text), atBot != 0, C.GoString(mode)); err != nil {
+		return marshalFFIError(err.Error())
+	}
+	return C.CString(`{"ok":true}`)
+}
+
+//export LoquatAdaptersConfig
+func LoquatAdaptersConfig() *C.char {
+	return C.CString(core.AdaptersConfigJSON())
+}
+
+//export LoquatApplyAdaptersConfig
+func LoquatApplyAdaptersConfig(configJSON *C.char) *C.char {
+	msg, err := core.ApplyAdaptersConfig(C.GoString(configJSON))
+	if err != nil {
+		return marshalFFIError(err.Error())
+	}
+	b, _ := json.Marshal(map[string]string{"msg": msg})
 	return C.CString(string(b))
 }
 

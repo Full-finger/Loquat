@@ -5,11 +5,13 @@
 //! （SIGINT 由 Rust 侧 ctrlc 处理器独占，见 src/main.rs）。
 
 use crate::log_error;
+use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::CString;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::thread::ThreadId;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -35,13 +37,52 @@ fn system_status() -> PyResult<String> {
     }
 }
 
-/// 下发动作（发消息等），返回 NapCat 应答 JSON；失败抛异常由插件决定降级。
-/// 供插件声明发送类 agent 工具用（如主动发图）。
+/// 下发动作（撤回/戳一戳等平台长尾能力），返回平台应答 JSON；
+/// 失败抛异常由插件决定降级。
+/// platform 缺省“哪里来哪里去”：读当前 worker 线程的消息来源平台
+/// （business 调 handle 前登记），非消息上下文缺省 napcat；
+/// 插件也可显式传 platform= 覆盖。
+// Option 尾参 pyo3 自动可选：core.send_action(a, p, ms) 或 (a, p, ms, platform)
 #[pyfunction]
-fn send_action(action: String, params: String, timeout_ms: i64) -> PyResult<String> {
+fn send_action(
+    action: String,
+    params: String,
+    timeout_ms: i64,
+    platform: Option<String>,
+) -> PyResult<String> {
     let dll = ffi::core_dll().ok_or_else(|| PyRuntimeError::new_err("核心未就绪"))?;
-    dll.send_action(&action, &params, timeout_ms as i32)
+    let resolved = match platform {
+        Some(p) => p,
+        None => current_platform().unwrap_or_else(|| "napcat".to_string()),
+    };
+    dll.send_action(&resolved, &action, &params, timeout_ms as i32)
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
+// 每线程当前消息来源平台：worker 与会话一一绑定（chat 哈希分桶），
+// 同一线程内 handle 的调用栈都属同一条消息，线程 ID 做 key 无歧义。
+// 只有 business::call 会写，容量恒等于 worker 数，不设上限。
+static CURRENT_PLATFORM: OnceLock<Mutex<HashMap<ThreadId, String>>> = OnceLock::new();
+
+/// business 调插件 handle 前登记来源平台，调用后清除。
+pub fn set_current_platform(platform: &str) {
+    let map = CURRENT_PLATFORM.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut m) = map.lock() {
+        m.insert(std::thread::current().id(), platform.to_string());
+    }
+}
+
+pub fn clear_current_platform() {
+    if let Some(map) = CURRENT_PLATFORM.get() {
+        if let Ok(mut m) = map.lock() {
+            m.remove(&std::thread::current().id());
+        }
+    }
+}
+
+fn current_platform() -> Option<String> {
+    let map = CURRENT_PLATFORM.get()?;
+    map.lock().ok()?.get(&std::thread::current().id()).cloned()
 }
 
 /// 把插件环境挂到模块上：config（来自插件目录的 config.yaml 文本）
@@ -108,7 +149,7 @@ if loquat_state is not None:
                 messages = data.get("messages")
                 if not isinstance(messages, list):
                     raise ValueError("messages 不是列表")
-                loquat_state.sessions[(message_type, int(chat_id))] = messages
+                loquat_state.sessions[(message_type, chat_id)] = messages
                 result["loaded"] += 1
             except Exception as e:
                 print(f"[loquat] 会话文件 {name} 跳过: {e}", file=sys.stderr)

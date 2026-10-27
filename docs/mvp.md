@@ -29,7 +29,8 @@ qa.py（Python 业务）
 |------|------|------|------|
 | loquat 宿主 | Rust | 入口进程 | 加载核心 dll、调 Python 业务、控制台命令 |
 | Go 核心 | Go | c-shared dll，进程内 | 配置中心、会话缓存、消息队列、go-plugin 宿主（插件监督与重启） |
-| adapter-napcat | Go | 插件子进程 | NapCat WS 连接、OneBot 11 编解码、事件上报、动作下发 |
+| adapter-napcat | Go | 插件子进程 | NapCat WS 连接、OneBot 11 ↔ 统一消息格式（IR）双向翻译、事件上报、消息/动作下发 |
+| adapter-sandbox | Go | 插件子进程 | 开发沙箱：InjectEvent 接收 WebUI 沙箱选项卡的注入消息，不连真实平台，走同一条 IR 链路 |
 | qa.py | Python | 嵌入解释器 | 问答规则。输入一条消息文本，输出若干条回复 |
 
 崩溃与恢复的边界：

@@ -45,7 +45,7 @@ type NapCat struct {
 	seq           atomic.Int64
 	dropped       atomic.Int64 // 事件队列满丢弃计数（本进程口径，日志观测用）
 
-	events chan *pluginapi.Event
+	events chan *pluginapi.EventEnvelope
 }
 
 func newNapCat(url, token string, logger hclog.Logger) *NapCat {
@@ -54,7 +54,7 @@ func newNapCat(url, token string, logger hclog.Logger) *NapCat {
 		token:         token,
 		logger:        logger,
 		pending:       make(map[string]chan *pluginapi.SendActionResponse),
-		events:        make(chan *pluginapi.Event, eventsBuffer),
+		events:        make(chan *pluginapi.EventEnvelope, eventsBuffer),
 		writeDeadline: writeTimeout,
 	}
 }
@@ -165,8 +165,16 @@ func (n *NapCat) dispatch(data []byte) {
 
 	switch {
 	case probe.PostType != "":
+		ev, err := translateEvent(data, time.Now())
+		if err != nil {
+			if errors.Is(err, errSelfMessage) {
+				return // 机器人自己的消息，静默丢弃防自问自答
+			}
+			n.logger.Error("事件翻译失败，已丢弃", "err", err, "head", head(data, 120))
+			return
+		}
 		select {
-		case n.events <- &pluginapi.Event{Payload: data}:
+		case n.events <- ev:
 		default:
 			nd := n.dropped.Add(1)
 			n.logger.Warn("事件队列已满，丢弃一条事件", "dropped_total", nd)
@@ -198,8 +206,8 @@ func (n *NapCat) dispatch(data []byte) {
 	}
 }
 
-// StreamEvents 把事件流式推给核心。核心断开或退出时返回。
-func (n *NapCat) StreamEvents(req *pluginapi.StreamEventsRequest, stream grpc.ServerStreamingServer[pluginapi.Event]) error {
+// StreamEvents 把统一信封流式推给核心。核心断开或退出时返回。
+func (n *NapCat) StreamEvents(req *pluginapi.StreamEventsRequest, stream grpc.ServerStreamingServer[pluginapi.EventEnvelope]) error {
 	n.logger.Info("核心已订阅事件流")
 	for {
 		select {
@@ -211,6 +219,27 @@ func (n *NapCat) StreamEvents(req *pluginapi.StreamEventsRequest, stream grpc.Se
 			}
 		}
 	}
+}
+
+// SendMessage 把统一发送请求翻成 OneBot action 调用，返回新消息 ID。
+func (n *NapCat) SendMessage(ctx context.Context, req *pluginapi.SendMessageRequest) (*pluginapi.SendMessageResponse, error) {
+	action, params, err := buildSendMessage(req)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("params 序列化失败: %w", err)
+	}
+	resp, err := n.SendAction(ctx, &pluginapi.SendActionRequest{Action: action, Params: b})
+	if err != nil {
+		return nil, err
+	}
+	var data struct {
+		MessageID json.Number `json:"message_id"`
+	}
+	_ = json.Unmarshal(resp.GetData(), &data) // 解不出 ID 就留空，不当作发送失败
+	return &pluginapi.SendMessageResponse{MessageId: data.MessageID.String()}, nil
 }
 
 // SendAction 让核心调用 NapCat 的 action：写请求、按 echo 等响应。

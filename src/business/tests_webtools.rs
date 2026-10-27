@@ -82,13 +82,14 @@ fn webtools_parses_ddg_and_extracts_text() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let ctx = |t: &'static str| MsgCtx {
         text: t,
-        message_type: "private",
-        chat_id: 901,
-        user_id: 1,
-        self_id: 100,
-        message_id: 0,
-        is_at_bot: false,
+        chat: Chat::Private { id: "901".to_string() },
+        sender_id: "1",
+        self_id: "100",
+        message_id: "",
+        mentions_bot: false,
         images: &[],
+        segments: &[],
+        platform: "napcat",
     };
 
     // DDG 解析：uddg 跳转还原成真实链接，标题/摘要按文档顺序配对

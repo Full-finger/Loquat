@@ -25,15 +25,42 @@ func quietLogger() hclog.Logger {
 func TestDispatchRoutesEventsAndResponses(t *testing.T) {
 	n := newNapCat("ws://127.0.0.1:1", "", quietLogger())
 
-	// 事件（带 post_type）→ events 通道
-	n.dispatch([]byte(`{"post_type":"message","raw_message":"hi"}`))
+	// 完整 message 事件 → 翻译成信封入队
+	n.dispatch([]byte(`{"post_type":"message","message_type":"private","self_id":7,` +
+		`"message_id":100,"user_id":42,"message":"hi","raw_message":"hi",` +
+		`"sender":{"user_id":42,"nickname":"nm"}}`))
 	select {
 	case ev := <-n.events:
-		if string(ev.Payload) != `{"post_type":"message","raw_message":"hi"}` {
-			t.Fatalf("事件载荷不符: %s", ev.Payload)
+		if ev.GetPlatform() != "napcat" || ev.GetKind() != pluginapi.EventKind_EVENT_KIND_MESSAGE {
+			t.Fatalf("信封字段不符: %+v", ev)
+		}
+		if ev.GetMessage().GetChat().GetPrivateId() != "42" {
+			t.Fatalf("chat 不符: %+v", ev.GetMessage().GetChat())
+		}
+		if ev.GetMessage().GetSegments()[0].GetText().GetText() != "hi" {
+			t.Fatalf("text 段不符: %+v", ev.GetMessage().GetSegments())
 		}
 	default:
 		t.Fatal("事件未入队")
+	}
+
+	// meta_event 只装信封，无消息体
+	n.dispatch([]byte(`{"post_type":"meta_event","meta_event_type":"heartbeat","self_id":7,"time":1700000000}`))
+	select {
+	case ev := <-n.events:
+		if ev.GetKind() != pluginapi.EventKind_EVENT_KIND_META || ev.GetMessage() != nil {
+			t.Fatalf("meta 信封不符: %+v", ev)
+		}
+	default:
+		t.Fatal("meta 事件未入队")
+	}
+
+	// 翻译失败（缺 message_type）→ 不入队，记日志
+	n.dispatch([]byte(`{"post_type":"message","user_id":42}`))
+	select {
+	case ev := <-n.events:
+		t.Fatalf("坏事件不应入队: %+v", ev)
+	default:
 	}
 
 	// 动作响应（带 echo）→ 路由到 pending 注册的通道

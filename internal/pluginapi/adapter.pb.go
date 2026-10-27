@@ -9,6 +9,7 @@ package pluginapi
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -21,6 +22,157 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type EventKind int32
+
+const (
+	EventKind_EVENT_KIND_UNSPECIFIED EventKind = 0
+	EventKind_EVENT_KIND_MESSAGE     EventKind = 1 // 普通消息
+	EventKind_EVENT_KIND_NOTICE      EventKind = 2 // 系统通知（撤回、入群、戳一戳…）
+	EventKind_EVENT_KIND_REQUEST     EventKind = 3 // 请求（加好友、加群…）
+	EventKind_EVENT_KIND_META        EventKind = 4 // 心跳、生命周期
+)
+
+// Enum value maps for EventKind.
+var (
+	EventKind_name = map[int32]string{
+		0: "EVENT_KIND_UNSPECIFIED",
+		1: "EVENT_KIND_MESSAGE",
+		2: "EVENT_KIND_NOTICE",
+		3: "EVENT_KIND_REQUEST",
+		4: "EVENT_KIND_META",
+	}
+	EventKind_value = map[string]int32{
+		"EVENT_KIND_UNSPECIFIED": 0,
+		"EVENT_KIND_MESSAGE":     1,
+		"EVENT_KIND_NOTICE":      2,
+		"EVENT_KIND_REQUEST":     3,
+		"EVENT_KIND_META":        4,
+	}
+)
+
+func (x EventKind) Enum() *EventKind {
+	p := new(EventKind)
+	*p = x
+	return p
+}
+
+func (x EventKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (EventKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_internal_pluginapi_adapter_proto_enumTypes[0].Descriptor()
+}
+
+func (EventKind) Type() protoreflect.EnumType {
+	return &file_internal_pluginapi_adapter_proto_enumTypes[0]
+}
+
+func (x EventKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use EventKind.Descriptor instead.
+func (EventKind) EnumDescriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{0}
+}
+
+type InjectEventRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`                 // 消息文本
+	AtBot         bool                   `protobuf:"varint,2,opt,name=at_bot,json=atBot,proto3" json:"at_bot,omitempty"` // 是否模拟 at 机器人（群聊模式有效）
+	Mode          string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`                 // private | group
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InjectEventRequest) Reset() {
+	*x = InjectEventRequest{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InjectEventRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InjectEventRequest) ProtoMessage() {}
+
+func (x *InjectEventRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InjectEventRequest.ProtoReflect.Descriptor instead.
+func (*InjectEventRequest) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *InjectEventRequest) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *InjectEventRequest) GetAtBot() bool {
+	if x != nil {
+		return x.AtBot
+	}
+	return false
+}
+
+func (x *InjectEventRequest) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+type InjectEventResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InjectEventResponse) Reset() {
+	*x = InjectEventResponse{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InjectEventResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InjectEventResponse) ProtoMessage() {}
+
+func (x *InjectEventResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InjectEventResponse.ProtoReflect.Descriptor instead.
+func (*InjectEventResponse) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{1}
+}
+
 type StreamEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -29,7 +181,7 @@ type StreamEventsRequest struct {
 
 func (x *StreamEventsRequest) Reset() {
 	*x = StreamEventsRequest{}
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[0]
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -41,7 +193,7 @@ func (x *StreamEventsRequest) String() string {
 func (*StreamEventsRequest) ProtoMessage() {}
 
 func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[0]
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -54,32 +206,36 @@ func (x *StreamEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamEventsRequest.ProtoReflect.Descriptor instead.
 func (*StreamEventsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{0}
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{2}
 }
 
-type Event struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// OneBot 11 事件原始 JSON
-	Payload       []byte `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
+type EventEnvelope struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Platform      string                 `protobuf:"bytes,1,opt,name=platform,proto3" json:"platform,omitempty"` // "napcat" / "telegram" / …
+	Kind          EventKind              `protobuf:"varint,2,opt,name=kind,proto3,enum=pluginapi.v2.EventKind" json:"kind,omitempty"`
+	TimeMs        int64                  `protobuf:"varint,3,opt,name=time_ms,json=timeMs,proto3" json:"time_ms,omitempty"` // 平台事件时间，Unix 毫秒；平台缺失时用适配器接收时间
+	Message       *UnifiedMessage        `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`              // kind == MESSAGE 时必填
+	Raw           []byte                 `protobuf:"bytes,5,opt,name=raw,proto3" json:"raw,omitempty"`                      // 平台原始 JSON，逃生舱：IR 丢的信息从这里取
+	SelfId        string                 `protobuf:"bytes,6,opt,name=self_id,json=selfId,proto3" json:"self_id,omitempty"`  // 机器人自身账号 ID（平台事件携带），插件防自指用
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Event) Reset() {
-	*x = Event{}
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[1]
+func (x *EventEnvelope) Reset() {
+	*x = EventEnvelope{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Event) String() string {
+func (x *EventEnvelope) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Event) ProtoMessage() {}
+func (*EventEnvelope) ProtoMessage() {}
 
-func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[1]
+func (x *EventEnvelope) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -90,33 +246,943 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Event.ProtoReflect.Descriptor instead.
-func (*Event) Descriptor() ([]byte, []int) {
-	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{1}
+// Deprecated: Use EventEnvelope.ProtoReflect.Descriptor instead.
+func (*EventEnvelope) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *Event) GetPayload() []byte {
+func (x *EventEnvelope) GetPlatform() string {
 	if x != nil {
-		return x.Payload
+		return x.Platform
+	}
+	return ""
+}
+
+func (x *EventEnvelope) GetKind() EventKind {
+	if x != nil {
+		return x.Kind
+	}
+	return EventKind_EVENT_KIND_UNSPECIFIED
+}
+
+func (x *EventEnvelope) GetTimeMs() int64 {
+	if x != nil {
+		return x.TimeMs
+	}
+	return 0
+}
+
+func (x *EventEnvelope) GetMessage() *UnifiedMessage {
+	if x != nil {
+		return x.Message
 	}
 	return nil
 }
 
+func (x *EventEnvelope) GetRaw() []byte {
+	if x != nil {
+		return x.Raw
+	}
+	return nil
+}
+
+func (x *EventEnvelope) GetSelfId() string {
+	if x != nil {
+		return x.SelfId
+	}
+	return ""
+}
+
+type UnifiedMessage struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // 平台消息 ID（撤回/回复引用用），平台是数字也转成十进制字符串
+	Chat     *ChatRef               `protobuf:"bytes,2,opt,name=chat,proto3" json:"chat,omitempty"`
+	Sender   *Sender                `protobuf:"bytes,3,opt,name=sender,proto3" json:"sender,omitempty"`
+	Segments []*Segment             `protobuf:"bytes,4,rep,name=segments,proto3" json:"segments,omitempty"`
+	// 是否 at 了机器人；平台不支持 at 时为 false。
+	// 由适配器计算——只有它知道自己的 bot ID（事件 JSON 的 self_id）
+	MentionsBot   bool `protobuf:"varint,5,opt,name=mentions_bot,json=mentionsBot,proto3" json:"mentions_bot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnifiedMessage) Reset() {
+	*x = UnifiedMessage{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnifiedMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnifiedMessage) ProtoMessage() {}
+
+func (x *UnifiedMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnifiedMessage.ProtoReflect.Descriptor instead.
+func (*UnifiedMessage) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *UnifiedMessage) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *UnifiedMessage) GetChat() *ChatRef {
+	if x != nil {
+		return x.Chat
+	}
+	return nil
+}
+
+func (x *UnifiedMessage) GetSender() *Sender {
+	if x != nil {
+		return x.Sender
+	}
+	return nil
+}
+
+func (x *UnifiedMessage) GetSegments() []*Segment {
+	if x != nil {
+		return x.Segments
+	}
+	return nil
+}
+
+func (x *UnifiedMessage) GetMentionsBot() bool {
+	if x != nil {
+		return x.MentionsBot
+	}
+	return false
+}
+
+type ChatRef struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*ChatRef_PrivateId
+	//	*ChatRef_GroupId
+	//	*ChatRef_ChannelId
+	Kind          isChatRef_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatRef) Reset() {
+	*x = ChatRef{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatRef) ProtoMessage() {}
+
+func (x *ChatRef) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatRef.ProtoReflect.Descriptor instead.
+func (*ChatRef) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ChatRef) GetKind() isChatRef_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *ChatRef) GetPrivateId() string {
+	if x != nil {
+		if x, ok := x.Kind.(*ChatRef_PrivateId); ok {
+			return x.PrivateId
+		}
+	}
+	return ""
+}
+
+func (x *ChatRef) GetGroupId() string {
+	if x != nil {
+		if x, ok := x.Kind.(*ChatRef_GroupId); ok {
+			return x.GroupId
+		}
+	}
+	return ""
+}
+
+func (x *ChatRef) GetChannelId() string {
+	if x != nil {
+		if x, ok := x.Kind.(*ChatRef_ChannelId); ok {
+			return x.ChannelId
+		}
+	}
+	return ""
+}
+
+type isChatRef_Kind interface {
+	isChatRef_Kind()
+}
+
+type ChatRef_PrivateId struct {
+	PrivateId string `protobuf:"bytes,1,opt,name=private_id,json=privateId,proto3,oneof"` // 私聊对方用户 ID
+}
+
+type ChatRef_GroupId struct {
+	GroupId string `protobuf:"bytes,2,opt,name=group_id,json=groupId,proto3,oneof"` // 群 ID
+}
+
+type ChatRef_ChannelId struct {
+	ChannelId string `protobuf:"bytes,3,opt,name=channel_id,json=channelId,proto3,oneof"` // 频道 ID（预留，暂不使用）
+}
+
+func (*ChatRef_PrivateId) isChatRef_Kind() {}
+
+func (*ChatRef_GroupId) isChatRef_Kind() {}
+
+func (*ChatRef_ChannelId) isChatRef_Kind() {}
+
+type Sender struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Nickname      string                 `protobuf:"bytes,2,opt,name=nickname,proto3" json:"nickname,omitempty"` // 平台不提供时为空
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Sender) Reset() {
+	*x = Sender{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Sender) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Sender) ProtoMessage() {}
+
+func (x *Sender) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Sender.ProtoReflect.Descriptor instead.
+func (*Sender) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Sender) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Sender) GetNickname() string {
+	if x != nil {
+		return x.Nickname
+	}
+	return ""
+}
+
+// 消息段。收录原则：≥2 个主流平台都有的概念才进 IR；
+// 单平台特性走 extension。新增段时插到空闲编号。
+type Segment struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Body:
+	//
+	//	*Segment_Text
+	//	*Segment_At
+	//	*Segment_Reply
+	//	*Segment_Image
+	//	*Segment_Face
+	//	*Segment_Voice
+	//	*Segment_Video
+	//	*Segment_File
+	//	*Segment_Extension
+	Body          isSegment_Body `protobuf_oneof:"body"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Segment) Reset() {
+	*x = Segment{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Segment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Segment) ProtoMessage() {}
+
+func (x *Segment) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Segment.ProtoReflect.Descriptor instead.
+func (*Segment) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Segment) GetBody() isSegment_Body {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+func (x *Segment) GetText() *TextSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_Text); ok {
+			return x.Text
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetAt() *AtSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_At); ok {
+			return x.At
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetReply() *ReplySeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_Reply); ok {
+			return x.Reply
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetImage() *MediaSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_Image); ok {
+			return x.Image
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetFace() *FaceSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_Face); ok {
+			return x.Face
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetVoice() *MediaSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_Voice); ok {
+			return x.Voice
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetVideo() *MediaSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_Video); ok {
+			return x.Video
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetFile() *MediaSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_File); ok {
+			return x.File
+		}
+	}
+	return nil
+}
+
+func (x *Segment) GetExtension() *ExtensionSeg {
+	if x != nil {
+		if x, ok := x.Body.(*Segment_Extension); ok {
+			return x.Extension
+		}
+	}
+	return nil
+}
+
+type isSegment_Body interface {
+	isSegment_Body()
+}
+
+type Segment_Text struct {
+	Text *TextSeg `protobuf:"bytes,1,opt,name=text,proto3,oneof"`
+}
+
+type Segment_At struct {
+	At *AtSeg `protobuf:"bytes,2,opt,name=at,proto3,oneof"`
+}
+
+type Segment_Reply struct {
+	Reply *ReplySeg `protobuf:"bytes,3,opt,name=reply,proto3,oneof"`
+}
+
+type Segment_Image struct {
+	Image *MediaSeg `protobuf:"bytes,4,opt,name=image,proto3,oneof"`
+}
+
+type Segment_Face struct {
+	Face *FaceSeg `protobuf:"bytes,5,opt,name=face,proto3,oneof"`
+}
+
+type Segment_Voice struct {
+	Voice *MediaSeg `protobuf:"bytes,6,opt,name=voice,proto3,oneof"`
+}
+
+type Segment_Video struct {
+	Video *MediaSeg `protobuf:"bytes,7,opt,name=video,proto3,oneof"`
+}
+
+type Segment_File struct {
+	File *MediaSeg `protobuf:"bytes,8,opt,name=file,proto3,oneof"`
+}
+
+type Segment_Extension struct {
+	Extension *ExtensionSeg `protobuf:"bytes,15,opt,name=extension,proto3,oneof"` // 编号留大，插入新段不挤压
+}
+
+func (*Segment_Text) isSegment_Body() {}
+
+func (*Segment_At) isSegment_Body() {}
+
+func (*Segment_Reply) isSegment_Body() {}
+
+func (*Segment_Image) isSegment_Body() {}
+
+func (*Segment_Face) isSegment_Body() {}
+
+func (*Segment_Voice) isSegment_Body() {}
+
+func (*Segment_Video) isSegment_Body() {}
+
+func (*Segment_File) isSegment_Body() {}
+
+func (*Segment_Extension) isSegment_Body() {}
+
+type TextSeg struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TextSeg) Reset() {
+	*x = TextSeg{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TextSeg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TextSeg) ProtoMessage() {}
+
+func (x *TextSeg) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TextSeg.ProtoReflect.Descriptor instead.
+func (*TextSeg) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *TextSeg) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+type AtSeg struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Target        string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"` // 用户 ID；"all" 表示全体（支持的平台）
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AtSeg) Reset() {
+	*x = AtSeg{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AtSeg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AtSeg) ProtoMessage() {}
+
+func (x *AtSeg) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AtSeg.ProtoReflect.Descriptor instead.
+func (*AtSeg) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *AtSeg) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+type ReplySeg struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"` // 被回复的消息 ID
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplySeg) Reset() {
+	*x = ReplySeg{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplySeg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplySeg) ProtoMessage() {}
+
+func (x *ReplySeg) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplySeg.ProtoReflect.Descriptor instead.
+func (*ReplySeg) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ReplySeg) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+type FaceSeg struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FaceId        string                 `protobuf:"bytes,1,opt,name=face_id,json=faceId,proto3" json:"face_id,omitempty"` // 平台表情 ID，跨平台不保证一致
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FaceSeg) Reset() {
+	*x = FaceSeg{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FaceSeg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FaceSeg) ProtoMessage() {}
+
+func (x *FaceSeg) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FaceSeg.ProtoReflect.Descriptor instead.
+func (*FaceSeg) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *FaceSeg) GetFaceId() string {
+	if x != nil {
+		return x.FaceId
+	}
+	return ""
+}
+
+// 媒体统一形态：来源三选一
+type MediaSeg struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Source:
+	//
+	//	*MediaSeg_Url
+	//	*MediaSeg_FileId
+	//	*MediaSeg_Inline
+	Source        isMediaSeg_Source `protobuf_oneof:"source"`
+	Filename      string            `protobuf:"bytes,4,opt,name=filename,proto3" json:"filename,omitempty"` // file 段显示名；其他媒体可选
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MediaSeg) Reset() {
+	*x = MediaSeg{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MediaSeg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MediaSeg) ProtoMessage() {}
+
+func (x *MediaSeg) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MediaSeg.ProtoReflect.Descriptor instead.
+func (*MediaSeg) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *MediaSeg) GetSource() isMediaSeg_Source {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *MediaSeg) GetUrl() string {
+	if x != nil {
+		if x, ok := x.Source.(*MediaSeg_Url); ok {
+			return x.Url
+		}
+	}
+	return ""
+}
+
+func (x *MediaSeg) GetFileId() string {
+	if x != nil {
+		if x, ok := x.Source.(*MediaSeg_FileId); ok {
+			return x.FileId
+		}
+	}
+	return ""
+}
+
+func (x *MediaSeg) GetInline() []byte {
+	if x != nil {
+		if x, ok := x.Source.(*MediaSeg_Inline); ok {
+			return x.Inline
+		}
+	}
+	return nil
+}
+
+func (x *MediaSeg) GetFilename() string {
+	if x != nil {
+		return x.Filename
+	}
+	return ""
+}
+
+type isMediaSeg_Source interface {
+	isMediaSeg_Source()
+}
+
+type MediaSeg_Url struct {
+	Url string `protobuf:"bytes,1,opt,name=url,proto3,oneof"` // 收/发：可直接拉取的 URL
+}
+
+type MediaSeg_FileId struct {
+	FileId string `protobuf:"bytes,2,opt,name=file_id,json=fileId,proto3,oneof"` // 收：平台文件 ID（URL 会过期的平台靠它）
+}
+
+type MediaSeg_Inline struct {
+	Inline []byte `protobuf:"bytes,3,opt,name=inline,proto3,oneof"` // 发：内联二进制（大文件不建议）
+}
+
+func (*MediaSeg_Url) isMediaSeg_Source() {}
+
+func (*MediaSeg_FileId) isMediaSeg_Source() {}
+
+func (*MediaSeg_Inline) isMediaSeg_Source() {}
+
+type ExtensionSeg struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"` // 平台名或扩展名，如 "napcat"
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`           // 平台内段类型
+	Data          *structpb.Struct       `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`           // 平台原始字段
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExtensionSeg) Reset() {
+	*x = ExtensionSeg{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExtensionSeg) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExtensionSeg) ProtoMessage() {}
+
+func (x *ExtensionSeg) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExtensionSeg.ProtoReflect.Descriptor instead.
+func (*ExtensionSeg) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ExtensionSeg) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *ExtensionSeg) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *ExtensionSeg) GetData() *structpb.Struct {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type SendMessageRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Chat     *ChatRef               `protobuf:"bytes,1,opt,name=chat,proto3" json:"chat,omitempty"`
+	Segments []*Segment             `protobuf:"bytes,2,rep,name=segments,proto3" json:"segments,omitempty"`
+	// 路由目标平台（必填）：核心按它找到对应适配器
+	Platform      string `protobuf:"bytes,3,opt,name=platform,proto3" json:"platform,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendMessageRequest) Reset() {
+	*x = SendMessageRequest{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendMessageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendMessageRequest) ProtoMessage() {}
+
+func (x *SendMessageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendMessageRequest.ProtoReflect.Descriptor instead.
+func (*SendMessageRequest) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SendMessageRequest) GetChat() *ChatRef {
+	if x != nil {
+		return x.Chat
+	}
+	return nil
+}
+
+func (x *SendMessageRequest) GetSegments() []*Segment {
+	if x != nil {
+		return x.Segments
+	}
+	return nil
+}
+
+func (x *SendMessageRequest) GetPlatform() string {
+	if x != nil {
+		return x.Platform
+	}
+	return ""
+}
+
+type SendMessageResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"` // 新消息的平台 ID（撤回用）；平台不回时为空
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendMessageResponse) Reset() {
+	*x = SendMessageResponse{}
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendMessageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendMessageResponse) ProtoMessage() {}
+
+func (x *SendMessageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendMessageResponse.ProtoReflect.Descriptor instead.
+func (*SendMessageResponse) Descriptor() ([]byte, []int) {
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SendMessageResponse) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
 type SendActionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// action 名，如 send_private_msg / send_group_msg
+	// 平台 action 名，如 send_private_msg / delete_msg
 	Action string `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
-	// params 的 JSON
+	// 平台自有 schema 的 params JSON
 	Params []byte `protobuf:"bytes,2,opt,name=params,proto3" json:"params,omitempty"`
 	// 超时毫秒数，0 表示用适配器默认值
-	TimeoutMs     int32 `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	TimeoutMs int32 `protobuf:"varint,3,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// 路由目标平台（必填）。调用方缺省时按"哪里来哪里去"解析：
+	// 消息上下文中的调用跟随来源平台（python 能力桥解析）
+	Platform      string `protobuf:"bytes,4,opt,name=platform,proto3" json:"platform,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SendActionRequest) Reset() {
 	*x = SendActionRequest{}
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[2]
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -128,7 +1194,7 @@ func (x *SendActionRequest) String() string {
 func (*SendActionRequest) ProtoMessage() {}
 
 func (x *SendActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[2]
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -141,7 +1207,7 @@ func (x *SendActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendActionRequest.ProtoReflect.Descriptor instead.
 func (*SendActionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{2}
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SendActionRequest) GetAction() string {
@@ -165,9 +1231,16 @@ func (x *SendActionRequest) GetTimeoutMs() int32 {
 	return 0
 }
 
+func (x *SendActionRequest) GetPlatform() string {
+	if x != nil {
+		return x.Platform
+	}
+	return ""
+}
+
 type SendActionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// NapCat 返回的 data 字段 JSON
+	// 平台返回的 data 字段 JSON
 	Data          []byte `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
 	Status        string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
 	Retcode       int32  `protobuf:"varint,3,opt,name=retcode,proto3" json:"retcode,omitempty"`
@@ -177,7 +1250,7 @@ type SendActionResponse struct {
 
 func (x *SendActionResponse) Reset() {
 	*x = SendActionResponse{}
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[3]
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -189,7 +1262,7 @@ func (x *SendActionResponse) String() string {
 func (*SendActionResponse) ProtoMessage() {}
 
 func (x *SendActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_pluginapi_adapter_proto_msgTypes[3]
+	mi := &file_internal_pluginapi_adapter_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -202,7 +1275,7 @@ func (x *SendActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendActionResponse.ProtoReflect.Descriptor instead.
 func (*SendActionResponse) Descriptor() ([]byte, []int) {
-	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{3}
+	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SendActionResponse) GetData() []byte {
@@ -230,23 +1303,95 @@ var File_internal_pluginapi_adapter_proto protoreflect.FileDescriptor
 
 const file_internal_pluginapi_adapter_proto_rawDesc = "" +
 	"\n" +
-	" internal/pluginapi/adapter.proto\x12\fpluginapi.v1\"\x15\n" +
-	"\x13StreamEventsRequest\"!\n" +
-	"\x05Event\x12\x18\n" +
-	"\apayload\x18\x01 \x01(\fR\apayload\"b\n" +
+	" internal/pluginapi/adapter.proto\x12\fpluginapi.v2\x1a\x1cgoogle/protobuf/struct.proto\"S\n" +
+	"\x12InjectEventRequest\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x15\n" +
+	"\x06at_bot\x18\x02 \x01(\bR\x05atBot\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\"\x15\n" +
+	"\x13InjectEventResponse\"\x15\n" +
+	"\x13StreamEventsRequest\"\xd4\x01\n" +
+	"\rEventEnvelope\x12\x1a\n" +
+	"\bplatform\x18\x01 \x01(\tR\bplatform\x12+\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x17.pluginapi.v2.EventKindR\x04kind\x12\x17\n" +
+	"\atime_ms\x18\x03 \x01(\x03R\x06timeMs\x126\n" +
+	"\amessage\x18\x04 \x01(\v2\x1c.pluginapi.v2.UnifiedMessageR\amessage\x12\x10\n" +
+	"\x03raw\x18\x05 \x01(\fR\x03raw\x12\x17\n" +
+	"\aself_id\x18\x06 \x01(\tR\x06selfId\"\xcf\x01\n" +
+	"\x0eUnifiedMessage\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12)\n" +
+	"\x04chat\x18\x02 \x01(\v2\x15.pluginapi.v2.ChatRefR\x04chat\x12,\n" +
+	"\x06sender\x18\x03 \x01(\v2\x14.pluginapi.v2.SenderR\x06sender\x121\n" +
+	"\bsegments\x18\x04 \x03(\v2\x15.pluginapi.v2.SegmentR\bsegments\x12!\n" +
+	"\fmentions_bot\x18\x05 \x01(\bR\vmentionsBot\"p\n" +
+	"\aChatRef\x12\x1f\n" +
+	"\n" +
+	"private_id\x18\x01 \x01(\tH\x00R\tprivateId\x12\x1b\n" +
+	"\bgroup_id\x18\x02 \x01(\tH\x00R\agroupId\x12\x1f\n" +
+	"\n" +
+	"channel_id\x18\x03 \x01(\tH\x00R\tchannelIdB\x06\n" +
+	"\x04kind\"4\n" +
+	"\x06Sender\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
+	"\bnickname\x18\x02 \x01(\tR\bnickname\"\xbc\x03\n" +
+	"\aSegment\x12+\n" +
+	"\x04text\x18\x01 \x01(\v2\x15.pluginapi.v2.TextSegH\x00R\x04text\x12%\n" +
+	"\x02at\x18\x02 \x01(\v2\x13.pluginapi.v2.AtSegH\x00R\x02at\x12.\n" +
+	"\x05reply\x18\x03 \x01(\v2\x16.pluginapi.v2.ReplySegH\x00R\x05reply\x12.\n" +
+	"\x05image\x18\x04 \x01(\v2\x16.pluginapi.v2.MediaSegH\x00R\x05image\x12+\n" +
+	"\x04face\x18\x05 \x01(\v2\x15.pluginapi.v2.FaceSegH\x00R\x04face\x12.\n" +
+	"\x05voice\x18\x06 \x01(\v2\x16.pluginapi.v2.MediaSegH\x00R\x05voice\x12.\n" +
+	"\x05video\x18\a \x01(\v2\x16.pluginapi.v2.MediaSegH\x00R\x05video\x12,\n" +
+	"\x04file\x18\b \x01(\v2\x16.pluginapi.v2.MediaSegH\x00R\x04file\x12:\n" +
+	"\textension\x18\x0f \x01(\v2\x1a.pluginapi.v2.ExtensionSegH\x00R\textensionB\x06\n" +
+	"\x04body\"\x1d\n" +
+	"\aTextSeg\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\"\x1f\n" +
+	"\x05AtSeg\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\tR\x06target\")\n" +
+	"\bReplySeg\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\"\"\n" +
+	"\aFaceSeg\x12\x17\n" +
+	"\aface_id\x18\x01 \x01(\tR\x06faceId\"y\n" +
+	"\bMediaSeg\x12\x12\n" +
+	"\x03url\x18\x01 \x01(\tH\x00R\x03url\x12\x19\n" +
+	"\afile_id\x18\x02 \x01(\tH\x00R\x06fileId\x12\x18\n" +
+	"\x06inline\x18\x03 \x01(\fH\x00R\x06inline\x12\x1a\n" +
+	"\bfilename\x18\x04 \x01(\tR\bfilenameB\b\n" +
+	"\x06source\"m\n" +
+	"\fExtensionSeg\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12+\n" +
+	"\x04data\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x04data\"\x8e\x01\n" +
+	"\x12SendMessageRequest\x12)\n" +
+	"\x04chat\x18\x01 \x01(\v2\x15.pluginapi.v2.ChatRefR\x04chat\x121\n" +
+	"\bsegments\x18\x02 \x03(\v2\x15.pluginapi.v2.SegmentR\bsegments\x12\x1a\n" +
+	"\bplatform\x18\x03 \x01(\tR\bplatform\"4\n" +
+	"\x13SendMessageResponse\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\"~\n" +
 	"\x11SendActionRequest\x12\x16\n" +
 	"\x06action\x18\x01 \x01(\tR\x06action\x12\x16\n" +
 	"\x06params\x18\x02 \x01(\fR\x06params\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\x03 \x01(\x05R\ttimeoutMs\"Z\n" +
+	"timeout_ms\x18\x03 \x01(\x05R\ttimeoutMs\x12\x1a\n" +
+	"\bplatform\x18\x04 \x01(\tR\bplatform\"Z\n" +
 	"\x12SendActionResponse\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x18\n" +
-	"\aretcode\x18\x03 \x01(\x05R\aretcode2\xa4\x01\n" +
-	"\aAdapter\x12H\n" +
-	"\fStreamEvents\x12!.pluginapi.v1.StreamEventsRequest\x1a\x13.pluginapi.v1.Event0\x01\x12O\n" +
+	"\aretcode\x18\x03 \x01(\x05R\aretcode*\x83\x01\n" +
+	"\tEventKind\x12\x1a\n" +
+	"\x16EVENT_KIND_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12EVENT_KIND_MESSAGE\x10\x01\x12\x15\n" +
+	"\x11EVENT_KIND_NOTICE\x10\x02\x12\x16\n" +
+	"\x12EVENT_KIND_REQUEST\x10\x03\x12\x13\n" +
+	"\x0fEVENT_KIND_META\x10\x042\xd4\x02\n" +
+	"\aAdapter\x12P\n" +
+	"\fStreamEvents\x12!.pluginapi.v2.StreamEventsRequest\x1a\x1b.pluginapi.v2.EventEnvelope0\x01\x12R\n" +
+	"\vInjectEvent\x12 .pluginapi.v2.InjectEventRequest\x1a!.pluginapi.v2.InjectEventResponse\x12R\n" +
+	"\vSendMessage\x12 .pluginapi.v2.SendMessageRequest\x1a!.pluginapi.v2.SendMessageResponse\x12O\n" +
 	"\n" +
-	"SendAction\x12\x1f.pluginapi.v1.SendActionRequest\x1a .pluginapi.v1.SendActionResponseB<Z:github.com/full-finger/loquat/internal/pluginapi;pluginapib\x06proto3"
+	"SendAction\x12\x1f.pluginapi.v2.SendActionRequest\x1a .pluginapi.v2.SendActionResponseB<Z:github.com/full-finger/loquat/internal/pluginapi;pluginapib\x06proto3"
 
 var (
 	file_internal_pluginapi_adapter_proto_rawDescOnce sync.Once
@@ -260,23 +1405,61 @@ func file_internal_pluginapi_adapter_proto_rawDescGZIP() []byte {
 	return file_internal_pluginapi_adapter_proto_rawDescData
 }
 
-var file_internal_pluginapi_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_internal_pluginapi_adapter_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_internal_pluginapi_adapter_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_internal_pluginapi_adapter_proto_goTypes = []any{
-	(*StreamEventsRequest)(nil), // 0: pluginapi.v1.StreamEventsRequest
-	(*Event)(nil),               // 1: pluginapi.v1.Event
-	(*SendActionRequest)(nil),   // 2: pluginapi.v1.SendActionRequest
-	(*SendActionResponse)(nil),  // 3: pluginapi.v1.SendActionResponse
+	(EventKind)(0),              // 0: pluginapi.v2.EventKind
+	(*InjectEventRequest)(nil),  // 1: pluginapi.v2.InjectEventRequest
+	(*InjectEventResponse)(nil), // 2: pluginapi.v2.InjectEventResponse
+	(*StreamEventsRequest)(nil), // 3: pluginapi.v2.StreamEventsRequest
+	(*EventEnvelope)(nil),       // 4: pluginapi.v2.EventEnvelope
+	(*UnifiedMessage)(nil),      // 5: pluginapi.v2.UnifiedMessage
+	(*ChatRef)(nil),             // 6: pluginapi.v2.ChatRef
+	(*Sender)(nil),              // 7: pluginapi.v2.Sender
+	(*Segment)(nil),             // 8: pluginapi.v2.Segment
+	(*TextSeg)(nil),             // 9: pluginapi.v2.TextSeg
+	(*AtSeg)(nil),               // 10: pluginapi.v2.AtSeg
+	(*ReplySeg)(nil),            // 11: pluginapi.v2.ReplySeg
+	(*FaceSeg)(nil),             // 12: pluginapi.v2.FaceSeg
+	(*MediaSeg)(nil),            // 13: pluginapi.v2.MediaSeg
+	(*ExtensionSeg)(nil),        // 14: pluginapi.v2.ExtensionSeg
+	(*SendMessageRequest)(nil),  // 15: pluginapi.v2.SendMessageRequest
+	(*SendMessageResponse)(nil), // 16: pluginapi.v2.SendMessageResponse
+	(*SendActionRequest)(nil),   // 17: pluginapi.v2.SendActionRequest
+	(*SendActionResponse)(nil),  // 18: pluginapi.v2.SendActionResponse
+	(*structpb.Struct)(nil),     // 19: google.protobuf.Struct
 }
 var file_internal_pluginapi_adapter_proto_depIdxs = []int32{
-	0, // 0: pluginapi.v1.Adapter.StreamEvents:input_type -> pluginapi.v1.StreamEventsRequest
-	2, // 1: pluginapi.v1.Adapter.SendAction:input_type -> pluginapi.v1.SendActionRequest
-	1, // 2: pluginapi.v1.Adapter.StreamEvents:output_type -> pluginapi.v1.Event
-	3, // 3: pluginapi.v1.Adapter.SendAction:output_type -> pluginapi.v1.SendActionResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0,  // 0: pluginapi.v2.EventEnvelope.kind:type_name -> pluginapi.v2.EventKind
+	5,  // 1: pluginapi.v2.EventEnvelope.message:type_name -> pluginapi.v2.UnifiedMessage
+	6,  // 2: pluginapi.v2.UnifiedMessage.chat:type_name -> pluginapi.v2.ChatRef
+	7,  // 3: pluginapi.v2.UnifiedMessage.sender:type_name -> pluginapi.v2.Sender
+	8,  // 4: pluginapi.v2.UnifiedMessage.segments:type_name -> pluginapi.v2.Segment
+	9,  // 5: pluginapi.v2.Segment.text:type_name -> pluginapi.v2.TextSeg
+	10, // 6: pluginapi.v2.Segment.at:type_name -> pluginapi.v2.AtSeg
+	11, // 7: pluginapi.v2.Segment.reply:type_name -> pluginapi.v2.ReplySeg
+	13, // 8: pluginapi.v2.Segment.image:type_name -> pluginapi.v2.MediaSeg
+	12, // 9: pluginapi.v2.Segment.face:type_name -> pluginapi.v2.FaceSeg
+	13, // 10: pluginapi.v2.Segment.voice:type_name -> pluginapi.v2.MediaSeg
+	13, // 11: pluginapi.v2.Segment.video:type_name -> pluginapi.v2.MediaSeg
+	13, // 12: pluginapi.v2.Segment.file:type_name -> pluginapi.v2.MediaSeg
+	14, // 13: pluginapi.v2.Segment.extension:type_name -> pluginapi.v2.ExtensionSeg
+	19, // 14: pluginapi.v2.ExtensionSeg.data:type_name -> google.protobuf.Struct
+	6,  // 15: pluginapi.v2.SendMessageRequest.chat:type_name -> pluginapi.v2.ChatRef
+	8,  // 16: pluginapi.v2.SendMessageRequest.segments:type_name -> pluginapi.v2.Segment
+	3,  // 17: pluginapi.v2.Adapter.StreamEvents:input_type -> pluginapi.v2.StreamEventsRequest
+	1,  // 18: pluginapi.v2.Adapter.InjectEvent:input_type -> pluginapi.v2.InjectEventRequest
+	15, // 19: pluginapi.v2.Adapter.SendMessage:input_type -> pluginapi.v2.SendMessageRequest
+	17, // 20: pluginapi.v2.Adapter.SendAction:input_type -> pluginapi.v2.SendActionRequest
+	4,  // 21: pluginapi.v2.Adapter.StreamEvents:output_type -> pluginapi.v2.EventEnvelope
+	2,  // 22: pluginapi.v2.Adapter.InjectEvent:output_type -> pluginapi.v2.InjectEventResponse
+	16, // 23: pluginapi.v2.Adapter.SendMessage:output_type -> pluginapi.v2.SendMessageResponse
+	18, // 24: pluginapi.v2.Adapter.SendAction:output_type -> pluginapi.v2.SendActionResponse
+	21, // [21:25] is the sub-list for method output_type
+	17, // [17:21] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_internal_pluginapi_adapter_proto_init() }
@@ -284,18 +1467,40 @@ func file_internal_pluginapi_adapter_proto_init() {
 	if File_internal_pluginapi_adapter_proto != nil {
 		return
 	}
+	file_internal_pluginapi_adapter_proto_msgTypes[5].OneofWrappers = []any{
+		(*ChatRef_PrivateId)(nil),
+		(*ChatRef_GroupId)(nil),
+		(*ChatRef_ChannelId)(nil),
+	}
+	file_internal_pluginapi_adapter_proto_msgTypes[7].OneofWrappers = []any{
+		(*Segment_Text)(nil),
+		(*Segment_At)(nil),
+		(*Segment_Reply)(nil),
+		(*Segment_Image)(nil),
+		(*Segment_Face)(nil),
+		(*Segment_Voice)(nil),
+		(*Segment_Video)(nil),
+		(*Segment_File)(nil),
+		(*Segment_Extension)(nil),
+	}
+	file_internal_pluginapi_adapter_proto_msgTypes[12].OneofWrappers = []any{
+		(*MediaSeg_Url)(nil),
+		(*MediaSeg_FileId)(nil),
+		(*MediaSeg_Inline)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_pluginapi_adapter_proto_rawDesc), len(file_internal_pluginapi_adapter_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   4,
+			NumEnums:      1,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_internal_pluginapi_adapter_proto_goTypes,
 		DependencyIndexes: file_internal_pluginapi_adapter_proto_depIdxs,
+		EnumInfos:         file_internal_pluginapi_adapter_proto_enumTypes,
 		MessageInfos:      file_internal_pluginapi_adapter_proto_msgTypes,
 	}.Build()
 	File_internal_pluginapi_adapter_proto = out.File

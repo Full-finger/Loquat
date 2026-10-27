@@ -11,12 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"runtime/debug"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
+	"google.golang.org/protobuf/encoding/protojson"
 	"gopkg.in/yaml.v3"
 
 	"github.com/full-finger/loquat/internal/pluginapi"
@@ -35,10 +37,38 @@ type Config struct {
 		Token string `yaml:"token"`
 	} `yaml:"napcat"`
 	Plugins struct {
-		Napcat struct {
+		// Adapters 拉起的适配器列表，如 [napcat, sandbox]。
+		// 核心为每个适配器维护独立子进程与断流重启循环，
+		// 下行（SendMessage/SendAction）按请求里的 platform 路由。
+		Adapters []string `yaml:"adapters"`
+		Napcat   struct {
 			Path string `yaml:"path"`
 		} `yaml:"napcat"`
+		Sandbox struct {
+			Path string `yaml:"path"`
+			Addr string `yaml:"addr"` // 聊天页监听地址（已并入 webui，此字段预留）
+		} `yaml:"sandbox"`
 	} `yaml:"plugins"`
+}
+
+// enabledAdapters 归一化适配器列表：缺省 [napcat]（兼容旧配置），去重保序。
+// 调用方持 cfgMu（热更与读取互斥）。
+func (c *Config) enabledAdapters() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, name := range c.Plugins.Adapters {
+		if name != "napcat" && name != "sandbox" {
+			continue // loadConfig 已报错，这里兜底跳过
+		}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"napcat"}
+	}
+	return out
 }
 
 var ErrNotStarted = errors.New("core 未启动")
@@ -51,31 +81,84 @@ type pluginRuntime struct {
 	client  *plugin.Client
 	adapter pluginapi.AdapterClient
 	pid     int // 适配器子进程 PID，供系统状态采集
+	// spawn 时的启动参数快照：适配器管理 diff「参数是否变更」用
+	launchedPath  string
+	launchedURL   string
+	launchedToken string
 }
 
 type Core struct {
-	cfg     *Config
-	logger  hclog.Logger
-	runtime atomic.Pointer[pluginRuntime]
-	events  chan *pluginapi.Event
-	onEvent func(payload []byte)
-	ctx     context.Context
-	cancel  context.CancelFunc
-	// 串行化 spawn 的换装与 killRuntime：关掉「Stop 杀完旧的，
-	// 飞行中的 spawn 又 Store 新的」的孤儿窗口（26102202#2）
-	runtimeMu sync.Mutex
+	cfg        *Config
+	configPath string // 配置文件路径：适配器管理写回用
+	logger     hclog.Logger
+	events     chan *pluginapi.EventEnvelope
+	onEvent    func(payload []byte)
+	// cfg 的字段可被 ApplyAdaptersConfig 热更（适配器管理写回），
+	// 读取点（adapterPath/adapterEnv/enabledAdapters/napcat 参数）持 cfgMu
+	cfgMu sync.Mutex
+	// c.ctx 是进程级总闸（Stop 取消）；每平台 run 循环另持派生 ctx，
+	// 移除单个平台时只取消它自己的
+	ctx    context.Context
+	cancel context.CancelFunc
+	// 每平台一个 runtime（独立子进程与重启循环）。读写都拿 runtimesMu：
+	// 调用频率低（每消息一两次），锁无压力；换装与 kill 互斥由它保证
+	runtimesMu sync.Mutex
+	runtimes   map[string]*pluginRuntime
+	runCancels map[string]context.CancelFunc
 	// run/consume 收口用：Stop 等它们退出后再返回
 	wg sync.WaitGroup
 	// 队列满丢弃的事件数：Status 的 events_dropped 口径（26102202#9）
 	eventsDropped atomic.Int64
 }
 
-// killRuntime 杀掉当前插件客户端，未 spawn 成功过则无事发生。可重复调用。
-// 与 spawn 的换装持同一把锁：杀的时候不会有新实例插入到身后。
-func (c *Core) killRuntime() {
-	c.runtimeMu.Lock()
-	defer c.runtimeMu.Unlock()
-	if rt := c.runtime.Load(); rt != nil {
+// lockCfg/unlockCfg：cfg 字段读取点的短锁包裹。
+func (c *Core) lockCfg() {
+	c.cfgMu.Lock()
+}
+
+func (c *Core) unlockCfg() {
+	c.cfgMu.Unlock()
+}
+
+// getRuntime 取平台对应的 runtime。未启用/未就绪返回 false。
+func (c *Core) getRuntime(platform string) (*pluginRuntime, bool) {
+	c.runtimesMu.Lock()
+	defer c.runtimesMu.Unlock()
+	rt, ok := c.runtimes[platform]
+	return rt, ok
+}
+
+// runtimeFor 下行调用的路由入口：platform 必填，未启用报错。
+// 消息该发给谁由调用方决定——核心不猜（猜错会打到真实用户）。
+func (c *Core) runtimeFor(platform string) (*pluginRuntime, error) {
+	if platform == "" {
+		return nil, errors.New("platform 必填（下行按平台路由，不猜默认）")
+	}
+	rt, ok := c.getRuntime(platform)
+	if !ok {
+		return nil, fmt.Errorf("适配器 %s 未启用或未就绪", platform)
+	}
+	return rt, nil
+}
+
+// killRuntime 杀掉平台插件客户端。可重复调用。与 spawn 的换装持同一把锁：
+// 杀的时候不会有新实例插入到身后。
+// 只 Kill 不从 map 删除：Status/采集方仍能读到该平台的 PID（alive 如实
+// 变 false），run 循环退避后 spawn 会覆盖同 key。
+func (c *Core) killRuntime(platform string) {
+	c.runtimesMu.Lock()
+	defer c.runtimesMu.Unlock()
+	if rt, ok := c.runtimes[platform]; ok {
+		rt.client.Kill()
+	}
+}
+
+// killAllRuntimes 停止/重启路径用：杀掉全部平台的插件客户端。
+// 只 Kill 不删 map（同 killRuntime 的观测语义）；spawn 会覆盖同 key。
+func (c *Core) killAllRuntimes() {
+	c.runtimesMu.Lock()
+	defer c.runtimesMu.Unlock()
+	for _, rt := range c.runtimes {
 		rt.client.Kill()
 	}
 }
@@ -100,48 +183,86 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	if err != nil {
 		return err
 	}
-	logger.Info("配置已加载", "napcat", cfg.Napcat.URL, "adapter", cfg.Plugins.Napcat.Path)
+	logger.Info("配置已加载", "napcat", cfg.Napcat.URL, "adapters", cfg.enabledAdapters())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Core{
-		cfg:     cfg,
-		logger:  logger,
-		events:  make(chan *pluginapi.Event, eventsBuffer),
-		onEvent: onEvent,
-		ctx:     ctx,
-		cancel:  cancel,
+		cfg:        cfg,
+		configPath: configPath,
+		logger:     logger,
+		events:     make(chan *pluginapi.EventEnvelope, eventsBuffer),
+		onEvent:    onEvent,
+		ctx:        ctx,
+		cancel:     cancel,
+		runtimes:   map[string]*pluginRuntime{},
+		runCancels: map[string]context.CancelFunc{},
 	}
-	// spawn 含子进程握手，可能耗时；不持锁，避免 Status 等查询被拖死。
-	// 完成后持锁双检，保证全局只有一个实例。
-	if err := c.spawn(); err != nil {
-		cancel()
-		return err
+	// 逐平台 spawn（含子进程握手，可能耗时；不持全局锁，避免查询被拖死）。
+	// 任一失败：回收已启动的平台后整体失败——半启动状态最难受。
+	c.lockCfg()
+	adapters := cfg.enabledAdapters()
+	c.unlockCfg()
+	for _, name := range adapters {
+		if err := c.spawn(name); err != nil {
+			cancel()
+			c.killAllRuntimes()
+			return err
+		}
 	}
 	mu.Lock()
 	if active != nil {
 		mu.Unlock()
 		cancel()
-		c.killRuntime()
+		c.killAllRuntimes()
 		return errors.New("core 已启动（并发）")
 	}
 	active = c
 	mu.Unlock()
 
-	c.wg.Add(2)
+	// 每平台一条事件流循环：断流重启互不影响，沙箱死不连累 napcat
+	c.wg.Add(1)
 	go func() { defer c.wg.Done(); c.consume() }()
-	go func() { defer c.wg.Done(); c.run() }()
-	c.logger.Info("核心已启动", "napcat", cfg.Napcat.URL, "adapter", cfg.Plugins.Napcat.Path)
+	for _, name := range adapters {
+		c.startRunLoop(name)
+	}
+	c.logger.Info("核心已启动", "napcat", cfg.Napcat.URL, "adapters", adapters)
 	return nil
 }
 
-// spawn 创建插件子进程并完成握手，成功后原子换装新 runtime。
+// startRunLoop 为平台起事件流循环（派生 ctx，移除平台时单独取消）。
+func (c *Core) startRunLoop(platform string) {
+	ctx, cancel := context.WithCancel(c.ctx)
+	c.runtimesMu.Lock()
+	c.runCancels[platform] = cancel
+	c.runtimesMu.Unlock()
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.run(platform, ctx)
+	}()
+}
+
+// stopRunLoop 取消平台事件流循环（不杀子进程，由调用方决定）。
+// 不等退出：run 循环在下一次泵检查时自行返回，wg 统一收口。
+func (c *Core) stopRunLoop(platform string) {
+	c.runtimesMu.Lock()
+	cancel, ok := c.runCancels[platform]
+	delete(c.runCancels, platform)
+	c.runtimesMu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+// spawn 创建平台适配器子进程并完成握手，成功后换装该平台的 runtime。
 // 断流重启时会被再次调用。失败路径回收已创建的客户端，避免泄漏子进程。
-func (c *Core) spawn() error {
-	cmd := exec.Command(c.cfg.Plugins.Napcat.Path)
-	cmd.Env = append(os.Environ(),
-		"LOQUAT_NAPCAT_URL="+c.cfg.Napcat.URL,
-		"LOQUAT_NAPCAT_TOKEN="+c.cfg.Napcat.Token,
-	)
+func (c *Core) spawn(platform string) error {
+	c.lockCfg()
+	cmd := exec.Command(c.cfg.adapterPath(platform))
+	cmd.Env = append(os.Environ(), c.cfg.adapterEnv(platform)...)
+	launchedPath := c.cfg.adapterPath(platform)
+	launchedURL, launchedToken := c.cfg.Napcat.URL, c.cfg.Napcat.Token
+	c.unlockCfg()
 	client := plugin.NewClient(&plugin.ClientConfig{
 		Cmd:              cmd,
 		HandshakeConfig:  pluginapi.Handshake,
@@ -174,15 +295,41 @@ func (c *Core) spawn() error {
 	// 入册前在锁内复查 ctx：Stop 可能已经跑完 killRuntime，此刻换装
 	// 出的新实例会成孤儿（无人认领、带着 WS 重连循环一直活）。
 	// 已取消则自己收拾自己。
-	c.runtimeMu.Lock()
+	c.runtimesMu.Lock()
 	if err := c.ctx.Err(); err != nil {
-		c.runtimeMu.Unlock()
+		c.runtimesMu.Unlock()
 		client.Kill()
 		return fmt.Errorf("核心已停止，放弃入册新插件实例: %w", err)
 	}
-	c.runtime.Store(&pluginRuntime{client: client, adapter: adapter, pid: pid})
-	c.runtimeMu.Unlock()
+	c.runtimes[platform] = &pluginRuntime{
+		client: client, adapter: adapter, pid: pid,
+		launchedPath: launchedPath, launchedURL: launchedURL, launchedToken: launchedToken,
+	}
+	c.runtimesMu.Unlock()
 	return nil
+}
+
+// adapterPath 平台适配器的可执行文件路径。调用方持 cfgMu。
+func (cfg *Config) adapterPath(platform string) string {
+	if platform == "sandbox" {
+		return cfg.Plugins.Sandbox.Path
+	}
+	return cfg.Plugins.Napcat.Path
+}
+
+// adapterEnv 平台适配器的环境变量通道。调用方持 cfgMu。
+func (cfg *Config) adapterEnv(platform string) []string {
+	if platform == "sandbox" {
+		addr := cfg.Plugins.Sandbox.Addr
+		if addr == "" {
+			addr = "127.0.0.1:7902"
+		}
+		return []string{"LOQUAT_SANDBOX_ADDR=" + addr}
+	}
+	return []string{
+		"LOQUAT_NAPCAT_URL=" + cfg.Napcat.URL,
+		"LOQUAT_NAPCAT_TOKEN=" + cfg.Napcat.Token,
+	}
 }
 
 // guard 捕获单次 panic 并记日志，让循环继续。onEvent 是宿主注入的
@@ -195,55 +342,56 @@ func guard(logger hclog.Logger, what string) {
 	}
 }
 
-// run 维护事件流：断流就退避重启插件子进程，直到 ctx 取消。
-// 这是崩溃隔离的另一半：插件死活不影响调用方，最多丢它自己那条流。
-func (c *Core) run() {
+// run 维护平台事件流：断流就退避重启该平台插件子进程，直到 ctx 取消。
+// 这是崩溃隔离的另一半：插件死活不影响调用方，最多丢它自己那条流；
+// 平台之间互不影响。
+func (c *Core) run(platform string, ctx context.Context) {
 	backoff := firstBackoff
-	for c.ctx.Err() == nil {
+	for ctx.Err() == nil {
 		err := func() (err error) {
 			defer guard(c.logger, "pump")
-			return c.pump()
+			return c.pump(platform, ctx)
 		}()
-		if c.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
-		c.logger.Error("事件流断开", "err", err, "backoff", backoff.String())
-		c.killRuntime()
+		c.logger.Error("事件流断开", "adapter", platform, "err", err, "backoff", backoff.String())
+		c.killRuntime(platform)
 		select {
 		case <-time.After(backoff):
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 		if backoff < maxBackoff {
 			backoff *= 2
 		}
-		if err := c.spawn(); err != nil {
-			c.logger.Error("插件重启失败", "err", err)
+		if err := c.spawn(platform); err != nil {
+			c.logger.Error("插件重启失败", "adapter", platform, "err", err)
 			continue
 		}
 		backoff = firstBackoff
-		c.logger.Info("适配器插件已重启")
+		c.logger.Info("适配器插件已重启", "adapter", platform)
 	}
 }
 
-// pump 建立事件流并逐条入队；ctx 取消返回 nil，其余返回错误。
-func (c *Core) pump() error {
-	rt := c.runtime.Load()
-	if rt == nil {
+// pump 建立平台事件流并逐条入队；ctx 取消返回 nil，其余返回错误。
+func (c *Core) pump(platform string, ctx context.Context) error {
+	rt, ok := c.getRuntime(platform)
+	if !ok {
 		return errors.New("插件运行时未就绪")
 	}
-	c.logger.Info("订阅适配器事件流")
-	stream, err := rt.adapter.StreamEvents(c.ctx, &pluginapi.StreamEventsRequest{})
+	c.logger.Info("订阅适配器事件流", "adapter", platform)
+	stream, err := rt.adapter.StreamEvents(ctx, &pluginapi.StreamEventsRequest{})
 	if err != nil {
 		return err
 	}
 	for {
-		ev, err := func() (ev *pluginapi.Event, err error) {
+		ev, err := func() (ev *pluginapi.EventEnvelope, err error) {
 			defer guard(c.logger, "stream.Recv")
 			return stream.Recv()
 		}()
 		if err != nil {
-			if c.ctx.Err() != nil {
+			if ctx.Err() != nil {
 				return nil
 			}
 			return err
@@ -258,6 +406,8 @@ func (c *Core) pump() error {
 }
 
 // consume 消费队列，把事件投递给宿主回调。
+// 信封用 protojson marshal 过 C ABI（camelCase 字段、enum 名、int64 字符串，
+// 宿主按同一约定解）；marshal 失败记日志丢单条不拖垮循环。
 func (c *Core) consume() {
 	for {
 		select {
@@ -266,40 +416,87 @@ func (c *Core) consume() {
 		case ev := <-c.events:
 			func() {
 				defer guard(c.logger, "onEvent")
-				c.onEvent(ev.GetPayload())
+				b, err := protojson.Marshal(ev)
+				if err != nil {
+					c.logger.Error("事件信封序列化失败，已丢弃", "err", err)
+					return
+				}
+				c.onEvent(b)
 			}()
 		}
 	}
 }
 
-// SendAction 供宿主（exe 自测 / Rust FFI）下发动作。并发安全。
-func SendAction(action string, params []byte, timeout time.Duration) (*pluginapi.SendActionResponse, error) {
+// SendAction 供宿主（Rust FFI）透传平台动作，按 platform 路由。并发安全。
+// platform 来自调用方解析（消息上下文跟随来源平台），核心不猜。
+func SendAction(platform, action string, params []byte, timeout time.Duration) (*pluginapi.SendActionResponse, error) {
 	mu.Lock()
 	c := active
 	mu.Unlock()
 	if c == nil {
 		return nil, ErrNotStarted
 	}
+	rt, err := c.runtimeFor(platform)
+	if err != nil {
+		return nil, err
+	}
 	if timeout <= 0 {
 		timeout = actionTimeout
-	}
-	rt := c.runtime.Load()
-	if rt == nil {
-		return nil, ErrNotStarted
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
 	return rt.adapter.SendAction(ctx, &pluginapi.SendActionRequest{
-		Action: action,
-		Params: params,
+		Action:   action,
+		Params:   params,
+		Platform: platform,
 	})
+}
+
+// InjectEvent 注入一条本地事件（沙箱调试用），按 platform 路由。并发安全。
+func InjectEvent(platform, text string, atBot bool, mode string) error {
+	mu.Lock()
+	c := active
+	mu.Unlock()
+	if c == nil {
+		return ErrNotStarted
+	}
+	rt, err := c.runtimeFor(platform)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, actionTimeout)
+	defer cancel()
+	_, err = rt.adapter.InjectEvent(ctx, &pluginapi.InjectEventRequest{
+		Text: text, AtBot: atBot, Mode: mode,
+	})
+	return err
+}
+
+// SendMessage 统一发送：段列表交适配器翻译成平台消息。并发安全。
+func SendMessage(req *pluginapi.SendMessageRequest, timeout time.Duration) (*pluginapi.SendMessageResponse, error) {
+	mu.Lock()
+	c := active
+	mu.Unlock()
+	if c == nil {
+		return nil, ErrNotStarted
+	}
+	rt, err := c.runtimeFor(req.GetPlatform())
+	if err != nil {
+		return nil, err
+	}
+	if timeout <= 0 {
+		timeout = actionTimeout
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, timeout)
+	defer cancel()
+	return rt.adapter.SendMessage(ctx, req)
 }
 
 // stopWaitTimeout：Stop 等待 run/consume 收口的上限，防个别阻塞点卡死退出路径。
 const stopWaitTimeout = 5 * time.Second
 
-// Stop 停止核心并杀掉插件子进程。重复调用安全。
-// 顺序：cancel → 杀当前插件实例 → 等 run/consume 收口。飞行中的 spawn
+// Stop 停止核心并杀掉全部插件子进程。重复调用安全。
+// 顺序：cancel → 杀所有平台插件实例 → 等 run/consume 收口。飞行中的 spawn
 // 会在锁内看到 ctx 已取消并自己回收，不会留下孤儿子进程（26102202#2）。
 func Stop() {
 	mu.Lock()
@@ -310,7 +507,7 @@ func Stop() {
 		return
 	}
 	c.cancel()
-	c.killRuntime()
+	c.killAllRuntimes()
 	done := make(chan struct{})
 	go func() {
 		c.wg.Wait()
@@ -324,7 +521,8 @@ func Stop() {
 	c.logger.Info("核心已停止")
 }
 
-// RestartAdapters 杀掉插件客户端；run 循环检测到断流后会退避重启。
+// RestartAdapters 杀掉全部插件客户端；各平台的 run 循环检测到断流后
+// 会退避重启，互不影响。
 func RestartAdapters() error {
 	mu.Lock()
 	c := active
@@ -332,7 +530,7 @@ func RestartAdapters() error {
 	if c == nil {
 		return ErrNotStarted
 	}
-	c.killRuntime()
+	c.killAllRuntimes()
 	return nil
 }
 
@@ -342,19 +540,26 @@ func Status() string {
 	c := active
 	mu.Unlock()
 	started := c != nil
-	alive := false
-	adapterPID := 0
 	dropped := int64(0)
+	adapters := []map[string]any{}
 	if started {
-		if rt := c.runtime.Load(); rt != nil {
-			alive = !rt.client.Exited()
-			adapterPID = rt.pid
-		}
 		dropped = c.eventsDropped.Load()
+		c.runtimesMu.Lock()
+		for name, rt := range c.runtimes {
+			adapters = append(adapters, map[string]any{
+				"platform": name,
+				"alive":    !rt.client.Exited(),
+				"pid":      rt.pid,
+			})
+		}
+		c.runtimesMu.Unlock()
+		sort.Slice(adapters, func(i, j int) bool {
+			return adapters[i]["platform"].(string) < adapters[j]["platform"].(string)
+		})
 	}
 	b, err := json.Marshal(map[string]any{
-		"started": started, "adapter_alive": alive,
-		"adapter_pid": adapterPID, "events_dropped": dropped,
+		"started": started, "adapters": adapters,
+		"events_dropped": dropped,
 	})
 	if err != nil {
 		return "{}"
@@ -384,8 +589,23 @@ func loadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("解析 %s: %w", path, err)
 	}
-	if cfg.Napcat.URL == "" || cfg.Plugins.Napcat.Path == "" {
-		return nil, fmt.Errorf("配置缺项：napcat.url 与 plugins.napcat.path 必填")
+	// 按启用的适配器校验必填项：不用到的平台不要求配置
+	if len(cfg.Plugins.Adapters) == 0 {
+		cfg.Plugins.Adapters = []string{"napcat"} // 缺省 napcat，兼容旧配置
+	}
+	for _, name := range cfg.Plugins.Adapters {
+		switch name {
+		case "sandbox":
+			if cfg.Plugins.Sandbox.Path == "" {
+				return nil, fmt.Errorf("配置缺项：plugins.sandbox.path 必填（adapters 含 sandbox）")
+			}
+		case "napcat":
+			if cfg.Napcat.URL == "" || cfg.Plugins.Napcat.Path == "" {
+				return nil, fmt.Errorf("配置缺项：napcat.url 与 plugins.napcat.path 必填")
+			}
+		default:
+			return nil, fmt.Errorf("未知适配器 %q（支持：napcat、sandbox）", name)
+		}
 	}
 	return &cfg, nil
 }

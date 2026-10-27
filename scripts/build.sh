@@ -59,9 +59,10 @@ all)
 	banner "构建全部产物（$mode）"
 	build_go_exe core.exe ./cmd/core
 	build_go_exe adapter-napcat.exe ./cmd/adapter-napcat
+	build_go_exe adapter-sandbox.exe ./cmd/adapter-sandbox
 	"$GO" build "${GO_ARGS[@]}" -tags dll -buildmode=c-shared -ldflags="$LDFLAGS" -o "$BIN_DIR/core.dll" ./cmd/core
 	build_rust
-	echo "构建完成（$mode，耗时 ${SECONDS}s）：$BIN_DIR/core.exe $BIN_DIR/adapter-napcat.exe $BIN_DIR/core.dll $BIN_DIR/loquat.exe"
+	echo "构建完成（$mode，耗时 ${SECONDS}s）：$BIN_DIR/core.exe $BIN_DIR/adapter-napcat.exe $BIN_DIR/adapter-sandbox.exe $BIN_DIR/core.dll $BIN_DIR/loquat.exe"
 	;;
 core)
 	banner "构建核心 exe（$mode）"
@@ -70,6 +71,7 @@ core)
 adapter)
 	banner "构建适配器插件（$mode）"
 	build_go_exe adapter-napcat.exe ./cmd/adapter-napcat
+	build_go_exe adapter-sandbox.exe ./cmd/adapter-sandbox
 	;;
 dll)
 	banner "构建核心 dll（$mode）"

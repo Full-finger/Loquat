@@ -28,13 +28,14 @@ fn write_file(dir: &Path, name: &str, content: &str) {
 fn ctx_in(chat_id: i64, text: &'static str) -> MsgCtx<'static> {
     MsgCtx {
         text,
-        message_type: "private",
-        chat_id,
-        user_id: 1,
-        self_id: 100,
-        message_id: 0,
-        is_at_bot: false,
+        chat: Chat::Private { id: chat_id.to_string() },
+        sender_id: "1",
+        self_id: "100",
+        message_id: "",
+        mentions_bot: false,
         images: &[],
+        segments: &[],
+        platform: "napcat",
     }
 }
 
@@ -131,14 +132,15 @@ fn agent_strips_cq_and_prefixes_group_sender() {
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let group_ctx = MsgCtx {
-        text: "[CQ:at,qq=100] hi",
-        message_type: "group",
-        chat_id: 9,
-        user_id: 7,
-        self_id: 100,
-        message_id: 0,
-        is_at_bot: true,
+        text: "hi",
+        chat: Chat::Group { id: "9".to_string() },
+        sender_id: "7",
+        self_id: "100",
+        message_id: "",
+        mentions_bot: true,
         images: &[],
+        segments: &[],
+        platform: "napcat",
     };
     assert_eq!(
         business.handle(&group_ctx).unwrap(),
@@ -359,13 +361,14 @@ fn agent_images_multimodal_or_placeholder() {
     fn msg_ctx<'a>(chat_id: i64, text: &'static str, images: &'a [String]) -> MsgCtx<'a> {
         MsgCtx {
             text,
-            message_type: "private",
-            chat_id,
-            user_id: 1,
-            self_id: 100,
-            message_id: 0,
-            is_at_bot: false,
+            chat: Chat::Private { id: chat_id.to_string() },
+            sender_id: "1",
+            self_id: "100",
+            message_id: "",
+            mentions_bot: false,
             images,
+            segments: &[],
+            platform: "napcat",
         }
     }
 

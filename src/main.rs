@@ -13,14 +13,16 @@ mod sharedlib;
 mod stats;
 mod webui;
 
+use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::c_char;
+use std::hash::{Hash, Hasher};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use business::Business;
-use event::{Incoming, parse_incoming};
+use event::{Chat, Incoming, parse_incoming};
 use ffi::CoreDll;
 
 const EXTENSIONS_DIR: &str = "extensions";
@@ -51,13 +53,14 @@ extern "C" fn on_event(data: *const c_char, len: i32) {
 fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
     let ctx = business::MsgCtx {
         text: &incoming.text,
-        message_type: &incoming.message_type,
-        chat_id: incoming.chat_id,
-        user_id: incoming.user_id,
-        self_id: incoming.self_id,
-        message_id: incoming.message_id,
-        is_at_bot: incoming.is_at_bot,
+        chat: incoming.chat.clone(),
+        sender_id: &incoming.sender_id,
+        self_id: &incoming.self_id,
+        message_id: &incoming.message_id,
+        mentions_bot: incoming.mentions_bot,
         images: &incoming.images,
+        segments: &incoming.segments,
+        platform: &incoming.platform,
     };
     let replies = match business.handle(&ctx) {
         Ok(r) => r,
@@ -67,21 +70,17 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
         }
     };
 
-    let action = match incoming.message_type.as_str() {
-        "private" => "send_private_msg",
-        "group" => "send_group_msg",
-        _ => return,
+    // 回复走统一发送：纯文本包成 text 段，平台翻译在适配器
+    let (chat_kind, chat_id) = match &incoming.chat {
+        Chat::Private { id } => ("private", id.as_str()),
+        Chat::Group { id } => ("group", id.as_str()),
     };
     for reply in replies {
-        let params = if action == "send_private_msg" {
-            serde_json::json!({ "user_id": incoming.chat_id, "message": reply })
-        } else {
-            serde_json::json!({ "group_id": incoming.chat_id, "message": reply })
-        };
-        match dll.send_action(action, &params.to_string(), 15_000) {
+        let segments = serde_json::json!([{ "text": { "text": reply } }]).to_string();
+        match dll.send_message(&incoming.platform, chat_kind, chat_id, &segments, 15_000) {
             Ok(resp) => {
                 stats::bump_reply();
-                webui::publish_reply(&incoming.message_type, incoming.chat_id, &reply);
+                webui::publish_reply(&incoming.platform, chat_kind, chat_id, &reply);
                 log_info!("已回复: {} resp={resp}", console::brief(&reply, 60));
             }
             Err(e) => log_error!("发送失败: {e}"),
@@ -119,7 +118,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     pybridge::suppress_sigint();
     log_info!("业务已加载: {}", business.info());
 
-    // WebUI：REST + 静态页 + 消息流 WS，独立线程，起不来只记日志
+    // WebUI：REST + 静态页 + 消息流 WS，独立线程，起不来只记日志。
+    // 沙箱选项卡经通用 tab 注册机制挂上（第一个消费者）
+    webui::register_tab("adapters", "适配器", "/adapters");
+    webui::register_tab("sandbox", "沙箱", "/sandbox");
     webui::spawn(Arc::clone(&dll), Arc::clone(&business));
 
     // worker 池：见顶部常量注释。catch_unwind 兜一条消息的 panic 只损失
@@ -131,12 +133,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let worker_business = Arc::clone(&business);
             std::thread::spawn(move || {
                 for incoming in rx {
-                    let chat_id = incoming.chat_id;
+                    let chat_id = incoming.chat.id().to_string();
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         handle_message(incoming, &worker_dll, &worker_business);
                     }));
                     // 无论 panic 与否都归还计数，统计口径才守得住（agents 命令）
-                    stats::worker_settle(idx, chat_id);
+                    stats::worker_settle(idx, &chat_id);
                 }
             });
             tx
@@ -171,17 +173,32 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let Some(incoming) = parse_incoming(&payload) else {
                     continue;
                 };
-                log_info!("消息: [{}] {}", incoming.message_type, incoming.text);
-                webui::publish_incoming(&incoming.message_type, incoming.chat_id, &incoming.text);
+                log_info!(
+                    "消息: [{} {}] {}",
+                    incoming.chat.message_type(),
+                    incoming.chat.id(),
+                    incoming.text
+                );
+                webui::publish_incoming(
+                    &incoming.platform,
+                    incoming.chat.message_type(),
+                    incoming.chat.id(),
+                    &incoming.text,
+                );
 
-                let idx = (incoming.chat_id as u64 % WORKER_COUNT as u64) as usize;
-                let chat_id = incoming.chat_id;
+                // chat ID 哈希定 worker：同一会话恒在同一线程串行（插件模块级状态免锁）
+                let idx = {
+                    let mut h = DefaultHasher::new();
+                    incoming.chat.id().hash(&mut h);
+                    (h.finish() % WORKER_COUNT as u64) as usize
+                };
+                let chat_id = incoming.chat.id().to_string();
                 match workers[idx].try_send(incoming) {
-                    Ok(()) => stats::worker_enqueue(idx, chat_id),
+                    Ok(()) => stats::worker_enqueue(idx, &chat_id),
                     Err(mpsc::TrySendError::Full(dropped)) => {
                         log_error!(
-                            "worker {idx} 队列已满，丢弃消息（chat_id={}）",
-                            dropped.chat_id
+                            "worker {idx} 队列已满，丢弃消息（chat={}）",
+                            dropped.chat.id()
                         );
                     }
                     Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -234,7 +251,7 @@ mod tests {
         let mut last = String::new();
         while std::time::Instant::now() < deadline {
             last = dll.status();
-            if last.contains("\"adapter_alive\":true") {
+            if last.contains("\"alive\":true") {
                 println!("[test] {what}（耗时 {}ms）", started.elapsed().as_millis());
                 return;
             }

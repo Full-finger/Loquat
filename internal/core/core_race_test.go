@@ -103,7 +103,7 @@ func TestRuntimeSwapRace(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for time.Now().Before(deadline) {
-			_, _ = SendAction("send_private_msg", []byte(`{}`), time.Second)
+			_, _ = SendAction("napcat", "send_private_msg", []byte(`{}`), time.Second)
 		}
 	}()
 	// 主线程反复触发换装：kill 后 run 循环退避重启 spawn
@@ -157,12 +157,18 @@ func TestStopDuringRespawnNoOrphan(t *testing.T) {
 			default:
 			}
 			var snap struct {
-				AdapterPID int `json:"adapter_pid"`
+				Adapters []struct {
+					PID int `json:"pid"`
+				} `json:"adapters"`
 			}
-			if err := json.Unmarshal([]byte(Status()), &snap); err == nil && snap.AdapterPID > 0 {
-				pidMu.Lock()
-				pids[snap.AdapterPID] = true
-				pidMu.Unlock()
+			if err := json.Unmarshal([]byte(Status()), &snap); err == nil {
+				for _, a := range snap.Adapters {
+					if a.PID > 0 {
+						pidMu.Lock()
+						pids[a.PID] = true
+						pidMu.Unlock()
+					}
+				}
 			}
 			time.Sleep(50 * time.Millisecond)
 		}

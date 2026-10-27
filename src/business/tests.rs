@@ -28,13 +28,14 @@ fn write_file(dir: &Path, name: &str, content: &str) {
 fn ctx(text: &'static str) -> MsgCtx {
     MsgCtx {
         text,
-        message_type: "private",
-        chat_id: 1,
-        user_id: 1,
-        self_id: 100,
-        message_id: 0,
-        is_at_bot: false,
+        chat: Chat::Private { id: "1".to_string() },
+        sender_id: "1",
+        self_id: "100",
+        message_id: "",
+        mentions_bot: false,
         images: &[],
+        segments: &[],
+        platform: "napcat",
     }
 }
 
@@ -49,13 +50,14 @@ fn ctx_fields_reach_plugin() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let c = MsgCtx {
         text: "hi",
-        message_type: "group",
-        chat_id: 42,
-        user_id: 7,
-        self_id: 100,
-        message_id: 12345,
-        is_at_bot: true,
+        chat: Chat::Group { id: "42".to_string() },
+        sender_id: "7",
+        self_id: "100",
+        message_id: "12345",
+        mentions_bot: true,
         images: &[],
+        segments: &[],
+        platform: "napcat",
     };
     assert_eq!(
         business.handle(&c).unwrap(),

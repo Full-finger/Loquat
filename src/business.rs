@@ -6,7 +6,7 @@
 //!   plugin.py               入口：首行必须是签名 `# loquat-plugin`（宿主
 //!                           识别插件的依据，无签名目录忽略）；必须实现
 //!                           handle(ctx) -> list[str]
-//!                           （ctx: dict，含 text/message_type/chat_id/
+//!                           （ctx: dict，含 text/chat/segments/
 //!                           user_id/self_id/message_id/is_at_bot/images；
 //!                           返回空列表 = 不归我管，路由链继续）；
 //!                           可声明 PRIORITY = <int>（越小越先，缺省 100）
@@ -35,9 +35,83 @@ use crate::{log_error, log_info};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
+use crate::event::Chat;
 use crate::pluginload;
 use crate::pybridge;
 use crate::sharedlib;
+
+// SCHEMA（python 对象）→ JSON 文本：经 json.dumps 中转，避开逐类型 IntoPyObject
+fn schema_to_json(loaded: &LoadedPlugin) -> String {
+    Python::attach(|py| {
+        match loaded.module.bind(py).getattr("SCHEMA") {
+            Ok(schema) => {
+                let json_mod = match py.import("json") {
+                    Ok(m) => m,
+                    Err(_) => return "[]".to_string(),
+                };
+                match json_mod.call_method1("dumps", (schema,)) {
+                    Ok(s) => s.extract::<String>().unwrap_or_else(|_| "[]".into()),
+                    Err(_) => "[]".to_string(),
+                }
+            }
+            Err(_) => "[]".to_string(),
+        }
+    })
+}
+
+// python 对象 → JSON 文本
+fn py_obj_to_json(obj: &pyo3::Bound<'_, pyo3::types::PyAny>) -> String {
+    let py = obj.py();
+    match py.import("json").and_then(|j| j.call_method1("dumps", (obj,))) {
+        Ok(s) => s.extract::<String>().unwrap_or_else(|_| "[]".into()),
+        Err(_) => "[]".to_string(),
+    }
+}
+
+// JSON → python 对象（json.loads）
+fn json_to_py<'py>(
+    py: pyo3::Python<'py>,
+    v: &serde_json::Value,
+) -> Result<pyo3::Bound<'py, pyo3::types::PyAny>, String> {
+    let text = serde_json::to_string(v).map_err(|e| e.to_string())?;
+    py.import("json")
+        .and_then(|j| j.call_method1("loads", (text,)))
+        .map_err(|e| e.to_string())
+}
+
+// 极简 YAML → JSON（标量/一层嵌套）：插件 config.yaml 都是扁平键值。
+// 复杂结构交给前端的 list/dict 编辑器序列化成标准 YAML，这里只读。
+fn serde_yamlish(text: &str) -> Result<serde_json::Value, String> {
+    let docs = yaml_rust2::YamlLoader::load_from_str(text).map_err(|e| e.to_string())?;
+    let doc = docs.into_iter().next().ok_or("空文档")?;
+    Ok(yaml_to_json_value(&doc))
+}
+
+fn yaml_to_json_value(v: &yaml_rust2::Yaml) -> serde_json::Value {
+    use yaml_rust2::Yaml;
+    match v {
+        Yaml::Real(s) => {
+            serde_json::Value::Number(s.parse().unwrap_or(serde_json::Number::from(0)))
+        }
+        Yaml::Integer(i) => serde_json::json!(i),
+        Yaml::Boolean(b) => serde_json::json!(b),
+        Yaml::String(s) => serde_json::json!(s),
+        Yaml::Array(a) => serde_json::Value::Array(a.iter().map(yaml_to_json_value).collect()),
+        Yaml::Hash(h) => {
+            let mut m = serde_json::Map::new();
+            for (k, val) in h {
+                let key = match k {
+                    Yaml::String(s) => s.clone(),
+                    other => format!("{other:?}"),
+                };
+                m.insert(key, yaml_to_json_value(val));
+            }
+            serde_json::Value::Object(m)
+        }
+        Yaml::Null => serde_json::Value::Null,
+        other => serde_json::json!(format!("{other:?}")),
+    }
+}
 
 use crate::pluginload::{file_mtime, has_signature};
 
@@ -46,18 +120,22 @@ pub(crate) const CONFIG_FILE: &str = "config.yaml";
 const DISABLE_MARKER: &str = ".disabled";
 
 /// 传给插件 handle(ctx) 的消息上下文。
+/// 字段来自统一信封（event.rs 解析），跨平台通用；
+/// 结构化段在 segments（protojson 形态），平台细节从那里取。
 pub struct MsgCtx<'a> {
     pub text: &'a str,
-    pub message_type: &'a str,
-    pub chat_id: i64,
-    pub user_id: i64,
-    pub self_id: i64,
-    /// 触发消息的 ID（OneBot 11 标准字段；非标实现缺失为 0）
-    pub message_id: i64,
-    /// 是否 at 了机器人（校验 qq == self_id；at 别人/全体为 false）
-    pub is_at_bot: bool,
-    /// 消息里的图片 URL（event.rs 正规提取，上限 4 张）
+    pub chat: Chat,
+    pub sender_id: &'a str,
+    pub self_id: &'a str,
+    /// 触发消息的 ID；平台不回时为空串
+    pub message_id: &'a str,
+    /// 是否 at 了机器人（适配器判定）
+    pub mentions_bot: bool,
+    /// 消息里的图片 URL（event.rs 派生，上限 4 张）
     pub images: &'a [String],
+    /// 结构化消息段（protojson 形态，如 {"text":{"text":"早"}}）
+    pub segments: &'a [serde_json::Value],
+    pub platform: &'a str,
 }
 
 struct LoadedPlugin {
@@ -267,19 +345,29 @@ impl Business {
     }
 
     fn call(module: &Py<PyModule>, ctx: &MsgCtx) -> Result<Vec<String>, Box<dyn Error>> {
-        Python::attach(|py| {
+        // 登记"哪里来"：插件经能力桥发逃生舱动作时按此路由平台
+        pybridge::set_current_platform(ctx.platform);
+        let result = Python::attach(|py| {
             let dict = PyDict::new(py);
             dict.set_item("text", ctx.text)?;
-            dict.set_item("message_type", ctx.message_type)?;
-            dict.set_item("chat_id", ctx.chat_id)?;
-            dict.set_item("user_id", ctx.user_id)?;
+            dict.set_item("message_type", ctx.chat.message_type())?;
+            dict.set_item("chat_id", ctx.chat.id())?;
+            dict.set_item("user_id", ctx.sender_id)?;
             dict.set_item("self_id", ctx.self_id)?;
             dict.set_item("message_id", ctx.message_id)?;
-            dict.set_item("is_at_bot", ctx.is_at_bot)?;
+            dict.set_item("is_at_bot", ctx.mentions_bot)?;
             dict.set_item("images", ctx.images.to_vec())?;
+            // serde_json::Value 无 IntoPyObject，走 json 字符串中转（同 pybridge 的 config 注入）
+            let segments_json = serde_json::to_string(ctx.segments)?;
+            let json_mod = py.import("json")?;
+            let segments = json_mod.call_method1("loads", (segments_json,))?;
+            dict.set_item("segments", segments)?;
+            dict.set_item("platform", ctx.platform)?;
             let replies = module.bind(py).call_method1("handle", (dict,))?;
             Ok(replies.extract()?)
-        })
+        });
+        pybridge::clear_current_platform();
+        result
     }
 
     /// 运行时启停插件：写/删 .disabled 标记并同步内存。持久化，重启依然生效。
@@ -329,6 +417,100 @@ impl Business {
             .expect("业务锁中毒")
             .push(name.to_string());
         log_info!("检测到可安装插件: {name}，运行 install {name} 完成安装");
+    }
+
+    /// 插件配置读取：SCHEMA（字段声明）+ 当前值（config.yaml，未安装给默认值）。
+    /// 前端按 schema 渲染编辑表单。
+    pub fn plugin_config(&self, name: &str) -> Result<serde_json::Value, String> {
+        let dir_path = self.dir.join(name);
+        if !dir_path.join(ENTRY_FILE).is_file() {
+            return Err(format!("未找到插件: extensions/{name}/plugin.py"));
+        }
+        // SCHEMA：已加载的插件直接读内存模块，未加载临时编译一个
+        let schema_json = {
+            let plugins = self.plugins.lock().expect("业务锁中毒");
+            match plugins.iter().find(|p| p.dir_name == name) {
+                Some(p) => schema_to_json(p),
+                None => {
+                    drop(plugins);
+                    let loaded = pluginload::load_module(&dir_path.join(ENTRY_FILE))
+                        .map_err(|e| format!("加载插件失败: {e}"))?;
+                    Python::attach(|py| -> Result<String, String> {
+                        let schema_any = loaded.0.bind(py).getattr("SCHEMA");
+                        if schema_any.is_err() {
+                            return Err(format!("{name} 未声明 SCHEMA，无可编辑配置"));
+                        }
+                        Ok(py_obj_to_json(&schema_any.unwrap()))
+                    })?
+                }
+            }
+        };
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema_json).map_err(|e| format!("SCHEMA 转换失败: {e}"))?;
+
+        // 当前值：config.yaml 存在则解析，缺失（未安装）用 SCHEMA 默认值
+        let cfg_path = dir_path.join(CONFIG_FILE);
+        let mut values = serde_json::Map::new();
+        if let Ok(text) = std::fs::read_to_string(&cfg_path) {
+            if let Ok(v) = serde_yamlish(&text) {
+                if let serde_json::Value::Object(map) = v {
+                    values = map;
+                }
+            }
+        } else if let serde_json::Value::Array(fields) = &schema {
+            for f in fields {
+                if let (Some(k), Some(d)) = (f.get("key"), f.get("default")) {
+                    values.insert(k.as_str().unwrap_or("").to_string(), d.clone());
+                }
+            }
+        }
+        let installed = cfg_path.is_file();
+        let enabled = values.get("enabled").and_then(|b| b.as_bool()).unwrap_or(true);
+        values.remove("enabled"); // 宿主保留键，表单不显示
+        Ok(serde_json::json!({
+            "schema": schema,
+            "values": values,
+            "installed": installed,
+            "enabled": enabled,
+        }))
+    }
+
+    /// 插件配置保存：经 cfglib 校验渲染成带注释 YAML 写回。
+    /// mtime 变化会让责任链热重载插件，改动即时生效。
+    pub fn save_plugin_config(&self, name: &str, values: serde_json::Value) -> Result<(), String> {
+        let dir_path = self.dir.join(name);
+        let cfg_path = dir_path.join(CONFIG_FILE);
+        let loaded = pluginload::load_module(&dir_path.join(ENTRY_FILE))
+            .map_err(|e| format!("加载插件失败: {e}"))?;
+        // 注意 loaded.3 是 installable（声明 SCHEMA 且 config.yaml 缺失），
+        // 已安装的插件恒为 false，不能当“有无 SCHEMA”用——直接探测属性
+        let has_schema = Python::attach(|py| loaded.0.bind(py).getattr("SCHEMA").is_ok());
+        if !has_schema {
+            return Err(format!("{name} 未声明 SCHEMA，无可保存配置"));
+        }
+        // enabled 是宿主保留键：不在 SCHEMA 里，原样保留
+        let had_enabled = std::fs::read_to_string(&cfg_path)
+            .ok()
+            .and_then(|t| serde_yamlish(&t).ok())
+            .and_then(|v| v.get("enabled").cloned())
+            .and_then(|b| b.as_bool())
+            .unwrap_or(true);
+        let mut py_values = values;
+        py_values["enabled"] = serde_json::Value::Bool(had_enabled);
+        let yaml_text = Python::attach(|py| -> Result<String, String> {
+            let schema = loaded.0.bind(py).getattr("SCHEMA").map_err(|e| e.to_string())?;
+            let cfglib = py
+                .import("loquat_cfglib")
+                .map_err(|e| format!("cfglib 未注册: {e}"))?;
+            let values_dict = json_to_py(py, &py_values)?;
+            cfglib
+                .call_method1("render", (schema, values_dict))
+                .and_then(|t| t.extract::<String>())
+                .map_err(|e| format!("渲染配置失败: {e}"))
+        })?;
+        std::fs::write(&cfg_path, yaml_text).map_err(|e| format!("写 config.yaml 失败: {e}"))?;
+        let _ = self.sync(); // 触发热重载，改动即时生效
+        Ok(())
     }
 
     /// 安装插件：按 SCHEMA 生成 config.yaml，写 .disabled 保持未启用，

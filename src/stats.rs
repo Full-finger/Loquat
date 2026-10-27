@@ -20,7 +20,7 @@ static REPLY_COUNT: AtomicU64 = AtomicU64::new(0);
 static WORKER_BACKLOG: [AtomicUsize; WORKER_COUNT] =
     [const { AtomicUsize::new(0) }; WORKER_COUNT];
 static WORKER_DONE: [AtomicU64; WORKER_COUNT] = [const { AtomicU64::new(0) }; WORKER_COUNT];
-static CHAT_STATS: OnceLock<Mutex<HashMap<i64, ChatStat>>> = OnceLock::new();
+static CHAT_STATS: OnceLock<Mutex<HashMap<String, ChatStat>>> = OnceLock::new();
 
 struct ChatStat {
     backlog: usize,
@@ -44,23 +44,23 @@ pub fn reply_count() -> u64 {
 }
 
 // 事件入队成功后记一笔（worker 处理完由 worker_settle 归还）。
-pub fn worker_enqueue(idx: usize, chat_id: i64) {
+pub fn worker_enqueue(idx: usize, chat_id: &str) {
     WORKER_BACKLOG[idx].fetch_add(1, Ordering::Relaxed);
     let map = CHAT_STATS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut m) = map.lock() {
-        let st = m.entry(chat_id).or_insert(ChatStat { backlog: 0, total: 0 });
+        let st = m.entry(chat_id.to_string()).or_insert(ChatStat { backlog: 0, total: 0 });
         st.backlog += 1;
         st.total += 1;
     }
 }
 
 // worker 处理完一条（无论 panic 与否）统一归还，统计口径才守得住。
-pub fn worker_settle(idx: usize, chat_id: i64) {
+pub fn worker_settle(idx: usize, chat_id: &str) {
     WORKER_BACKLOG[idx].fetch_sub(1, Ordering::Relaxed);
     WORKER_DONE[idx].fetch_add(1, Ordering::Relaxed);
     if let Some(map) = CHAT_STATS.get() {
         if let Ok(mut m) = map.lock() {
-            if let Some(st) = m.get_mut(&chat_id) {
+            if let Some(st) = m.get_mut(chat_id) {
                 st.backlog = st.backlog.saturating_sub(1);
             }
         }
@@ -76,12 +76,12 @@ pub fn worker_done() -> Vec<u64> {
 }
 
 // 积压中的会话（正在处理或排队），agents 命令展示用。
-pub fn active_chats() -> Vec<i64> {
+pub fn active_chats() -> Vec<String> {
     let Some(map) = CHAT_STATS.get() else {
         return Vec::new();
     };
     match map.lock() {
-        Ok(m) => m.iter().filter(|(_, st)| st.backlog > 0).map(|(id, _)| *id).collect(),
+        Ok(m) => m.iter().filter(|(_, st)| st.backlog > 0).map(|(id, _)| id.clone()).collect(),
         Err(_) => Vec::new(),
     }
 }

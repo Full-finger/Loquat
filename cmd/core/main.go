@@ -5,7 +5,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"os"
@@ -14,18 +13,11 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/full-finger/loquat/internal/core"
+	"github.com/full-finger/loquat/internal/pluginapi"
 )
-
-// ob11Message 只取自测关心的 OneBot 11 字段。
-type ob11Message struct {
-	PostType    string `json:"post_type"`
-	MessageType string `json:"message_type"`
-	UserID      int64  `json:"user_id"`
-	GroupID     int64  `json:"group_id"`
-	RawMessage  string `json:"raw_message"`
-}
 
 func main() {
 	configPath := flag.String("config", "config/loquat.yaml", "配置文件路径")
@@ -38,7 +30,7 @@ func main() {
 	})
 
 	err := core.Start(*configPath, func(payload []byte) {
-		logger.Info("收到事件", "json", string(payload))
+		logger.Info("收到事件信封", "json", string(payload))
 		selfTestReply(payload, logger)
 	}, logger)
 	if err != nil {
@@ -59,39 +51,46 @@ func main() {
 }
 
 // selfTestReply 私聊全回、群聊回 / 开头，固定文案。业务接入后删除。
+// 事件已是统一信封（适配器翻译），这里直接走 SendMessage 段列表发送。
 func selfTestReply(payload []byte, logger hclog.Logger) {
-	var m ob11Message
-	if json.Unmarshal(payload, &m) != nil {
+	var env pluginapi.EventEnvelope
+	// consume 的投递是 protojson（camelCase/enum 名/int64 字符串），
+	// encoding/json 解不了 oneof 与 enum，必须用 protojson
+	if protojson.Unmarshal(payload, &env) != nil {
+		logger.Error("事件信封解析失败")
 		return
 	}
-	if m.PostType != "message" {
+	if env.GetKind() != pluginapi.EventKind_EVENT_KIND_MESSAGE {
+		return
+	}
+	chat := env.GetMessage().GetChat()
+	if chat == nil {
 		return
 	}
 
-	var action string
-	params := map[string]any{"message": "loquat 已连通（Go 侧自测，业务还没接入）"}
-	switch m.MessageType {
-	case "private":
-		action = "send_private_msg"
-		params["user_id"] = m.UserID
-	case "group":
-		if !strings.HasPrefix(m.RawMessage, "/") {
-			return
+	text := "loquat 已连通（Go 侧自测，业务还没接入）"
+	if chat.GetGroupId() != "" {
+		first := ""
+		for _, seg := range env.GetMessage().GetSegments() {
+			if s := seg.GetText().GetText(); s != "" {
+				first = s
+				break
+			}
 		}
-		action = "send_group_msg"
-		params["group_id"] = m.GroupID
-	default:
-		return
+		if !strings.HasPrefix(first, "/") {
+			return // 群聊只回 / 开头（旧自测约定）
+		}
 	}
 
-	pjson, err := json.Marshal(params)
+	resp, err := core.SendMessage(&pluginapi.SendMessageRequest{
+		Chat: chat,
+		Segments: []*pluginapi.Segment{{
+			Body: &pluginapi.Segment_Text{Text: &pluginapi.TextSeg{Text: text}},
+		}},
+	}, 15*time.Second)
 	if err != nil {
+		logger.Error("发送消息失败", "err", err)
 		return
 	}
-	resp, err := core.SendAction(action, pjson, 15*time.Second)
-	if err != nil {
-		logger.Error("发送动作失败", "action", action, "err", err)
-		return
-	}
-	logger.Info("已回复", "action", action, "retcode", resp.GetRetcode())
+	logger.Info("已回复", "message_id", resp.GetMessageId())
 }

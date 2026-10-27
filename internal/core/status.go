@@ -24,22 +24,24 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 )
 
-// SystemStatusJSON 汇集系统状态并返回 JSON。适配器指标取自当前活跃实例。
+// SystemStatusJSON 汇集系统状态并返回 JSON。适配器指标取全部已启用平台。
 func SystemStatusJSON() (string, error) {
 	mu.Lock()
 	c := active
 	mu.Unlock()
 
-	var adapterPID int
+	var adapterPIDs []int
 	if c != nil {
-		if rt := c.runtime.Load(); rt != nil {
-			adapterPID = rt.pid
+		c.runtimesMu.Lock()
+		for _, rt := range c.runtimes {
+			adapterPIDs = append(adapterPIDs, rt.pid)
 		}
+		c.runtimesMu.Unlock()
 	}
-	return collectStatus(adapterPID)
+	return collectStatus(adapterPIDs...)
 }
 
-func collectStatus(adapterPID int) (string, error) {
+func collectStatus(adapterPIDs ...int) (string, error) {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 
@@ -72,14 +74,19 @@ func collectStatus(adapterPID int) (string, error) {
 		}
 	}
 
-	// 适配器进程：不存在（未启动/已退出）时为 nil，业务侧显示"未运行"
+	// 适配器进程：合计各平台子进程 RSS；不存在（未启动/已退出）时为 nil，
+	// 业务侧显示"未运行"
 	var adapterRSS any
-	if adapterPID > 0 {
-		if ap, err := process.NewProcess(int32(adapterPID)); err == nil {
+	var totalRSS float64
+	for _, pid := range adapterPIDs {
+		if ap, err := process.NewProcess(int32(pid)); err == nil {
 			if mi, err := ap.MemoryInfo(); err == nil {
-				adapterRSS = float64(mi.RSS) / 1e6
+				totalRSS += float64(mi.RSS) / 1e6
 			}
 		}
+	}
+	if totalRSS > 0 {
+		adapterRSS = totalRSS
 	}
 
 	payload := map[string]any{

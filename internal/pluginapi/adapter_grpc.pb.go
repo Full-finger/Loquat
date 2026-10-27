@@ -19,8 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Adapter_StreamEvents_FullMethodName = "/pluginapi.v1.Adapter/StreamEvents"
-	Adapter_SendAction_FullMethodName   = "/pluginapi.v1.Adapter/SendAction"
+	Adapter_StreamEvents_FullMethodName = "/pluginapi.v2.Adapter/StreamEvents"
+	Adapter_InjectEvent_FullMethodName  = "/pluginapi.v2.Adapter/InjectEvent"
+	Adapter_SendMessage_FullMethodName  = "/pluginapi.v2.Adapter/SendMessage"
+	Adapter_SendAction_FullMethodName   = "/pluginapi.v2.Adapter/SendAction"
 )
 
 // AdapterClient is the client API for Adapter service.
@@ -28,12 +30,21 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // 适配器插件对核心暴露的服务。
-// 事件与动作的载荷都用原始 JSON 字节，proto 不感知 OneBot 的 schema，
-// 协议演进时只动业务侧，不动这层。
+//
+// v2 引入跨适配器统一消息格式（IR，见 docs/proposals/unified-message.md）：
+// 适配器负责平台格式 ↔ IR 的双向翻译，核心与宿主零平台知识。
+// 事件上行是翻译后的 EventEnvelope；消息下行是结构化段列表；
+// 平台长尾动作（撤回、踢人等）走 SendAction 逃生舱，保持平台自有 schema。
+// 核心可挂多个适配器，下行按请求里的 platform 路由。
 type AdapterClient interface {
-	// 上报事件流：适配器把 NapCat 的事件逐条推给核心
-	StreamEvents(ctx context.Context, in *StreamEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
-	// 下发动作：核心让适配器调用 NapCat 的 action，同步等响应
+	// 上报事件流：适配器把平台事件翻译成统一信封，逐条推给核心
+	StreamEvents(ctx context.Context, in *StreamEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[EventEnvelope], error)
+	// 注入一条本地事件（开发沙箱用）：网页输入不经真实平台直入事件流。
+	// 只有沙箱类适配器实现；其他适配器返回 Unimplemented
+	InjectEvent(ctx context.Context, in *InjectEventRequest, opts ...grpc.CallOption) (*InjectEventResponse, error)
+	// 统一发送：段列表 → 平台消息，同步等响应
+	SendMessage(ctx context.Context, in *SendMessageRequest, opts ...grpc.CallOption) (*SendMessageResponse, error)
+	// 动作逃生舱：透传平台自有 action，proto 不感知平台 schema
 	SendAction(ctx context.Context, in *SendActionRequest, opts ...grpc.CallOption) (*SendActionResponse, error)
 }
 
@@ -45,13 +56,13 @@ func NewAdapterClient(cc grpc.ClientConnInterface) AdapterClient {
 	return &adapterClient{cc}
 }
 
-func (c *adapterClient) StreamEvents(ctx context.Context, in *StreamEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
+func (c *adapterClient) StreamEvents(ctx context.Context, in *StreamEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[EventEnvelope], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[0], Adapter_StreamEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[StreamEventsRequest, Event]{ClientStream: stream}
+	x := &grpc.GenericClientStream[StreamEventsRequest, EventEnvelope]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -62,7 +73,27 @@ func (c *adapterClient) StreamEvents(ctx context.Context, in *StreamEventsReques
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_StreamEventsClient = grpc.ServerStreamingClient[Event]
+type Adapter_StreamEventsClient = grpc.ServerStreamingClient[EventEnvelope]
+
+func (c *adapterClient) InjectEvent(ctx context.Context, in *InjectEventRequest, opts ...grpc.CallOption) (*InjectEventResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InjectEventResponse)
+	err := c.cc.Invoke(ctx, Adapter_InjectEvent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adapterClient) SendMessage(ctx context.Context, in *SendMessageRequest, opts ...grpc.CallOption) (*SendMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendMessageResponse)
+	err := c.cc.Invoke(ctx, Adapter_SendMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 func (c *adapterClient) SendAction(ctx context.Context, in *SendActionRequest, opts ...grpc.CallOption) (*SendActionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -79,12 +110,21 @@ func (c *adapterClient) SendAction(ctx context.Context, in *SendActionRequest, o
 // for forward compatibility.
 //
 // 适配器插件对核心暴露的服务。
-// 事件与动作的载荷都用原始 JSON 字节，proto 不感知 OneBot 的 schema，
-// 协议演进时只动业务侧，不动这层。
+//
+// v2 引入跨适配器统一消息格式（IR，见 docs/proposals/unified-message.md）：
+// 适配器负责平台格式 ↔ IR 的双向翻译，核心与宿主零平台知识。
+// 事件上行是翻译后的 EventEnvelope；消息下行是结构化段列表；
+// 平台长尾动作（撤回、踢人等）走 SendAction 逃生舱，保持平台自有 schema。
+// 核心可挂多个适配器，下行按请求里的 platform 路由。
 type AdapterServer interface {
-	// 上报事件流：适配器把 NapCat 的事件逐条推给核心
-	StreamEvents(*StreamEventsRequest, grpc.ServerStreamingServer[Event]) error
-	// 下发动作：核心让适配器调用 NapCat 的 action，同步等响应
+	// 上报事件流：适配器把平台事件翻译成统一信封，逐条推给核心
+	StreamEvents(*StreamEventsRequest, grpc.ServerStreamingServer[EventEnvelope]) error
+	// 注入一条本地事件（开发沙箱用）：网页输入不经真实平台直入事件流。
+	// 只有沙箱类适配器实现；其他适配器返回 Unimplemented
+	InjectEvent(context.Context, *InjectEventRequest) (*InjectEventResponse, error)
+	// 统一发送：段列表 → 平台消息，同步等响应
+	SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error)
+	// 动作逃生舱：透传平台自有 action，proto 不感知平台 schema
 	SendAction(context.Context, *SendActionRequest) (*SendActionResponse, error)
 	mustEmbedUnimplementedAdapterServer()
 }
@@ -96,8 +136,14 @@ type AdapterServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAdapterServer struct{}
 
-func (UnimplementedAdapterServer) StreamEvents(*StreamEventsRequest, grpc.ServerStreamingServer[Event]) error {
+func (UnimplementedAdapterServer) StreamEvents(*StreamEventsRequest, grpc.ServerStreamingServer[EventEnvelope]) error {
 	return status.Error(codes.Unimplemented, "method StreamEvents not implemented")
+}
+func (UnimplementedAdapterServer) InjectEvent(context.Context, *InjectEventRequest) (*InjectEventResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InjectEvent not implemented")
+}
+func (UnimplementedAdapterServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
 }
 func (UnimplementedAdapterServer) SendAction(context.Context, *SendActionRequest) (*SendActionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendAction not implemented")
@@ -128,11 +174,47 @@ func _Adapter_StreamEvents_Handler(srv interface{}, stream grpc.ServerStream) er
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(AdapterServer).StreamEvents(m, &grpc.GenericServerStream[StreamEventsRequest, Event]{ServerStream: stream})
+	return srv.(AdapterServer).StreamEvents(m, &grpc.GenericServerStream[StreamEventsRequest, EventEnvelope]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_StreamEventsServer = grpc.ServerStreamingServer[Event]
+type Adapter_StreamEventsServer = grpc.ServerStreamingServer[EventEnvelope]
+
+func _Adapter_InjectEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InjectEventRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).InjectEvent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_InjectEvent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).InjectEvent(ctx, req.(*InjectEventRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Adapter_SendMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).SendMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_SendMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).SendMessage(ctx, req.(*SendMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _Adapter_SendAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SendActionRequest)
@@ -156,9 +238,17 @@ func _Adapter_SendAction_Handler(srv interface{}, ctx context.Context, dec func(
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var Adapter_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "pluginapi.v1.Adapter",
+	ServiceName: "pluginapi.v2.Adapter",
 	HandlerType: (*AdapterServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "InjectEvent",
+			Handler:    _Adapter_InjectEvent_Handler,
+		},
+		{
+			MethodName: "SendMessage",
+			Handler:    _Adapter_SendMessage_Handler,
+		},
 		{
 			MethodName: "SendAction",
 			Handler:    _Adapter_SendAction_Handler,

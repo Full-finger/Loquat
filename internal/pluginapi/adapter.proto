@@ -1,37 +1,153 @@
 syntax = "proto3";
 
-package pluginapi.v1;
+package pluginapi.v2;
+
+import "google/protobuf/struct.proto";
 
 option go_package = "github.com/full-finger/loquat/internal/pluginapi;pluginapi";
 
 // 适配器插件对核心暴露的服务。
-// 事件与动作的载荷都用原始 JSON 字节，proto 不感知 OneBot 的 schema，
-// 协议演进时只动业务侧，不动这层。
+//
+// v2 引入跨适配器统一消息格式（IR，见 docs/proposals/unified-message.md）：
+// 适配器负责平台格式 ↔ IR 的双向翻译，核心与宿主零平台知识。
+// 事件上行是翻译后的 EventEnvelope；消息下行是结构化段列表；
+// 平台长尾动作（撤回、踢人等）走 SendAction 逃生舱，保持平台自有 schema。
+// 核心可挂多个适配器，下行按请求里的 platform 路由。
 service Adapter {
-  // 上报事件流：适配器把 NapCat 的事件逐条推给核心
-  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
-  // 下发动作：核心让适配器调用 NapCat 的 action，同步等响应
+  // 上报事件流：适配器把平台事件翻译成统一信封，逐条推给核心
+  rpc StreamEvents(StreamEventsRequest) returns (stream EventEnvelope);
+  // 注入一条本地事件（开发沙箱用）：网页输入不经真实平台直入事件流。
+  // 只有沙箱类适配器实现；其他适配器返回 Unimplemented
+  rpc InjectEvent(InjectEventRequest) returns (InjectEventResponse);
+  // 统一发送：段列表 → 平台消息，同步等响应
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  // 动作逃生舱：透传平台自有 action，proto 不感知平台 schema
   rpc SendAction(SendActionRequest) returns (SendActionResponse);
 }
 
+message InjectEventRequest {
+  string text = 1;   // 消息文本
+  bool at_bot = 2;   // 是否模拟 at 机器人（群聊模式有效）
+  string mode = 3;   // private | group
+}
+
+message InjectEventResponse {}
+
 message StreamEventsRequest {}
 
-message Event {
-  // OneBot 11 事件原始 JSON
-  bytes payload = 1;
+enum EventKind {
+  EVENT_KIND_UNSPECIFIED = 0;
+  EVENT_KIND_MESSAGE = 1; // 普通消息
+  EVENT_KIND_NOTICE = 2;  // 系统通知（撤回、入群、戳一戳…）
+  EVENT_KIND_REQUEST = 3; // 请求（加好友、加群…）
+  EVENT_KIND_META = 4;    // 心跳、生命周期
+}
+
+message EventEnvelope {
+  string platform = 1;        // "napcat" / "telegram" / …
+  EventKind kind = 2;
+  int64 time_ms = 3;          // 平台事件时间，Unix 毫秒；平台缺失时用适配器接收时间
+  UnifiedMessage message = 4; // kind == MESSAGE 时必填
+  bytes raw = 5;              // 平台原始 JSON，逃生舱：IR 丢的信息从这里取
+  string self_id = 6;         // 机器人自身账号 ID（平台事件携带），插件防自指用
+}
+
+message UnifiedMessage {
+  string id = 1; // 平台消息 ID（撤回/回复引用用），平台是数字也转成十进制字符串
+  ChatRef chat = 2;
+  Sender sender = 3;
+  repeated Segment segments = 4;
+  // 是否 at 了机器人；平台不支持 at 时为 false。
+  // 由适配器计算——只有它知道自己的 bot ID（事件 JSON 的 self_id）
+  bool mentions_bot = 5;
+}
+
+message ChatRef {
+  oneof kind {
+    string private_id = 1; // 私聊对方用户 ID
+    string group_id = 2;   // 群 ID
+    string channel_id = 3; // 频道 ID（预留，暂不使用）
+  }
+}
+
+message Sender {
+  string id = 1;
+  string nickname = 2; // 平台不提供时为空
+}
+
+// 消息段。收录原则：≥2 个主流平台都有的概念才进 IR；
+// 单平台特性走 extension。新增段时插到空闲编号。
+message Segment {
+  oneof body {
+    TextSeg text = 1;
+    AtSeg at = 2;
+    ReplySeg reply = 3;
+    MediaSeg image = 4;
+    FaceSeg face = 5;
+    MediaSeg voice = 6;
+    MediaSeg video = 7;
+    MediaSeg file = 8;
+    ExtensionSeg extension = 15; // 编号留大，插入新段不挤压
+  }
+}
+
+message TextSeg {
+  string text = 1;
+}
+
+message AtSeg {
+  string target = 1; // 用户 ID；"all" 表示全体（支持的平台）
+}
+
+message ReplySeg {
+  string message_id = 1; // 被回复的消息 ID
+}
+
+message FaceSeg {
+  string face_id = 1; // 平台表情 ID，跨平台不保证一致
+}
+
+// 媒体统一形态：来源三选一
+message MediaSeg {
+  oneof source {
+    string url = 1;     // 收/发：可直接拉取的 URL
+    string file_id = 2; // 收：平台文件 ID（URL 会过期的平台靠它）
+    bytes inline = 3;   // 发：内联二进制（大文件不建议）
+  }
+  string filename = 4; // file 段显示名；其他媒体可选
+}
+
+message ExtensionSeg {
+  string namespace = 1;            // 平台名或扩展名，如 "napcat"
+  string type = 2;                 // 平台内段类型
+  google.protobuf.Struct data = 3; // 平台原始字段
+}
+
+message SendMessageRequest {
+  ChatRef chat = 1;
+  repeated Segment segments = 2;
+  // 路由目标平台（必填）：核心按它找到对应适配器
+  string platform = 3;
+}
+
+message SendMessageResponse {
+  string message_id = 1; // 新消息的平台 ID（撤回用）；平台不回时为空
 }
 
 message SendActionRequest {
-  // action 名，如 send_private_msg / send_group_msg
+  // 平台 action 名，如 send_private_msg / delete_msg
   string action = 1;
-  // params 的 JSON
+  // 平台自有 schema 的 params JSON
   bytes params = 2;
   // 超时毫秒数，0 表示用适配器默认值
   int32 timeout_ms = 3;
+  // 路由目标平台（必填）。调用方缺省时按"哪里来哪里去"解析：
+  // 消息上下文中的调用跟随来源平台（python 能力桥解析）
+  string platform = 4;
 }
 
 message SendActionResponse {
-  // NapCat 返回的 data 字段 JSON
+  // 平台返回的 data 字段 JSON
   bytes data = 1;
   string status = 2;
   int32 retcode = 3;
