@@ -1,11 +1,32 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { getStatus } from './api'
+import { ChatDotRound, Grid, Link, Monitor, Odometer, Setting } from '@element-plus/icons-vue'
+import { fetchUiTabs, getStatus, type UiTab } from './api'
 
 const route = useRoute()
 const coreOk = ref<boolean | null>(null)
 const collapsed = ref(false)
+
+// 导航 tab 由宿主注册（通用扩展机制）：内置页与扩展页同一路径声明。
+// 组件映射在前端路由表；拉取失败回退到内置三项。
+const tabs = ref<UiTab[]>([
+  { id: 'dashboard', title: '仪表盘', path: '/dashboard' },
+  { id: 'plugins', title: '插件', path: '/plugins' },
+  { id: 'messages', title: '消息流', path: '/messages' },
+])
+
+const TAB_ICONS: Record<string, unknown> = {
+  dashboard: Odometer,
+  plugins: Grid,
+  messages: ChatDotRound,
+  sandbox: Monitor,
+  adapters: Setting,
+}
+
+function iconOf(id: string): unknown {
+  return TAB_ICONS[id] ?? Link
+}
 
 // VSCode 式搜索栏：占位，暂无搜索功能；Ctrl+K 聚焦
 const searchEl = ref<HTMLInputElement>()
@@ -53,6 +74,12 @@ async function poll() {
 onMounted(() => {
   moveIndicator()
   poll()
+  fetchUiTabs()
+    .then((t) => {
+      if (t.length > 0) tabs.value = t
+    })
+    .catch(() => {}) // 拉不到就用内置三项
+    .finally(() => moveIndicator())
   timer = window.setInterval(poll, 10_000)
   window.addEventListener('keydown', onKeydown)
 })
@@ -109,17 +136,9 @@ onUnmounted(() => {
             :style="{ transform: `translateY(${indY}px)`, height: `${indH}px` }"
           />
           <el-menu router :default-active="route.path" class="menu">
-            <el-menu-item index="/dashboard">
-              <el-icon><Odometer /></el-icon>
-              <span>仪表盘</span>
-            </el-menu-item>
-            <el-menu-item index="/plugins">
-              <el-icon><Grid /></el-icon>
-              <span>插件</span>
-            </el-menu-item>
-            <el-menu-item index="/messages">
-              <el-icon><ChatDotRound /></el-icon>
-              <span>消息流</span>
+            <el-menu-item v-for="t in tabs" :key="t.id" :index="t.path">
+              <el-icon><component :is="iconOf(t.id)" /></el-icon>
+              <span>{{ t.title }}</span>
             </el-menu-item>
           </el-menu>
         </div>

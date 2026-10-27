@@ -107,3 +107,126 @@ export async function reloadNapcat(): Promise<string> {
 
 // 消息流 WS 地址；mock 模式下 Messages 页自己造数据，不建连。
 export const WS_URL = `ws://${location.host}/api/ws`
+
+// ---- 适配器管理 ----
+
+export interface AdapterConfig {
+  adapters: string[]
+  napcat: { url: string; token: string; path: string }
+  sandbox: { path: string }
+}
+
+export interface AdapterState {
+  platform: string
+  alive: boolean
+  pid: number
+}
+
+export async function fetchAdapters(): Promise<{ config: AdapterConfig; running: AdapterState[] }> {
+  if (USE_MOCK) {
+    return {
+      config: {
+        adapters: ['napcat', 'sandbox'],
+        napcat: { url: 'ws://127.0.0.1:3001', token: '', path: 'bin/adapter-napcat.exe' },
+        sandbox: { path: 'bin/adapter-sandbox.exe' },
+      },
+      running: [
+        { platform: 'napcat', alive: true, pid: 1234 },
+        { platform: 'sandbox', alive: true, pid: 5678 },
+      ],
+    }
+  }
+  return http('/api/adapters')
+}
+
+/** 应用适配器配置（写盘 + 热应用），返回结果说明。 */
+export async function applyAdapters(config: AdapterConfig): Promise<string> {
+  if (USE_MOCK) {
+    await delay(300)
+    return '已应用'
+  }
+  const r = await http<{ msg?: string }>('/api/adapters/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  return r.msg ?? '已应用'
+}
+
+// ---- 插件配置编辑（SCHEMA 表单）----
+
+export interface SchemaField {
+  key: string
+  type?: string
+  default?: unknown
+  desc?: string
+  options?: unknown[]
+  min?: number
+  max?: number
+}
+
+export interface PluginConfig {
+  schema: SchemaField[]
+  values: Record<string, unknown>
+  installed: boolean
+  enabled: boolean
+}
+
+export async function fetchPluginConfig(name: string): Promise<PluginConfig> {
+  if (USE_MOCK) {
+    return {
+      schema: [{ key: 'timeout_seconds', type: 'int', default: 60, desc: '请求超时秒数' }],
+      values: { timeout_seconds: 60 },
+      installed: true,
+      enabled: true,
+    }
+  }
+  return http(`/api/plugins/${encodeURIComponent(name)}/config`)
+}
+
+export async function savePluginConfig(name: string, values: Record<string, unknown>): Promise<void> {
+  if (USE_MOCK) {
+    await delay(200)
+    return
+  }
+  await http(`/api/plugins/${encodeURIComponent(name)}/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(values),
+  })
+}
+
+// ---- WebUI 扩展机制（tab 注册）----
+
+export interface UiTab {
+  id: string
+  title: string
+  path: string
+}
+
+/** 导航 tab 列表：宿主侧注册（内置 + 扩展），前端按 path 映射组件。 */
+export async function fetchUiTabs(): Promise<UiTab[]> {
+  if (USE_MOCK) {
+    return [
+      { id: 'dashboard', title: '仪表盘', path: '/dashboard' },
+      { id: 'messages', title: '消息流', path: '/messages' },
+      { id: 'sandbox', title: '沙箱', path: '/sandbox' },
+      { id: 'plugins', title: '插件', path: '/plugins' },
+    ]
+  }
+  const r = await http<{ tabs: UiTab[] }>('/api/extensions/ui')
+  return r.tabs
+}
+
+/** 沙箱选项卡的输入通路：注入一条消息进沙箱事件链路。 */
+export async function sandboxSend(text: string, mode: string, atBot: boolean): Promise<void> {
+  if (USE_MOCK) {
+    await delay(200)
+    return
+  }
+  await http('/api/sandbox/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, mode, atBot }),
+  })
+}
