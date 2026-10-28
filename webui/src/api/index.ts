@@ -203,6 +203,75 @@ export async function savePluginConfig(name: string, values: Record<string, unkn
   })
 }
 
+// ---- 服务配置（provider 层）----
+
+export interface ProviderEntry {
+  api_base?: string
+  api_key?: string
+  /** 后端标记：是否已配置 key（明文不出后端） */
+  has_api_key?: boolean
+  model?: string
+  temperature?: number
+  max_tokens?: number
+  timeout_seconds?: number
+  vision?: boolean
+}
+
+export interface ProviderSection {
+  active: string
+  providers: Record<string, ProviderEntry>
+}
+
+export interface ProvidersConfig {
+  llm: ProviderSection
+  search: ProviderSection
+}
+
+export async function fetchProviders(): Promise<ProvidersConfig> {
+  if (USE_MOCK) {
+    return {
+      llm: {
+        active: 'deepseek',
+        providers: {
+          deepseek: {
+            api_base: 'https://api.deepseek.com/v1',
+            api_key: '',
+            has_api_key: true,
+            model: 'deepseek-chat',
+            temperature: 0.8,
+            max_tokens: 1024,
+            timeout_seconds: 60,
+            vision: false,
+          },
+        },
+      },
+      search: {
+        active: 'deepseek',
+        providers: {
+          deepseek: { api_key: '' },
+          duckduckgo: { api_key: '' },
+          bocha: { api_key: '', has_api_key: false },
+        },
+      },
+    }
+  }
+  return http('/api/providers')
+}
+
+/** 保存服务配置：api_key 留空 = 保持已有；置 null = 清除。保存即热生效。 */
+export async function saveProviders(cfg: ProvidersConfig): Promise<string> {
+  if (USE_MOCK) {
+    await delay(200)
+    return '已保存，服务配置热生效'
+  }
+  const r = await http<{ msg?: string }>('/api/providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  })
+  return r.msg ?? '已保存'
+}
+
 // ---- WebUI 扩展机制（tab 注册）----
 
 export interface UiTab {
@@ -217,6 +286,7 @@ export async function fetchUiTabs(): Promise<UiTab[]> {
     return [
       { id: 'dashboard', title: '仪表盘', path: '/dashboard' },
       { id: 'messages', title: '消息流', path: '/messages' },
+      { id: 'providers', title: '服务', path: '/providers' },
       { id: 'sandbox', title: '沙箱', path: '/sandbox' },
       { id: 'plugins', title: '插件', path: '/plugins' },
     ]

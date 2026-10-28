@@ -18,40 +18,47 @@ PRIORITY = 200  # 兜底，排在 qa/status 之后
 
 # config 由宿主注入（本目录 config.yaml 的原始值；enabled 为宿主保留键）
 config: dict
+# providers 由宿主注入（config/providers.yaml 激活项快照）：
+# {"llm": {...}, "search": {"provider", "api_key"}}；缺失时用内置缺省兜底
+providers: dict
 
 SCHEMA = [
-    {"key": "api_base", "type": "string", "default": "https://api.deepseek.com/v1",
-     "desc": "OpenAI 兼容后端地址（含 /v1）"},
-    {"key": "api_key", "type": "string", "default": "",
-     "desc": "API 密钥"},
-    {"key": "model", "type": "string", "default": "deepseek-chat",
-     "desc": "模型名"},
     {"key": "triggers", "type": "list", "default": ["祥子"],
      "desc": "群聊触发词：消息含任一词或 @机器人 才回话；私聊全部回话"},
     {"key": "system_prompt", "type": "string",
      "default": "你是一个友好的聊天机器人。回复保持简短、口语化。",
      "desc": "人设（system prompt）"},
-    {"key": "temperature", "type": "float", "default": 0.8, "min": 0, "max": 2,
-     "desc": "采样温度"},
-    {"key": "max_tokens", "type": "int", "default": 1024,
-     "desc": "单次回复 token 上限"},
     {"key": "history_limit", "type": "int", "default": 20,
      "desc": "每会话（私聊/各群各一份）保留的最大消息条数"},
-    {"key": "timeout_seconds", "type": "int", "default": 60,
-     "desc": "请求超时秒数"},
     {"key": "max_turns", "type": "int", "default": 6, "min": 1,
      "desc": "单次会话的工具循环轮数上限，防失控"},
-    {"key": "vision", "type": "bool", "default": False,
-     "desc": "后端是否支持图片输入（glm-4v / gpt-4o / qwen-vl 等）；"
-             "deepseek-chat 不支持，开着会 400，关闭时图片以占位符进历史"},
-    {"key": "search_provider", "type": "string", "default": "deepseek",
-     "options": ["deepseek", "duckduckgo", "bocha"],
-     "desc": "联网引擎：deepseek 官方 Search/Fetch API（复用 api_key，国内直连，"
-             "按成功次数计费）；duckduckgo 免 key 需代理；bocha 需 search_api_key。"
-             "同时决定 read_webpage 走哪条通道（deepseek 返回 Markdown）"},
-    {"key": "search_api_key", "type": "string", "default": "",
-     "desc": "搜索引擎 API 密钥（deepseek 留空复用 api_key；bocha 必填；duckduckgo 留空）"},
 ]
+
+# LLM / 搜索的接入点与凭据归宿主 config/providers.yaml 统一管理
+# （WebUI「服务」选项卡）；这里只留兜底缺省，宿主没注入 providers
+# （旧宿主/单测环境）时行为与迁移前一致。
+_LLM_DEFAULTS = {
+    "api_base": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "model": "deepseek-chat",
+    "temperature": 0.8,
+    "max_tokens": 1024,
+    "timeout_seconds": 60,
+    "vision": False,
+}
+
+
+def _merged_cfg() -> dict:
+    """SCHEMA 配置 + provider 层合并：resolve 只管本插件字段，
+    LLM 七键与搜索两键由 providers 覆盖。"""
+    cfg = loquat_cfglib.resolve(SCHEMA, config)  # noqa: F821
+    cfg.update(_LLM_DEFAULTS)
+    p = globals().get("providers") or {}
+    cfg.update(p.get("llm") or {})
+    search = p.get("search") or {}
+    cfg["search_provider"] = search.get("provider", "deepseek")
+    cfg["search_api_key"] = search.get("api_key", "")
+    return cfg
 
 # ── 权限门禁：send_message / recall 影响 bot 之外的世界，须群管理员 ──
 # 私聊默认信任（个人 bot 的常见形态）；群聊查 get_group_member_info 的
@@ -126,7 +133,7 @@ def system_status() -> str:
 def web_search(ctx, query: str) -> str:
     """联网搜索。返回编号结果列表（标题、链接、摘要）；
     需要读某个结果的原文时搭配 read_webpage。"""
-    cfg = loquat_cfglib.resolve(SCHEMA, config)  # noqa: F821
+    cfg = _merged_cfg()
     provider = cfg.get("search_provider", "deepseek")
     try:
         results = loquat_webtools.search(
@@ -157,7 +164,7 @@ def _search_key(cfg: dict, provider: str) -> str:
 def read_webpage(ctx, url: str) -> str:
     """读取网页的正文文本（deepseek 通道返回 Markdown），
     适合搭配 web_search 的链接。"""
-    cfg = loquat_cfglib.resolve(SCHEMA, config)  # noqa: F821
+    cfg = _merged_cfg()
     try:
         if cfg.get("search_provider", "deepseek") == "deepseek":
             return loquat_webtools.fetch(
@@ -233,7 +240,7 @@ TOOLS = [now, system_status, web_search, read_webpage,
 
 
 def handle(ctx: dict) -> list[str]:
-    cfg = loquat_cfglib.resolve(SCHEMA, config)  # noqa: F821
+    cfg = _merged_cfg()
     text = loquat_agent.clean_text(ctx)
     if not text:
         return []

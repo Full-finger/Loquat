@@ -8,6 +8,7 @@ mod event;
 mod ffi;
 mod log;
 mod pluginload;
+mod providers;
 mod pybridge;
 mod sharedlib;
 mod stats;
@@ -114,12 +115,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else if loaded > 0 {
         log_info!("会话历史已回填: {loaded} 个会话");
     }
+    // provider 层先于业务加载：插件的 providers 注入要用
+    providers::load();
     let business = Arc::new(Business::load(EXTENSIONS_DIR)?);
     pybridge::suppress_sigint();
     log_info!("业务已加载: {}", business.info());
 
     // WebUI：REST + 静态页 + 消息流 WS，独立线程，起不来只记日志。
-    // 沙箱选项卡经通用 tab 注册机制挂上（第一个消费者）
+    // 选项卡经通用 tab 注册机制挂上；注册顺序 = 侧栏顺序
+    webui::register_tab("providers", "服务", "/providers");
     webui::register_tab("adapters", "适配器", "/adapters");
     webui::register_tab("sandbox", "沙箱", "/sandbox");
     webui::spawn(Arc::clone(&dll), Arc::clone(&business));

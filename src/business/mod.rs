@@ -42,6 +42,8 @@ use crate::sharedlib;
 
 mod config_api;
 
+pub(crate) use config_api::serde_yamlish;
+
 use crate::pluginload::{file_mtime, has_signature};
 
 const ENTRY_FILE: &str = "plugin.py";
@@ -327,8 +329,7 @@ impl Business {
 
     /// 未安装插件是否跳过加载：提示过且 config.yaml 仍缺失则返回 true；
     /// config.yaml 出现（手动安装）则移出提示集合，放行正常加载。
-    fn gated_as_installable(&self, name: &str) -> bool {
-        let mut hinted = self.installable.lock().expect("业务锁中毒");
+    fn gated_as_installable(&self, name: &str) -> bool {        let mut hinted = self.installable.lock().expect("业务锁中毒");
         if !hinted.iter().any(|n| n == name) {
             return false;
         }

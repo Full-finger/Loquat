@@ -7,6 +7,7 @@ export default createRouter({
     { path: '/dashboard', component: () => import('../views/Dashboard.vue') },
     { path: '/plugins', component: () => import('../views/Plugins.vue') },
     { path: '/messages', component: () => import('../views/Messages.vue') },
+    { path: '/providers', component: () => import('../views/Providers.vue') },
     { path: '/sandbox', component: () => import('../views/Sandbox.vue') },
     { path: '/adapters', component: () => import('../views/Adapters.vue') },
   ],

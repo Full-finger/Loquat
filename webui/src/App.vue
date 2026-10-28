@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ChatDotRound, Grid, Link, Monitor, Odometer, Setting } from '@element-plus/icons-vue'
+import { ChatDotRound, Coin, Grid, Link, Monitor, Odometer, Setting } from '@element-plus/icons-vue'
 import { fetchUiTabs, getStatus, type UiTab } from './api'
 
 const route = useRoute()
@@ -20,6 +20,7 @@ const TAB_ICONS: Record<string, unknown> = {
   dashboard: Odometer,
   plugins: Grid,
   messages: ChatDotRound,
+  providers: Coin,
   sandbox: Monitor,
   adapters: Setting,
 }

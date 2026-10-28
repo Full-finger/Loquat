@@ -85,11 +85,18 @@ fn current_platform() -> Option<String> {
     map.lock().ok()?.get(&std::thread::current().id()).cloned()
 }
 
-/// 把插件环境挂到模块上：config（来自插件目录的 config.yaml 文本）
-/// 与 core（Go 核心能力桥）。热重载后重新挂载。
+/// 把插件环境挂到模块上：config（来自插件目录的 config.yaml 文本）、
+/// providers（宿主解析后的服务配置快照）与 core（Go 核心能力桥）。
+/// 热重载后重新挂载。
 pub fn attach_plugin_env(module: &Bound<'_, PyModule>, config_yaml: &str) -> PyResult<()> {
     let config = yaml_text_to_py_dict(module.py(), config_yaml)?;
     module.setattr("config", config)?;
+
+    // provider 层（config/providers.yaml 的激活项快照）：声明了即可，
+    // 未声明（旧插件/测试插件） globals().get("providers") 拿到 None
+    let providers_json = crate::providers::resolved_json();
+    let providers = module.py().import("json")?.call_method1("loads", (providers_json,))?;
+    module.setattr("providers", providers)?;
 
     let bridge = PyModule::new(module.py(), "loquat_core_bridge")?;
     bridge.add_function(wrap_pyfunction!(system_status, &bridge)?)?;

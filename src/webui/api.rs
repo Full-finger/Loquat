@@ -21,6 +21,7 @@ pub fn routes() -> Router<Arc<WebState>> {
         .route("/api/sandbox/send", post(api_sandbox_send))
         .route("/api/adapters", get(api_adapters))
         .route("/api/adapters/apply", post(api_adapters_apply))
+        .route("/api/providers", get(api_providers).post(api_providers_save))
         .route("/api/plugins/{name}/config", get(api_plugin_config).put(api_plugin_config_save))
         .route("/api/plugins", get(api_plugins))
         .route("/api/plugins/{name}/enable", post(api_enable))
@@ -87,6 +88,33 @@ async fn api_adapters_apply(
             Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
+    }
+}
+
+/// 服务配置（provider 层）：api_key 打码，has_api_key 标记是否已配置。
+async fn api_providers(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
+    if !authorized(&state, &headers) {
+        return unauthorized();
+    }
+    Json(crate::providers::view()).into_response()
+}
+
+/// 保存服务配置（api_key 空 = 保持已有，null = 清除），热生效。
+async fn api_providers_save(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if !authorized(&state, &headers) {
+        return unauthorized();
+    }
+    match crate::providers::save(&body) {
+        Ok(()) => {
+            state.business.refresh_providers();
+            Json(serde_json::json!({ "ok": true, "msg": "已保存，服务配置热生效" }))
+                .into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
     }
 }
 

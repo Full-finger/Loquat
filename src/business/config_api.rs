@@ -53,7 +53,7 @@ fn json_to_py<'py>(
 
 // 极简 YAML → JSON（标量/一层嵌套）：插件 config.yaml 都是扁平键值。
 // 复杂结构交给前端的 list/dict 编辑器序列化成标准 YAML，这里只读。
-fn serde_yamlish(text: &str) -> Result<serde_json::Value, String> {
+pub(crate) fn serde_yamlish(text: &str) -> Result<serde_json::Value, String> {
     let docs = yaml_rust2::YamlLoader::load_from_str(text).map_err(|e| e.to_string())?;
     let doc = docs.into_iter().next().ok_or("空文档")?;
     Ok(yaml_to_json_value(&doc))
@@ -86,6 +86,20 @@ fn yaml_to_json_value(v: &yaml_rust2::Yaml) -> serde_json::Value {
 }
 
 impl Business {
+    /// Provider 配置变更后调用：全部插件标记待重载并立即同步，
+    /// 重编的模块经 attach_plugin_env 拿到新的 providers 注入。
+    pub fn refresh_providers(&self) {
+        {
+            let mut plugins = self.plugins.lock().expect("业务锁中毒");
+            for p in plugins.iter_mut() {
+                p.mtime = std::time::SystemTime::UNIX_EPOCH;
+            }
+        }
+        if let Err(e) = self.sync() {
+            crate::log_error!("provider 变更后重载插件失败: {e}");
+        }
+    }
+
     /// 插件配置读取：SCHEMA（字段声明）+ 当前值（config.yaml，未安装给默认值）。
     /// 前端按 schema 渲染编辑表单。
     pub fn plugin_config(&self, name: &str) -> Result<serde_json::Value, String> {
