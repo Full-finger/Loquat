@@ -34,6 +34,7 @@ fn write_plugin(dir: &Path, folder: &str, code: &str) {
 // spy 插件：调用 webtools 的纯解析函数，结果 JSON 化回传（不触网）。
 const SPY_SRC: &str = r#"
 import json
+import urllib.request
 
 import loquat_webtools
 
@@ -57,6 +58,21 @@ PAGE_HTML = (
     '<script>also_bad()</script></body></html>'
 )
 
+# SSRF：内网/保留/环回 literal IP 全拒（getaddrinfo 对 literal 不出网），
+# 公网 literal IP 放行；重定向守卫对内网 Location 拒绝
+SSRF_BAD = [
+    "http://127.0.0.1:7900/api",
+    "http://10.0.0.5/x",
+    "http://172.16.1.1/",
+    "http://192.168.1.1/",
+    "http://169.254.169.254/meta",
+    "http://[::1]:8080/",
+    "http://[::ffff:127.0.0.1]/",
+    "http://0.0.0.0/",
+    "ftp://a.example/",
+    "http://localhost:7900/",
+]
+
 
 def handle(ctx):
     t = ctx.get("text") or ""
@@ -72,6 +88,28 @@ def handle(ctx):
         return [f"{a}|{b}"]
     if t == "page":
         return [loquat_webtools._html_to_text(PAGE_HTML)]
+    if t == "ssrf":
+        errs = 0
+        for u in SSRF_BAD:
+            try:
+                loquat_webtools._assert_public_url(u)
+            except ValueError:
+                errs += 1
+        try:
+            loquat_webtools._assert_public_url("http://93.184.216.34/x")
+            public_ok = True
+        except ValueError:
+            public_ok = False
+        try:
+            loquat_webtools._PublicRedirect().redirect_request(
+                None, None, 302, "x", {}, "http://10.1.2.3/y")
+            redir = "pass"
+        except ValueError:
+            redir = "reject"
+        guard = issubclass(loquat_webtools._PublicRedirect,
+                           urllib.request.HTTPRedirectHandler)
+        return [json.dumps({"errs": errs, "public_ok": public_ok,
+                            "redir": redir, "guard": guard})]
     return []
 "#;
 
@@ -126,5 +164,14 @@ fn webtools_parses_ddg_and_extracts_text() {
     assert!(!out.contains("bad()"), "script 应剔除: {out}");
     assert!(!out.contains(".x{}"), "style 应剔除: {out}");
     assert!(!out.contains("\n\n"), "空行应合并: {out}");
+
+    // SSRF 防线：内网/环回/保留 literal IP 全拒，公网放行，重定向守卫拒绝内网
+    let replies = business.handle(&ctx("ssrf")).unwrap();
+    assert_eq!(replies.len(), 1);
+    let out = &replies[0];
+    assert!(out.contains("\"errs\": 10"), "10 个内网 URL 应全拒: {out}");
+    assert!(out.contains("\"public_ok\": true"), "公网 IP 应放行: {out}");
+    assert!(out.contains("\"redir\": \"reject\""), "内网重定向应拒绝: {out}");
+    assert!(out.contains("\"guard\": true"), "守卫应挂在 redirect handler 上: {out}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -106,7 +106,14 @@ export async function reloadNapcat(): Promise<string> {
 }
 
 // 消息流 WS 地址；mock 模式下 Messages 页自己造数据，不建连。
-export const WS_URL = `ws://${location.host}/api/ws`
+// 浏览器 WebSocket API 不能带 Authorization 头，配置了 token 时走
+// ?token= 查询参数兜底（宿主 api_ws 同步支持；token 会进访问日志）。
+export function wsUrl(): string {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const token = localStorage.getItem('loquat_token')
+  const q = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${proto}://${location.host}/api/ws${q}`
+}
 
 // ---- 适配器管理 ----
 

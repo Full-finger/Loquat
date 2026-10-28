@@ -7,8 +7,10 @@
 # 网络与解析分离：*_parse/_html_to_text 是纯函数，fixture 单测不打网。
 # 错误约定：一律抛异常，由调用方（chat 插件工具）转错误文本回模型。
 
+import ipaddress
 import json
 import re
+import socket
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -45,14 +47,16 @@ def search(query: str, *, count: int = 5, provider: str = "deepseek",
 def fetch(url: str, *, max_chars: int = _MAX_CHARS, provider: str = "",
           api_key: str = "", api_base: str = "") -> str:
     """读网页：deepseek 通道走官方 Fetch API（返回 Markdown）；
-    其余本机直抓——HTML 抽正文，text/plain 与 JSON 原样返回，超限截断。"""
-    scheme = urllib.parse.urlparse(url).scheme
-    if scheme not in ("http", "https"):
-        raise ValueError(f"只支持 http/https 链接，收到 {scheme or '空'!r}")
+    其余本机直抓——HTML 抽正文，text/plain 与 JSON 原样返回，超限截断。
+    本机直抓只许公网地址（fetch 暴露给 LLM，群友可控 url，
+    不挡内网等于把宿主 WebUI/云 metadata 开给所有人）。"""
     if provider == "deepseek":
+        # 官方 Fetch 在 deepseek 服务端抓取，本机内网对其不可达，不设卡
         return _fetch_deepseek(url, api_key, api_base)[:max_chars]
+    _assert_public_url(url)
+    opener = urllib.request.build_opener(_PublicRedirect)
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with opener.open(req, timeout=_TIMEOUT) as resp:
         ctype = (resp.headers.get("Content-Type") or "").lower()
         raw = resp.read(_MAX_DOWNLOAD)
         if not any(m in ctype for m in
@@ -61,6 +65,45 @@ def fetch(url: str, *, max_chars: int = _MAX_CHARS, provider: str = "",
         text = raw.decode(_charset(ctype), errors="replace")
     body = _html_to_text(text) if "html" in ctype else text.strip()
     return body[:max_chars]
+
+
+# ── SSRF 防护：本机直抓只许公网地址 ──────────────────────────
+
+def _ip_allowed(ip: str) -> bool:
+    """单个 IP 是否可访问：拒绝 loopback/私网/link-local/保留/组播/未指定。
+    IPv4-mapped IPv6（::ffff:127.0.0.1）还原成 IPv4 判断。"""
+    addr = ipaddress.ip_address(ip)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return not (addr.is_loopback or addr.is_private or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
+
+
+def _assert_public_url(url: str) -> None:
+    """目标必须是公网 http(s) 地址，否则抛 ValueError。
+    域名逐个解析结果校验。连接时的二次解析（DNS rebinding TOCTOU）
+    不在此防线内——对聊天场景够用，强对抗需要 pin 解析结果重连。"""
+    parts = urllib.parse.urlparse(url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"只支持 http/https 链接，收到 {parts.scheme or '空'!r}")
+    host = parts.hostname
+    if not host:
+        raise ValueError("URL 缺主机名")
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError as e:
+        raise ValueError(f"域名解析失败 {host!r}: {e}") from e
+    for info in infos:
+        if not _ip_allowed(info[4][0]):
+            raise ValueError(f"拒绝访问内网/保留地址（{host}）")
+
+
+class _PublicRedirect(urllib.request.HTTPRedirectHandler):
+    """重定向逐跳校验：302 指向内网同样拒绝，堵首跳白名单被绕过。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _assert_public_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 # ── 网页正文抽取 ──────────────────────────────────────────────

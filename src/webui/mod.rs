@@ -114,12 +114,72 @@ async fn serve(
     let app = api::routes()
         .fallback_service(assets)
         .with_state(state)
-        .layer(middleware::from_fn(cache_headers));
+        .layer(middleware::from_fn(cache_headers))
+        .layer(middleware::from_fn(same_site_guard));
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     log_info!("WebUI: http://127.0.0.1:{port}（数据与控制台命令同源）");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+// 站点边界（本机服务对浏览器暴露面收口，26102701#2）：
+// - Host 必须是回环名——DNS rebinding 把攻击域名解析到 127.0.0.1 时，
+//   浏览器发出的 Host 头仍是攻击域名，在此拒掉，GET 数据（含适配器
+//   token / 插件 api_key）就带不走；
+// - Origin 存在时必须同为回环且端口与 Host 一致——恶意网页的跨站
+//   simple request（表单/fetch no-cors）不触发预检也拦不住自定义头，
+//   唯有 Origin 骗不了；同源页面的 WS 与 fetch 自带同源 Origin，不受影响。
+// 非 POST 的静态资源同受保护：rebound 页面连我们的 JS 也拿不去。
+async fn same_site_guard(request: Request, next: Next) -> Response {
+    let host_ok = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(loopback_name)
+        .unwrap_or(false);
+    let origin_ok = request
+        .headers()
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(|origin| origin_is_same_site(origin, request.headers()))
+        .unwrap_or(true); // 无 Origin = 非浏览器客户端（curl/WS 工具），交由 token 鉴权
+    if !host_ok || !origin_ok {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "cross-site" })))
+            .into_response();
+    }
+    next.run(request).await
+}
+
+// Host 头的主机部分是否为回环名（127.0.0.1 / localhost / [::1]）。
+fn loopback_name(host_port: &str) -> bool {
+    let host = host_port
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(host_port);
+    host == "127.0.0.1" || host == "localhost" || host == "[::1]"
+}
+
+// Origin 与 Host 是否同站：主机回环 + 端口一致（缺省端口按 scheme 补）。
+fn origin_is_same_site(origin: &str, headers: &axum::http::HeaderMap) -> bool {
+    let (scheme, rest) = match origin.split_once("://") {
+        Some((s, r)) => (s, r),
+        None => return false,
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) => (h, p.parse::<u16>().unwrap_or(0)),
+        None => (authority, if scheme == "https" { 443 } else { 80 }),
+    };
+    if host != "127.0.0.1" && host != "localhost" && host != "[::1]" {
+        return false;
+    }
+    headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.rsplit_once(':'))
+        .and_then(|(_, p)| p.parse::<u16>().ok())
+        .is_some_and(|host_port| host_port == port)
 }
 
 // 可选配置 config/webui.yaml（port / token），缺失用缺省值、不鉴权。
@@ -200,4 +260,39 @@ pub fn publish_reply(platform: &str, message_type: &str, chat_id: &str, text: &s
         })
         .to_string(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{loopback_name, origin_is_same_site};
+    use axum::http::HeaderMap;
+
+    fn hostmap(host: &str) -> HeaderMap {
+        let mut m = HeaderMap::new();
+        m.insert("host", host.parse().unwrap());
+        m
+    }
+
+    #[test]
+    fn host_must_be_loopback() {
+        assert!(loopback_name("127.0.0.1:7900"));
+        assert!(loopback_name("localhost:7900"));
+        assert!(loopback_name("[::1]:7900"));
+        // DNS rebinding：浏览器带的是攻击域名
+        assert!(!loopback_name("evil.example.com:7900"));
+        assert!(!loopback_name("10.0.0.5:7900"));
+    }
+
+    #[test]
+    fn origin_must_be_same_site() {
+        let h = hostmap("127.0.0.1:7900");
+        assert!(origin_is_same_site("http://127.0.0.1:7900", &h));
+        assert!(origin_is_same_site("http://localhost:7900", &h));
+        // 跨站网页发来的 simple request：Origin 不是回环
+        assert!(!origin_is_same_site("https://evil.example.com", &h));
+        // 回环但端口不同：本机其他服务发起的跨端口请求，同样拒
+        assert!(!origin_is_same_site("http://127.0.0.1:9999", &h));
+        // Host 缺端口时无从比对，拒绝（fail closed）
+        assert!(!origin_is_same_site("http://127.0.0.1:7900", &hostmap("127.0.0.1")));
+    }
 }

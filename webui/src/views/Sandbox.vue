@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { sandboxSend, USE_MOCK, WS_URL } from '../api'
+import { sandboxSend, USE_MOCK, wsUrl } from '../api'
 
 interface Bubble {
   dir: 'in' | 'out'
@@ -33,7 +33,7 @@ function push(b: Bubble) {
 // 消息流 WS 与「消息流」页共用：只取沙箱平台的帧。
 // in = 用户注入的消息回显，out = 机器人的回复（宿主 publish 推送）。
 function connect() {
-  ws = new WebSocket(WS_URL)
+  ws = new WebSocket(wsUrl())
   ws.onopen = () => {
     connected.value = true
   }

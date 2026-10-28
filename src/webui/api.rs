@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -122,7 +122,14 @@ async fn api_plugin_config_save(
 }
 
 /// 导航 tab 列表（通用扩展机制的宿主侧声明）。
-async fn api_extensions_ui() -> Response {
+/// 虽只是导航元数据，也与其他端点统一鉴权（避免「免 token 探针」）。
+async fn api_extensions_ui(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+) -> Response {
+    if !authorized(&state, &headers) {
+        return unauthorized();
+    }
     let tabs = super::ui_tabs_snapshot();
     Json(serde_json::json!({ "tabs": tabs })).into_response()
 }
@@ -246,9 +253,20 @@ async fn api_reload_napcat(
 async fn api_ws(
     State(state): State<Arc<WebState>>,
     headers: HeaderMap,
+    RawQuery(query): RawQuery,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !authorized(&state, &headers) {
+    // 浏览器 WebSocket API 不能带 Authorization 头，token 允许走 ?token=
+    // 查询参数兜底（会进访问日志；本服务只绑回环，日志仅落本机）。
+    let query_ok = match (&state.token, query.as_deref()) {
+        (Some(expected), Some(q)) => q.split('&').any(|kv| {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            k == "token" && v == expected
+        }),
+        (Some(_), None) => false,
+        (None, _) => true,
+    };
+    if !query_ok && !authorized(&state, &headers) {
         return unauthorized();
     }
     let rx = STREAM_TX.get().map(|tx| tx.subscribe());

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { USE_MOCK, WS_URL } from '../api'
+import { USE_MOCK, wsUrl } from '../api'
 
 interface MsgItem {
   time: string
@@ -68,7 +68,7 @@ onMounted(() => {
       })
     }, 2000)
   } else {
-    ws = new WebSocket(WS_URL)
+    ws = new WebSocket(wsUrl())
     ws.onopen = () => {
       connected.value = true
     }
