@@ -14,6 +14,7 @@ mod sharedlib;
 mod stats;
 mod webui;
 
+use std::any::Any;
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::c_char;
@@ -149,9 +150,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::thread::spawn(move || {
                 for incoming in rx {
                     let chat_id = incoming.chat.id().to_string();
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // panic 载荷必须留痕：静默吞掉会让会话砖化且查不到原因（26102701#8）
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         handle_message(incoming, &worker_dll, &worker_business);
                     }));
+                    if let Err(payload) = outcome {
+                        log_error!("消息处理 panic（chat={chat_id}）：{}", panic_text(&payload));
+                    }
                     // 无论 panic 与否都归还计数，统计口径才守得住（agents 命令）
                     stats::worker_settle(idx, &chat_id);
                 }
@@ -227,6 +232,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// panic 载荷转文本：`panic!("...")` 与 `panic!("{}", x)` 分别是
+/// &str/String，其余类型报缺省文案兜底，保证事故可观测。
+fn panic_text(payload: &Box<dyn Any + Send>) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "非文本 panic 载荷".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +251,19 @@ mod tests {
         assert!(ffi_resp_failed(r#"{"error":"发送被 NapCat 拒绝: retcode=1200"}"#));
         assert!(!ffi_resp_failed(r#"{"messageId":"123"}"#));
         assert!(!ffi_resp_failed("not json"), "非 JSON 不拦");
+    }
+
+    #[test]
+    fn panic_text_handles_common_payloads() {
+        assert_eq!(panic_text(&(Box::new("boom") as Box<dyn Any + Send>)), "boom");
+        assert_eq!(
+            panic_text(&(Box::new(String::from("code 7")) as Box<dyn Any + Send>)),
+            "code 7"
+        );
+        assert_eq!(
+            panic_text(&(Box::new(42usize) as Box<dyn Any + Send>)),
+            "非文本 panic 载荷"
+        );
     }
 
     // 集成测试：验 FFI 触发的 reload 能让适配器子进程重生。

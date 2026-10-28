@@ -422,3 +422,30 @@ fn handle_does_not_hold_lock_across_plugin_chain() {
     assert_eq!(chain.join().unwrap(), vec!["slow".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn poisoned_lock_recovers_instead_of_bricking() {
+    // 回归 #8：持锁 panic 毒锁后，路由与统计必须恢复继续。
+    // 旧实现 expect 会再 panic：worker 的消息被静默丢弃、
+    // 主线程 console（info）直接炸掉进程
+    let dir = plugin_dir("poison");
+    write_plugin(&dir, "p", "def handle(ctx):\n    return ['ok']\n");
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    // 注入：分别毒掉 plugins 与 installable 两把锁（panic 时守卫仍持有，
+    // unwind 落守卫即标记中毒）
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = business.plugins.write().unwrap();
+        panic!("注入毒锁");
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = business.installable.lock().unwrap();
+        panic!("注入毒锁");
+    }));
+    assert_eq!(business.handle(&ctx("k")).unwrap(), vec!["ok".to_string()]);
+    assert!(business.info().contains("p"));
+    let rows = business.plugin_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "p");
+    assert!(rows[0].1);
+    let _ = std::fs::remove_dir_all(&dir);
+}

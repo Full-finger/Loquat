@@ -11,13 +11,21 @@
 //! api_key 从插件目录（易被 git add -f / 截图误带）收编到 config/ 一处。
 
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{OnceLock, PoisonError, RwLock};
 
 use crate::business::serde_yamlish;
-use crate::{log_error, log_info};
+use crate::{log_error, log_info, log_warn};
 
 const PROVIDERS_FILE: &str = "config/providers.yaml";
 const CHAT_CONFIG: &str = "extensions/chat/config.yaml";
+
+/// 毒锁恢复（26102701#8）：providers 锁中毒若 expect，panic 会顺着
+/// sync 的 plugins 写锁级联（attach_plugin_env → resolved_json），
+/// 把业务锁一起毒掉。恢复继续 + warn 留痕。
+fn recover_poison<T>(poisoned: PoisonError<T>) -> T {
+    log_warn!("providers 锁中毒，已恢复继续（曾有 panic 持锁）");
+    poisoned.into_inner()
+}
 
 // llm provider 的字段与缺省（与 chat 插件迁移前的 SCHEMA 对齐）
 fn llm_field_defaults() -> Vec<(&'static str, serde_json::Value)> {
@@ -78,14 +86,14 @@ fn load_from(path: &Path, chat_cfg: &Path) {
     match loaded {
         Some(v) => {
             if let Ok(norm) = normalize(&v) {
-                *cell().write().expect("providers 锁中毒") = norm;
+                *cell().write().unwrap_or_else(recover_poison) = norm;
             } else {
                 log_error!("providers.yaml 形态不合法，用缺省值（可在 WebUI 重新保存）");
             }
         }
         None => {
             let migrated = migrate(chat_cfg);
-            *cell().write().expect("providers 锁中毒") = migrated.clone();
+            *cell().write().unwrap_or_else(recover_poison) = migrated.clone();
             if let Err(e) = std::fs::write(path, render(&migrated)) {
                 log_error!("写 providers.yaml 失败（本次运行用内存配置）: {e}");
             } else {
@@ -271,17 +279,17 @@ fn prepare(body: &serde_json::Value, old: &serde_json::Value) -> Result<serde_js
 /// 保存：校验、写盘、更新内存。调用方应随后触发
 /// Business::refresh_providers 让插件重注入。
 pub fn save(body: &serde_json::Value) -> Result<(), String> {
-    let norm = prepare(body, &cell().read().expect("providers 锁中毒"))?;
+    let norm = prepare(body, &cell().read().unwrap_or_else(recover_poison))?;
     std::fs::write(PROVIDERS_FILE, render(&norm))
         .map_err(|e| format!("写 providers.yaml 失败: {e}"))?;
-    *cell().write().expect("providers 锁中毒") = norm;
+    *cell().write().unwrap_or_else(recover_poison) = norm;
     Ok(())
 }
 
 /// 注入插件全局的解析结果：激活项拍平，多 provider 机制对插件透明。
 /// 未加载（测试等场景）为缺省形态。
 pub fn resolved_json() -> String {
-    let v = cell().read().expect("providers 锁中毒");
+    let v = cell().read().unwrap_or_else(recover_poison);
     resolved_of(&v)
 }
 
@@ -298,7 +306,7 @@ fn resolved_of(v: &serde_json::Value) -> String {
 
 /// WebUI 视图：api_key 不回传明文，用 has_api_key 标记是否已配置。
 pub fn view() -> serde_json::Value {
-    view_of(cell().read().expect("providers 锁中毒").clone())
+    view_of(cell().read().unwrap_or_else(recover_poison).clone())
 }
 
 fn view_of(v: serde_json::Value) -> serde_json::Value {

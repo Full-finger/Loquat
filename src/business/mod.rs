@@ -32,10 +32,10 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Mutex, PoisonError, RwLock};
 use std::time::SystemTime;
 
-use crate::{log_error, log_info};
+use crate::{log_error, log_info, log_warn};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
@@ -91,6 +91,14 @@ impl LoadedPlugin {
     }
 }
 
+/// 毒锁恢复：中毒只说明曾有 panic 持锁，数据本身仍可用。
+/// 本项目的用锁场景全是路由与统计，恢复继续跑好过砖死（26102701#8）；
+/// warn 留痕，事故可观测。
+fn recover_poison<T>(poisoned: PoisonError<T>) -> T {
+    log_warn!("业务锁中毒，已恢复继续（曾有 panic 持锁）");
+    poisoned.into_inner()
+}
+
 pub struct Business {
     dir: PathBuf,
     /// 读多写少：每条消息 handle 只读快照，sync/启停才写。handle 放锁后
@@ -119,7 +127,7 @@ impl Business {
     /// 重新扫描插件目录：发现新插件、重载有改动的（plugin.py 或 config.yaml）、
     /// 移除已删除的。单个插件加载失败只跳过自身，不拖垮整条链。
     fn sync(&self) -> Result<(), Box<dyn Error>> {
-        let mut plugins = self.plugins.write().expect("业务锁中毒");
+        let mut plugins = self.plugins.write().unwrap_or_else(recover_poison);
 
         // 共享库变更：重注册后把所有插件标记为待重载，重新绑定 import
         let mt = sharedlib::lib_mtime_millis(&self.dir);
@@ -275,7 +283,7 @@ impl Business {
         // 锁内只做快照，链路放锁外跑：Py<PyModule> 是强引用，即使中途热重载
         // 换掉模块，快照仍持有旧模块存活；LLM 等长等待不再堵其他线程
         let chain: Vec<(Py<PyModule>, String)> = Python::attach(|py| {
-            let plugins = self.plugins.read().expect("业务锁中毒");
+            let plugins = self.plugins.read().unwrap_or_else(recover_poison);
             plugins
                 .iter()
                 .filter(|p| p.enabled())
@@ -333,7 +341,7 @@ impl Business {
             return false;
         }
 
-        let mut plugins = self.plugins.write().expect("业务锁中毒");
+        let mut plugins = self.plugins.write().unwrap_or_else(recover_poison);
         match plugins.iter_mut().find(|p| p.dir_name == name) {
             Some(p) => {
                 p.marker_disabled = !enabled;
@@ -346,7 +354,8 @@ impl Business {
 
     /// 未安装插件是否跳过加载：提示过且 config.yaml 仍缺失则返回 true；
     /// config.yaml 出现（手动安装）则移出提示集合，放行正常加载。
-    fn gated_as_installable(&self, name: &str) -> bool {        let mut hinted = self.installable.lock().expect("业务锁中毒");
+    fn gated_as_installable(&self, name: &str) -> bool {
+        let mut hinted = self.installable.lock().unwrap_or_else(recover_poison);
         if !hinted.iter().any(|n| n == name) {
             return false;
         }
@@ -361,7 +370,7 @@ impl Business {
     fn note_installable(&self, name: &str) {
         self.installable
             .lock()
-            .expect("业务锁中毒")
+            .unwrap_or_else(recover_poison)
             .push(name.to_string());
         log_info!("检测到可安装插件: {name}，运行 install {name} 完成安装");
     }
@@ -369,8 +378,8 @@ impl Business {
     /// WebUI 插件列表：已加载插件 + 已发现未安装的目录。
     /// 返回 (名称, 已安装, 已启用, 优先级)。未安装的优先级未知，报缺省 100。
     pub fn plugin_rows(&self) -> Vec<(String, bool, bool, i64)> {
-        let plugins = self.plugins.read().expect("业务锁中毒");
-        let installable = self.installable.lock().expect("业务锁中毒");
+        let plugins = self.plugins.read().unwrap_or_else(recover_poison);
+        let installable = self.installable.lock().unwrap_or_else(recover_poison);
         let mut rows: Vec<(String, bool, bool, i64)> = plugins
             .iter()
             .map(|p| (p.dir_name.clone(), true, p.enabled(), p.priority))
@@ -385,7 +394,7 @@ impl Business {
     }
 
     pub fn info(&self) -> String {
-        let plugins = self.plugins.read().expect("业务锁中毒");
+        let plugins = self.plugins.read().unwrap_or_else(recover_poison);
         let names: Vec<String> = plugins
             .iter()
             .map(|p| {

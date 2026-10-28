@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use super::{Business, LoadedPlugin, CONFIG_FILE, ENTRY_FILE, UI_FILE};
+use super::{recover_poison, Business, LoadedPlugin, CONFIG_FILE, ENTRY_FILE, UI_FILE};
 use crate::log_error;
 use crate::pluginload;
 use crate::sharedlib;
@@ -93,7 +93,7 @@ impl Business {
     /// 重编的模块经 attach_plugin_env 拿到新的 providers 注入。
     pub fn refresh_providers(&self) {
         {
-            let mut plugins = self.plugins.write().expect("业务锁中毒");
+            let mut plugins = self.plugins.write().unwrap_or_else(recover_poison);
             for p in plugins.iter_mut() {
                 p.mtime = std::time::SystemTime::UNIX_EPOCH;
             }
@@ -112,7 +112,7 @@ impl Business {
         }
         // SCHEMA：已加载的插件直接读内存模块，未加载临时编译一个
         let schema_json = {
-            let plugins = self.plugins.read().expect("业务锁中毒");
+            let plugins = self.plugins.read().unwrap_or_else(recover_poison);
             match plugins.iter().find(|p| p.dir_name == name) {
                 Some(p) => schema_to_json(p),
                 None => {
@@ -222,7 +222,7 @@ impl Business {
         }
         self.installable
             .lock()
-            .expect("业务锁中毒")
+            .unwrap_or_else(recover_poison)
             .retain(|n| n != name);
         // 立即加载，让 plugins/enable 马上可见可用，不等下一条消息触发扫描
         let _ = self.sync();
@@ -241,7 +241,7 @@ impl Business {
         if let Err(e) = self.sync() {
             log_error!("插件目录扫描失败（tab 聚合沿用已加载插件）: {e}");
         }
-        let plugins = self.plugins.read().expect("业务锁中毒");
+        let plugins = self.plugins.read().unwrap_or_else(recover_poison);
         let mut tabs = Vec::new();
         for p in plugins.iter().filter(|p| p.enabled()) {
             let Some(v) = ui_js_version(&self.dir.join(&p.dir_name)) else {
