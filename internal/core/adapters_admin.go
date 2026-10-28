@@ -253,12 +253,17 @@ func (c *Core) applyAdapters(next *adapterConfig) string {
 			}
 			continue
 		}
-		// 移除：停流 + 杀子进程（killRuntime 只 Kill 不删，观测语义）
+		// 移除：停流 + 杀子进程 + 出册。必须 delete：run 循环已取消，
+		// 不会再有 spawn 覆盖同 key，stale 条目会让「重加」误判为已存在
+		// 而跳过 spawn（该平台永久 dead），还会在后续每次应用时反复误报
+		// 「已移除」（26102701#6）。killRuntime/killAllRuntimes 的
+		// 「只 Kill 不删」观测语义不受影响——那两条路径有 spawn 覆盖兜底。
 		if cancel, ok := c.runCancels[name]; ok {
 			cancel()
 			delete(c.runCancels, name)
 		}
 		c.runtimes[name].client.Kill()
+		delete(c.runtimes, name)
 		removed = append(removed, name)
 	}
 	for _, name := range want {

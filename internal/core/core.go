@@ -248,6 +248,12 @@ func (c *Core) run(platform string, ctx context.Context) {
 			c.logger.Error("插件重启失败", "adapter", platform, "err", err)
 			continue
 		}
+		if ctx.Err() != nil {
+			// 平台在 spawn 飞行中被移除：Stop 的全局复查拦不住单平台取消，
+			// 刚入册的新实例没人认领会成孤儿，自查自收（26102701#6）
+			c.killRuntime(platform)
+			return
+		}
 		backoff = firstBackoff
 		c.logger.Info("适配器插件已重启", "adapter", platform)
 	}

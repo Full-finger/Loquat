@@ -5,6 +5,8 @@ package main
 // 写超时用本机 WS 服务端（accept 后不读）模拟对端半死。
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -167,5 +169,106 @@ func TestWriteJSONTimesOutAgainstStalledPeer(t *testing.T) {
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("写阻塞过久，deadline 未生效: %v", elapsed)
+	}
+}
+
+// fakeNapCat 起一个按脚本应答的 WS 服务端：读到动作请求后按 status/retcode
+// 原样回帧（echo 透传），供 SendMessage 语义测试用。
+func fakeNapCat(t *testing.T, reply map[string]any) (wsURL string, closeFn func()) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var req struct {
+				Echo string `json:"echo"`
+			}
+			_ = json.Unmarshal(data, &req)
+			resp := map[string]any{"echo": req.Echo}
+			for k, v := range reply {
+				resp[k] = v
+			}
+			if err := conn.WriteJSON(resp); err != nil {
+				return
+			}
+		}
+	}))
+	ws := "ws" + strings.TrimPrefix(srv.URL, "http")
+	return ws, srv.Close
+}
+
+// 平台拒绝（retcode 1200 风控等）必须以错误上抛，宿主才能感知失败。
+func TestSendMessageReportsPlatformRejection(t *testing.T) {
+	ws, closeSrv := fakeNapCat(t, map[string]any{"status": "failed", "retcode": 1200})
+	defer closeSrv()
+	conn, _, err := websocket.DefaultDialer.Dial(ws, nil)
+	if err != nil {
+		t.Fatalf("拨号失败: %v", err)
+	}
+	defer conn.Close()
+
+	n := newNapCat(ws, "", quietLogger())
+	n.mu.Lock()
+	n.conn = conn
+	n.mu.Unlock()
+	go n.readLoop(conn) // 响应帧靠读循环路由进 pending 通道
+
+	_, err = n.SendMessage(context.Background(), &pluginapi.SendMessageRequest{
+		Chat:     &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_PrivateId{PrivateId: "42"}},
+		Segments: []*pluginapi.Segment{{Body: &pluginapi.Segment_Text{Text: &pluginapi.TextSeg{Text: "hi"}}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "1200") {
+		t.Fatalf("平台拒绝应报错且带 retcode，实际: %v", err)
+	}
+}
+
+// async = OneBot 异步受理：不算失败，message_id 拿不到留空。
+func TestSendMessageAcceptsAsyncAck(t *testing.T) {
+	ws, closeSrv := fakeNapCat(t, map[string]any{"status": "async", "retcode": 1})
+	defer closeSrv()
+	conn, _, err := websocket.DefaultDialer.Dial(ws, nil)
+	if err != nil {
+		t.Fatalf("拨号失败: %v", err)
+	}
+	defer conn.Close()
+
+	n := newNapCat(ws, "", quietLogger())
+	n.mu.Lock()
+	n.conn = conn
+	n.mu.Unlock()
+	go n.readLoop(conn) // 响应帧靠读循环路由进 pending 通道
+
+	resp, err := n.SendMessage(context.Background(), &pluginapi.SendMessageRequest{
+		Chat:     &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_PrivateId{PrivateId: "42"}},
+		Segments: []*pluginapi.Segment{{Body: &pluginapi.Segment_Text{Text: &pluginapi.TextSeg{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("async 受理不应报错: %v", err)
+	}
+	if resp.GetMessageId() != "" {
+		t.Fatalf("async 无 message_id，应为空: %q", resp.GetMessageId())
+	}
+}
+
+// 退避序列：1s 起步 ×2，封顶 30s 不再翻倍。
+func TestNextBackoffCapsAtMax(t *testing.T) {
+	got := time.Duration(0)
+	cur := firstReconnect
+	for i := 0; i < 10; i++ {
+		cur = nextBackoff(cur)
+		got = cur
+	}
+	if got != maxReconnect {
+		t.Fatalf("10 次后退避应为上限 30s，实际 %v", got)
+	}
+	if nextBackoff(firstReconnect) != 2*time.Second {
+		t.Fatal("起步应为 ×2")
 	}
 }

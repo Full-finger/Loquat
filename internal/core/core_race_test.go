@@ -224,3 +224,96 @@ func processAlive(pid int) bool {
 	out, err := exec.Command("pgrep", "-p", strconv.Itoa(pid)).Output()
 	return err == nil && len(out) > 0
 }
+
+// TestRemoveThenReAddAdapter（26102701#6）：移除平台后再启用，必须重新
+// spawn。回归背景：移除分支只 Kill 不 delete，stale 条目让重加误判为
+// 「已存在」走参数对比，永不 spawn，该平台只能重启核心才救得活。
+func TestRemoveThenReAddAdapter(t *testing.T) {
+	if adapterBin == "" {
+		t.Skipf("适配器构建失败，跳过: %v", adapterBuildErr)
+	}
+	if testing.Short() {
+		t.Skip("集成测试，-short 跳过")
+	}
+
+	cfgDir, err := os.MkdirTemp("", "loquat-cfg-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(cfgDir)
+	cfg := filepath.Join(cfgDir, "loquat.yaml")
+	content := fmt.Sprintf("napcat:\n  url: %s\nplugins:\n  napcat:\n    path: %s\n",
+		"ws://127.0.0.1:1", adapterBin)
+	if err := os.WriteFile(cfg, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := hclog.New(&hclog.LoggerOptions{Output: io.Discard, Level: hclog.Error})
+	if err := Start(cfg, func([]byte) {}, logger); err != nil {
+		t.Fatalf("核心启动失败: %v", err)
+	}
+	defer Stop()
+
+	waitAlive := func(platform string, timeout time.Duration) bool {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			var snap struct {
+				Adapters []struct {
+					Platform string `json:"platform"`
+					Alive    bool   `json:"alive"`
+				} `json:"adapters"`
+			}
+			if err := json.Unmarshal([]byte(Status()), &snap); err == nil {
+				for _, a := range snap.Adapters {
+					if a.Platform == platform && a.Alive {
+						return true
+					}
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return false
+	}
+	platforms := func() []string {
+		var snap struct {
+			Adapters []struct {
+				Platform string `json:"platform"`
+			} `json:"adapters"`
+		}
+		_ = json.Unmarshal([]byte(Status()), &snap)
+		var out []string
+		for _, a := range snap.Adapters {
+			out = append(out, a.Platform)
+		}
+		return out
+	}
+
+	if !waitAlive("napcat", 10*time.Second) {
+		t.Fatal("初始 napcat 未就绪")
+	}
+
+	// 移除 napcat（adapters 只留 sandbox，拿 napcat 二进制当替身）：
+	// 断言 stale 条目出册
+	removeCfg := fmt.Sprintf(
+		`{"adapters":["sandbox"],"napcat":{"url":"ws://127.0.0.1:1","token":"","path":%q},"sandbox":{"path":%q}}`,
+		adapterBin, adapterBin)
+	if _, err := ApplyAdaptersConfig(removeCfg); err != nil {
+		t.Fatalf("移除 napcat: %v", err)
+	}
+	for _, p := range platforms() {
+		if p == "napcat" {
+			t.Fatal("移除后 runtimes 仍有 napcat 条目（stale 未出册）")
+		}
+	}
+
+	// 重加 napcat：修复前 stale 条目挡路，这里必须真正重新 spawn
+	reAddCfg := fmt.Sprintf(
+		`{"adapters":["napcat"],"napcat":{"url":"ws://127.0.0.1:1","token":"","path":%q},"sandbox":{"path":%q}}`,
+		adapterBin, adapterBin)
+	if _, err := ApplyAdaptersConfig(reAddCfg); err != nil {
+		t.Fatalf("重加 napcat: %v", err)
+	}
+	if !waitAlive("napcat", 10*time.Second) {
+		t.Fatal("重加后 napcat 未重新 spawn（stale runtime 挡路？）")
+	}
+}

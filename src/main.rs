@@ -80,6 +80,12 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
         let segments = serde_json::json!([{ "text": { "text": reply } }]).to_string();
         match dll.send_message(&incoming.platform, chat_kind, chat_id, &segments, 15_000) {
             Ok(resp) => {
+                // Go 侧约定：失败也返回 Ok，错误装在 {"error": ...} 里。
+                // 解出来走失败分支，成功统计与消息流才不被污染（26102701#5）
+                if ffi_resp_failed(&resp) {
+                    log_error!("发送失败: {}", console::brief(&resp, 200));
+                    continue;
+                }
                 stats::bump_reply();
                 webui::publish_reply(&incoming.platform, chat_kind, chat_id, &reply);
                 log_info!("已回复: {} resp={resp}", console::brief(&reply, 60));
@@ -87,6 +93,14 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
             Err(e) => log_error!("发送失败: {e}"),
         }
     }
+}
+
+// 应答是否为 Go 侧包装的错误（{"error": ...}）。非 JSON 视为成功——
+// 成功应答是 protojson（messageId），解析不出 error 字段就别拦。
+fn ffi_resp_failed(resp: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(resp)
+        .ok()
+        .is_some_and(|v| v.get("error").is_some())
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -219,6 +233,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ffi_error_envelope_is_detected() {
+        assert!(ffi_resp_failed(r#"{"error":"发送被 NapCat 拒绝: retcode=1200"}"#));
+        assert!(!ffi_resp_failed(r#"{"messageId":"123"}"#));
+        assert!(!ffi_resp_failed("not json"), "非 JSON 不拦");
+    }
 
     // 集成测试：验 FFI 触发的 reload 能让适配器子进程重生。
     // 依赖 bin/ 产物与本机配置（真实 token）：缺依赖时打印原因后 return
