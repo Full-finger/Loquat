@@ -46,3 +46,5 @@ extensions/*/config.yaml
 # 编辑器 / 系统
 .DS_Store
 Thumbs.db
+# ZCode 本地工作区状态
+/.zcode/

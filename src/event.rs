@@ -102,7 +102,7 @@ pub fn parse_incoming(payload: &[u8]) -> Option<Incoming> {
     let segments: Vec<serde_json::Value> = msg
         .get("segments")
         .and_then(|s| s.as_array())
-        .map(|a| a.clone())
+        .cloned()
         .unwrap_or_default();
 
     Some(Incoming {

@@ -291,7 +291,7 @@ func TestBuildSendTextWithCQCode(t *testing.T) {
 	// 旧插件约定：text 里嵌 CQ 码（如 status 发图）。适配器拆开翻译，
 	// OneBot 平台知识收敛在此，其他平台适配器可自行决定当纯文本。
 	req := &pluginapi.SendMessageRequest{
-		Chat: &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_GroupId{GroupId: "99"}},
+		Chat:     &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_GroupId{GroupId: "99"}},
 		Segments: textSegs("看图[CQ:image,file=file:///tmp/a.png]好了"),
 	}
 	_, params, err := buildSendMessage(req)

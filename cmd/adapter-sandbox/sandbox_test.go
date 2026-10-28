@@ -99,9 +99,10 @@ func TestInjectRejectsBadInput(t *testing.T) {
 		{"空文本", pluginapi.InjectEventRequest{Text: "", Mode: "private"}},
 		{"未知 mode", pluginapi.InjectEventRequest{Text: "hi", Mode: "channel"}},
 	}
-	for _, tc := range cases {
-		if _, err := s.InjectEvent(context.Background(), &tc.req); err == nil {
-			t.Errorf("%s: 应报错", tc.name)
+	// 索引访问取 req：proto 消息内嵌 sync.Mutex，range 拷贝会被 go vet 拦
+	for i := range cases {
+		if _, err := s.InjectEvent(context.Background(), &cases[i].req); err == nil {
+			t.Errorf("%s: 应报错", cases[i].name)
 		}
 	}
 	select {

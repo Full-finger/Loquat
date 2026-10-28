@@ -452,10 +452,8 @@ impl Business {
         let cfg_path = dir_path.join(CONFIG_FILE);
         let mut values = serde_json::Map::new();
         if let Ok(text) = std::fs::read_to_string(&cfg_path) {
-            if let Ok(v) = serde_yamlish(&text) {
-                if let serde_json::Value::Object(map) = v {
-                    values = map;
-                }
+            if let Ok(serde_json::Value::Object(map)) = serde_yamlish(&text) {
+                values = map;
             }
         } else if let serde_json::Value::Array(fields) = &schema {
             for f in fields {
