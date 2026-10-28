@@ -1,8 +1,7 @@
 //! loquat_agent（内核 agent 库）的测试：历史锚点、QQ→LLM 文本转换、工具循环。
 //! 从 tests.rs 拆出（R4 限 400 行）。helpers 与 tests.rs 各持一份，保持模块解耦。
 
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::pluginload::SIGNATURE;
