@@ -18,6 +18,8 @@ const listEl = ref<HTMLElement>()
 
 let ws: WebSocket | undefined
 let mockTimer: number | undefined
+let disposed = false
+let reconnectTimer: number | undefined
 
 const filtered = computed(() =>
   items.value.filter(
@@ -29,11 +31,11 @@ const filtered = computed(() =>
   ),
 )
 
-// 用户上滚即暂停跟随，滚回底部恢复
+// 列表最新在顶（unshift）：「跟随」= 贴住顶部；用户下滚即暂停，滚回顶部恢复
 function onScroll() {
   const el = listEl.value
   if (!el) return
-  stick.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 48
+  stick.value = el.scrollTop <= 48
 }
 
 watch(
@@ -41,7 +43,7 @@ watch(
   async () => {
     if (!stick.value) return
     await nextTick()
-    listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
+    listEl.value?.scrollTo({ top: 0 })
   },
 )
 
@@ -68,31 +70,40 @@ onMounted(() => {
       })
     }, 2000)
   } else {
-    ws = new WebSocket(wsUrl())
-    ws.onopen = () => {
-      connected.value = true
-    }
-    ws.onclose = () => {
-      connected.value = false
-    }
-    ws.onmessage = (ev) => {
-      try {
-        const d = JSON.parse(ev.data as string) as Partial<MsgItem>
-        push({
-          time: d.time ?? fmt(new Date()),
-          dir: d.dir === 'out' ? 'out' : 'in',
-          chat: d.chat ?? '-',
-          text: d.text ?? '',
-        })
-      } catch {
-        // 忽略非 JSON 帧
-      }
-    }
+    connect()
   }
 })
 
+// 断线重连（与 Sandbox 同策略）：监控页常开，2s 间隔
+function connect() {
+  if (disposed) return
+  ws = new WebSocket(wsUrl())
+  ws.onopen = () => {
+    connected.value = true
+  }
+  ws.onclose = () => {
+    connected.value = false
+    if (!disposed) reconnectTimer = window.setTimeout(connect, 2000)
+  }
+  ws.onmessage = (ev) => {
+    try {
+      const d = JSON.parse(ev.data as string) as Partial<MsgItem>
+      push({
+        time: d.time ?? fmt(new Date()),
+        dir: d.dir === 'out' ? 'out' : 'in',
+        chat: d.chat ?? '-',
+        text: d.text ?? '',
+      })
+    } catch {
+      // 忽略非 JSON 帧
+    }
+  }
+}
+
 onUnmounted(() => {
+  disposed = true
   ws?.close()
+  if (reconnectTimer) clearTimeout(reconnectTimer)
   if (mockTimer) clearInterval(mockTimer)
 })
 </script>

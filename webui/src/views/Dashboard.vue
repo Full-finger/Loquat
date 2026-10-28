@@ -9,21 +9,23 @@ const status = ref<Status | null>(null)
 const error = ref('')
 let timer: number | undefined
 
-// 大数字滚动动画：新值到达后从旧值 tween 过去
+// 大数字滚动动画：新值到达后从旧值 tween 过去；卸载时取消在途帧
 const display = reactive({ events: 0, replies: 0 })
+let rafId: number | undefined
 
 function tween(key: 'events' | 'replies', to: number) {
   const from = display[key]
   if (from === to) return
   const start = performance.now()
   const duration = 400
+  if (rafId) cancelAnimationFrame(rafId)
   function step(now: number) {
     const p = Math.min((now - start) / duration, 1)
     const eased = 1 - Math.pow(1 - p, 3) // easeOutCubic
     display[key] = Math.round(from + (to - from) * eased)
-    if (p < 1) requestAnimationFrame(step)
+    if (p < 1) rafId = requestAnimationFrame(step)
   }
-  requestAnimationFrame(step)
+  rafId = requestAnimationFrame(step)
 }
 
 watch(status, (s) => {
@@ -50,7 +52,10 @@ onMounted(() => {
   refresh()
   timer = window.setInterval(refresh, 10_000)
 })
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => {
+  clearInterval(timer)
+  if (rafId) cancelAnimationFrame(rafId)
+})
 </script>
 
 <template>
@@ -136,7 +141,7 @@ onUnmounted(() => clearInterval(timer))
   flex: 1;
   height: 6px;
   border-radius: 3px;
-  background: var(--bg-raised);
+  background: var(--bg-frame);
   overflow: hidden;
 }
 

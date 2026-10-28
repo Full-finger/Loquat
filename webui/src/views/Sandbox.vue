@@ -19,6 +19,8 @@ const sending = ref(false)
 const listEl = ref<HTMLElement>()
 
 let ws: WebSocket | undefined
+// 卸载后置位：close 会触发 onclose，没有它就会僵尸重连（路由切换累积连接）
+let disposed = false
 
 function fmt(d: Date): string {
   return d.toTimeString().slice(0, 8)
@@ -33,20 +35,22 @@ function push(b: Bubble) {
 // 消息流 WS 与「消息流」页共用：只取沙箱平台的帧。
 // in = 用户注入的消息回显，out = 机器人的回复（宿主 publish 推送）。
 function connect() {
+  if (disposed) return
   ws = new WebSocket(wsUrl())
   ws.onopen = () => {
     connected.value = true
   }
   ws.onclose = () => {
     connected.value = false
-    setTimeout(connect, 2000) // 断线重连，沙箱常开
+    if (!disposed) setTimeout(connect, 2000) // 断线重连，沙箱常开
   }
   ws.onmessage = (ev) => {
     try {
       const d = JSON.parse(ev.data as string) as Record<string, unknown>
-      if (d.platform !== 'sandbox') return
+      // in 帧在 submit 里本地回显过了（注释同），这里只收机器人的 out 帧
+      if (d.platform !== 'sandbox' || d.dir !== 'out') return
       push({
-        dir: d.dir === 'out' ? 'out' : 'in',
+        dir: 'out',
         text: String(d.text ?? ''),
         time: String(d.time ?? fmt(new Date())),
         chat: String(d.chat ?? ''),
@@ -91,6 +95,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
   ws?.close()
 })
 
