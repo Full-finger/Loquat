@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, RawQuery, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -29,6 +29,8 @@ pub fn routes() -> Router<Arc<WebState>> {
         .route("/api/plugins/{name}/install", post(api_install))
         .route("/api/core/reload-napcat", post(api_reload_napcat))
         .route("/api/ws", get(api_ws))
+        // 插件页面脚本（WebUI 扩展机制）：前端动态 import() 加载
+        .route("/ext/{name}/ui.js", get(ext_ui_js))
 }
 
 async fn api_status(
@@ -149,7 +151,8 @@ async fn api_plugin_config_save(
     }
 }
 
-/// 导航 tab 列表（通用扩展机制的宿主侧声明）。
+/// 插件贡献的导航 tab（WebUI 扩展机制）：聚合已启用插件的 TABS 声明。
+/// 内置页面的导航在前端 tabs.ts 声明（组件本来就在前端），不经过宿主。
 /// 虽只是导航元数据，也与其他端点统一鉴权（避免「免 token 探针」）。
 async fn api_extensions_ui(
     State(state): State<Arc<WebState>>,
@@ -158,8 +161,36 @@ async fn api_extensions_ui(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    let tabs = super::ui_tabs_snapshot();
+    let tabs = state.business.ui_tabs();
     Json(serde_json::json!({ "tabs": tabs })).into_response()
+}
+
+/// 插件页面脚本分发（WebUI 扩展机制）。浏览器动态 import() 拿不到
+/// Authorization 头，token 走 ?token= 查询参数兜底（同 /api/ws）。
+async fn ext_ui_js(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+    Path(name): Path<String>,
+) -> Response {
+    if !token_query_ok(&state, query.as_deref()) && !authorized(&state, &headers) {
+        return unauthorized();
+    }
+    let Some(path) = state.business.plugin_ui_js(&name) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::fs::read(path).await {
+        Ok(bytes) => (
+            [(
+                axum::http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/javascript"),
+            )],
+            bytes,
+        )
+            .into_response(),
+        // 读完文件消失（热更窗口）与不存在同样对待，前端 v 指纹会重取
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// 沙箱选项卡的输入通路：注入一条消息进沙箱适配器的事件链路。
@@ -278,23 +309,26 @@ async fn api_reload_napcat(
     (StatusCode::OK, Json(serde_json::json!({ "msg": msg }))).into_response()
 }
 
-async fn api_ws(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    RawQuery(query): RawQuery,
-    upgrade: WebSocketUpgrade,
-) -> Response {
-    // 浏览器 WebSocket API 不能带 Authorization 头，token 允许走 ?token=
-    // 查询参数兜底（会进访问日志；本服务只绑回环，日志仅落本机）。
-    let query_ok = match (&state.token, query.as_deref()) {
+// token 走 ?token= 查询参数兜底的校验：浏览器 WebSocket API 与动态
+// import() 都带不了 Authorization 头（token 会进访问日志；服务只绑回环）。
+fn token_query_ok(state: &WebState, query: Option<&str>) -> bool {
+    match (&state.token, query) {
         (Some(expected), Some(q)) => q.split('&').any(|kv| {
             let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
             k == "token" && v == expected
         }),
         (Some(_), None) => false,
         (None, _) => true,
-    };
-    if !query_ok && !authorized(&state, &headers) {
+    }
+}
+
+async fn api_ws(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+    RawQuery(query): RawQuery,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if !token_query_ok(&state, query.as_deref()) && !authorized(&state, &headers) {
         return unauthorized();
     }
     let rx = STREAM_TX.get().map(|tx| tx.subscribe());

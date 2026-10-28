@@ -333,3 +333,63 @@ fn lib_change_forces_plugin_reload() {
     assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["v2".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn ui_tabs_require_enabled_plugin_and_ui_js() {
+    let dir = plugin_dir("ui_tabs");
+    // 合规声明 + 一个缺 id 的废条目（应被丢弃）
+    write_plugin(
+        &dir,
+        "demo",
+        "TABS = [{'id': 'stats', 'title': '统计', 'icon': 'TrendCharts'}, {'bad': 'x'}]\n\
+         def handle(ctx):\n    return []\n",
+    );
+    write_file(&dir.join("demo"), "ui.js", "// demo page");
+    // 声明了 TABS 但没有 ui.js：导航无处可去
+    write_plugin(&dir, "noscript", "TABS = [{'id': 'x', 'title': '无脚本'}]\ndef handle(ctx):\n    return []\n");
+    // 有 ui.js 但被 config 停用
+    write_plugin(&dir, "off", "def handle(ctx):\n    return []\n");
+    write_file(&dir.join("off"), "config.yaml", "enabled: false\n");
+    write_file(&dir.join("off"), "ui.js", "// off page");
+
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    let tabs = business.ui_tabs();
+    assert_eq!(tabs.len(), 1);
+    let t = &tabs[0];
+    assert_eq!(t["id"], "demo-stats");
+    assert_eq!(t["title"], "统计");
+    assert_eq!(t["path"], "/ext/demo/stats");
+    assert_eq!(t["entry"], "/ext/demo/ui.js");
+    assert_eq!(t["icon"], "TrendCharts");
+    assert!(t["v"].as_u64().unwrap() > 0);
+
+    // ui.js 落盘路径：路径穿越、非插件目录、无页面的插件都拿不到
+    assert!(business.plugin_ui_js("demo").is_some());
+    assert!(business.plugin_ui_js("../demo").is_none());
+    assert!(business.plugin_ui_js("demo/../../etc").is_none());
+    assert!(business.plugin_ui_js("noscript").is_none());
+    assert!(business.plugin_ui_js("nope").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ui_tabs_syncs_directory_before_aggregation() {
+    let dir = plugin_dir("ui_tabs_sync");
+    write_plugin(&dir, "demo", "def handle(ctx):\n    return []\n");
+    write_file(&dir.join("demo"), "ui.js", "// page");
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    assert!(business.ui_tabs().is_empty());
+
+    // 事后给已加载插件补 TABS 声明：不经 handle() 触发惰性同步，
+    // ui_tabs 自行扫盘也应看到（前端轮询因此能不刷新拿到新 tab）
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    write_plugin(
+        &dir,
+        "demo",
+        "TABS = [{'id': 'x', 'title': 'X'}]\ndef handle(ctx):\n    return []\n",
+    );
+    let tabs = business.ui_tabs();
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs[0]["id"], "demo-x");
+    let _ = std::fs::remove_dir_all(&dir);
+}

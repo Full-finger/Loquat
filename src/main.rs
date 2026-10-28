@@ -136,10 +136,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     log_info!("业务已加载: {}", business.info());
 
     // WebUI：REST + 静态页 + 消息流 WS，独立线程，起不来只记日志。
-    // 选项卡经通用 tab 注册机制挂上；注册顺序 = 侧栏顺序
-    webui::register_tab("providers", "服务", "/providers");
-    webui::register_tab("adapters", "适配器", "/adapters");
-    webui::register_tab("sandbox", "沙箱", "/sandbox");
+    // 内置页面导航在前端 tabs.ts；插件页面（TABS/ui.js）由 /api/extensions/ui 聚合。
     webui::spawn(Arc::clone(&dll), Arc::clone(&business));
 
     // worker 池：见顶部常量注释。catch_unwind 兜一条消息的 panic 只损失

@@ -18,6 +18,10 @@
 //!   SCHEMA                  可选：配置声明 list[dict]，配合
 //!                           import loquat_cfglib（extensions/_lib/config.py）
 //!                           做校验/默认值/install 的模板生成
+//!   TABS + ui.js            可选：WebUI 扩展页。TABS 声明侧栏入口
+//!                           （{"id", "title", "icon"?}），ui.js 为每个
+//!                           tab 注册自定义元素 loquat-page-<名>-<tab id>，
+//!                           契约见 docs/ext-ui.md
 //!   同目录其他 .py           可被 plugin.py import（勿与标准库/已装包重名），
 //!                           改动同样触发热重载
 //!   .disabled               运行时启停标记（enable/disable 与 install 写入/删除）
@@ -48,6 +52,8 @@ use crate::pluginload::{file_mtime, has_signature};
 
 const ENTRY_FILE: &str = "plugin.py";
 pub(crate) const CONFIG_FILE: &str = "config.yaml";
+/// WebUI 扩展页脚本（约定入口，存在即视为插件声明了页面）
+pub(crate) const UI_FILE: &str = "ui.js";
 const DISABLE_MARKER: &str = ".disabled";
 
 /// 传给插件 handle(ctx) 的消息上下文。

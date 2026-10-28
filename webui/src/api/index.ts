@@ -272,27 +272,65 @@ export async function saveProviders(cfg: ProvidersConfig): Promise<string> {
   return r.msg ?? '已保存'
 }
 
-// ---- WebUI 扩展机制（tab 注册）----
+// ---- WebUI 扩展机制（插件页面，契约见 docs/ext-ui.md）----
 
 export interface UiTab {
+  /** 宿主侧全局唯一：`<插件名>-<tab id>` */
   id: string
   title: string
+  /** 前端路由 `/ext/<插件名>/<tab id>`，由 ExtensionPage 挂载 */
   path: string
+  /** ui.js 入口（按 v 缓存指纹加载） */
+  entry?: string
+  /** element-plus 图标组件名，缺省 Link */
+  icon?: string
+  /** ui.js 的 mtime 毫秒：热更后变化，击穿浏览器 module 缓存 */
+  v?: number
 }
 
-/** 导航 tab 列表：宿主侧注册（内置 + 扩展），前端按 path 映射组件。 */
+/** 插件贡献的导航 tab：宿主聚合已启用插件的 TABS 声明（内置页在前端 tabs.ts）。 */
 export async function fetchUiTabs(): Promise<UiTab[]> {
   if (USE_MOCK) {
     return [
-      { id: 'dashboard', title: '仪表盘', path: '/dashboard' },
-      { id: 'messages', title: '消息流', path: '/messages' },
-      { id: 'providers', title: '服务', path: '/providers' },
-      { id: 'sandbox', title: '沙箱', path: '/sandbox' },
-      { id: 'plugins', title: '插件', path: '/plugins' },
+      {
+        id: 'demo_ui-demo',
+        title: '演示页',
+        path: '/ext/demo_ui/demo',
+        entry: '/ext/demo_ui/ui.js',
+        icon: 'MagicStick',
+        v: 1,
+      },
     ]
   }
   const r = await http<{ tabs: UiTab[] }>('/api/extensions/ui')
   return r.tabs
+}
+
+// ---- 插件页面 ctx（ExtensionPage 挂载自定义元素时注入）----
+
+export interface ExtCtx {
+  plugin: string
+  tab: string
+  api: {
+    get<T = unknown>(path: string): Promise<T>
+    post<T = unknown>(path: string, body?: unknown): Promise<T>
+  }
+  /** Element Plus 消息条的薄封装；type 缺省 info */
+  toast(msg: string, type?: 'success' | 'warning' | 'error'): void
+}
+
+/** ctx.api 部分：复用前端 http 封装，token 自动携带。toast 依赖
+ * ElMessage，由 ExtensionPage.vue 组装完整 ctx。 */
+export function extCtxApi(): ExtCtx['api'] {
+  return {
+    get: <T>(path: string) => http<T>(path),
+    post: <T>(path: string, body?: unknown) =>
+      http<T>(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      }),
+  }
 }
 
 /** 沙箱选项卡的输入通路：注入一条消息进沙箱事件链路。 */

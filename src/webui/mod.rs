@@ -5,7 +5,7 @@
 
 mod api;
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 use axum::extract::Request;
 use axum::http::{HeaderValue, StatusCode, Uri};
@@ -31,42 +31,9 @@ struct WebState {
 // 消息流广播：监控用途，容量满或无订阅者都直接丢。
 static STREAM_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
 
-// ── WebUI 扩展机制（tab 注册）──
-// 内置页面与扩展页面统一经此登记，前端导航从 /api/extensions/ui 拉取。
-// tab 的界面在 webui/src/views（Vue 组件按 path 映射）；注册只声明
-// 导航入口，不含 HTML——插件级自定义页面等有真实需求再演进。
-pub struct UiTab {
-    pub id: String,
-    pub title: String,
-    pub path: String,
-}
-
-fn ui_tabs() -> &'static Mutex<Vec<UiTab>> {
-    static TABS: OnceLock<Mutex<Vec<UiTab>>> = OnceLock::new();
-    TABS.get_or_init(|| {
-        Mutex::new(vec![
-            UiTab { id: "dashboard".into(), title: "仪表盘".into(), path: "/dashboard".into() },
-            UiTab { id: "messages".into(), title: "消息".into(), path: "/messages".into() },
-            UiTab { id: "plugins".into(), title: "插件".into(), path: "/plugins".into() },
-        ])
-    })
-}
-
-/// 注册一个导航 tab（通用扩展点：内置页面与后续扩展同一路径）。
-pub fn register_tab(id: &str, title: &str, path: &str) {
-    let mut tabs = ui_tabs().lock().expect("tab 注册表锁中毒");
-    if !tabs.iter().any(|t| t.id == id) {
-        tabs.push(UiTab { id: id.into(), title: title.into(), path: path.into() });
-    }
-}
-
-/// tab 注册表的 JSON 快照（api.rs 的 /api/extensions/ui 用）。
-fn ui_tabs_snapshot() -> Vec<serde_json::Value> {
-    let tabs = ui_tabs().lock().expect("tab 注册表锁中毒");
-    tabs.iter()
-        .map(|t| serde_json::json!({ "id": t.id, "title": t.title, "path": t.path }))
-        .collect()
-}
+// WebUI 扩展机制（插件页面）：导航 tab 由 /api/extensions/ui 聚合插件
+// 的 TABS 声明，脚本经 /ext/<名>/ui.js 分发，前端动态挂载（docs/ext-ui.md）。
+// 内置页面的导航在前端 webui/src/tabs.ts，不经过宿主。
 
 /// 主循环与 worker 线程调用：往消息流广播一帧 JSON 文本。
 pub fn publish(frame: String) {

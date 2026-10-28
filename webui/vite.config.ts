@@ -11,6 +11,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:7900',
         ws: true,
       },
+      // 插件页面脚本（WebUI 扩展机制）：动态 import 的 ui.js 同源转发宿主
+      '/ext': {
+        target: 'http://127.0.0.1:7900',
+      },
     },
   },
 })

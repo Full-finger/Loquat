@@ -5,10 +5,13 @@
 //! IntoPyObject）；config.yaml 只读扁平键值（serde_yamlish），
 //! 复杂结构由前端编辑器序列化成标准 YAML、cfglib.render 写回。
 
+use std::path::{Path, PathBuf};
+
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use super::{Business, LoadedPlugin, CONFIG_FILE, ENTRY_FILE};
+use super::{Business, LoadedPlugin, CONFIG_FILE, ENTRY_FILE, UI_FILE};
+use crate::log_error;
 use crate::pluginload;
 use crate::sharedlib;
 
@@ -227,4 +230,83 @@ impl Business {
             "{name} 安装成功（config.yaml 已生成，当前未启用），运行 enable {name} 启用"
         ))
     }
+
+    /// WebUI 扩展 tab 聚合：已启用插件声明的 TABS（模块属性，SCHEMA 同款
+    /// 约定）→ 前端导航项。ui.js 缺失或条目不合规（缺 id/title）直接丢弃——
+    /// 导航指向打不开的页面没有意义。v = ui.js 的 mtime 毫秒，热更后变化，
+    /// 前端用它击穿浏览器 module 缓存重新 import。
+    /// 先扫一遍插件目录（同 handle 的惰性同步）：手改 plugin.py 声明、
+    /// 增删插件目录，不刷新页面也能在下一次轮询里出现。
+    pub fn ui_tabs(&self) -> Vec<serde_json::Value> {
+        if let Err(e) = self.sync() {
+            log_error!("插件目录扫描失败（tab 聚合沿用已加载插件）: {e}");
+        }
+        let plugins = self.plugins.lock().expect("业务锁中毒");
+        let mut tabs = Vec::new();
+        for p in plugins.iter().filter(|p| p.enabled()) {
+            let Some(v) = ui_js_version(&self.dir.join(&p.dir_name)) else {
+                continue;
+            };
+            let Some(declared) = Python::attach(|py| {
+                let attr = p.module.bind(py).getattr("TABS").ok()?;
+                serde_json::from_str::<serde_json::Value>(&py_obj_to_json(&attr)).ok()
+            }) else {
+                continue;
+            };
+            let Some(entries) = declared.as_array() else { continue };
+            for entry in entries {
+                let (Some(id), Some(title)) = (
+                    entry.get("id").and_then(|x| x.as_str()),
+                    entry.get("title").and_then(|x| x.as_str()),
+                ) else {
+                    continue;
+                };
+                if !valid_ext_id(id) || title.is_empty() {
+                    continue;
+                }
+                tabs.push(serde_json::json!({
+                    "id": format!("{}-{}", p.dir_name, id),
+                    "title": title,
+                    "path": format!("/ext/{}/{}", p.dir_name, id),
+                    "entry": format!("/ext/{}/{}", p.dir_name, UI_FILE),
+                    "icon": entry.get("icon").and_then(|x| x.as_str()).unwrap_or("Link"),
+                    "v": v,
+                }));
+            }
+        }
+        tabs
+    }
+
+    /// /ext/{name}/ui.js 的落盘路径。name 只允许字母数字_-，且目录必须是
+    /// 真实插件（有 plugin.py）：两者共同挡住路径穿越。
+    pub fn plugin_ui_js(&self, name: &str) -> Option<PathBuf> {
+        if !valid_ext_id(name) {
+            return None;
+        }
+        let dir = self.dir.join(name);
+        if !dir.join(ENTRY_FILE).is_file() {
+            return None;
+        }
+        let ui = dir.join(UI_FILE);
+        ui.is_file().then_some(ui)
+    }
+}
+
+// tab id / 插件名进 URL 与自定义元素名（loquat-page-<插件>-<tab>），收紧字符集
+fn valid_ext_id(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+// ui.js 的 mtime 毫秒（前端缓存指纹）；文件缺失返回 None
+fn ui_js_version(plugin_dir: &Path) -> Option<u64> {
+    let mtime = std::fs::metadata(plugin_dir.join(UI_FILE))
+        .ok()?
+        .modified()
+        .ok()?;
+    Some(
+        mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    )
 }

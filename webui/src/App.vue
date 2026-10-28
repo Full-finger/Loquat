@@ -1,32 +1,32 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { ChatDotRound, Coin, Grid, Link, Monitor, Odometer, Setting } from '@element-plus/icons-vue'
-import { fetchUiTabs, getStatus, type UiTab } from './api'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { getStatus, type UiTab } from './api'
+import { refreshExtTabs, useExtTabs } from './composables/ext-tabs'
+import { BUILTIN_TABS } from './tabs'
 
 const route = useRoute()
+const router = useRouter()
 const coreOk = ref<boolean | null>(null)
 const collapsed = ref(false)
 
-// 导航 tab 由宿主注册（通用扩展机制）：内置页与扩展页同一路径声明。
-// 组件映射在前端路由表；拉取失败回退到内置三项。
-const tabs = ref<UiTab[]>([
-  { id: 'dashboard', title: '仪表盘', path: '/dashboard' },
-  { id: 'plugins', title: '插件', path: '/plugins' },
-  { id: 'messages', title: '消息流', path: '/messages' },
-])
+// 子页（路由 meta.sub）顶栏显示返回按钮；顶层选项卡不显示
+const showBack = computed(() => route.meta.sub === true)
 
-const TAB_ICONS: Record<string, unknown> = {
-  dashboard: Odometer,
-  plugins: Grid,
-  messages: ChatDotRound,
-  providers: Coin,
-  sandbox: Monitor,
-  adapters: Setting,
+function goBack() {
+  // SPA 内来路优先 back（保留列表页滚动位置）；直链进入时回父页
+  if (window.history.state?.back) router.back()
+  else router.push(String(route.meta.parent ?? '/dashboard'))
 }
 
-function iconOf(id: string): unknown {
-  return TAB_ICONS[id] ?? Link
+// 导航 = 内置（tabs.ts，单一声明点）+ 插件贡献（宿主聚合 TABS 声明，
+// 见 docs/ext-ui.md）。共享状态：启停/安装后即时刷新，轮询兜底外部变更。
+const extTabs = useExtTabs()
+const tabs = computed<UiTab[]>(() => [...BUILTIN_TABS, ...extTabs.value])
+
+// 图标按 element-plus 图标组件名解析（main.ts 已全局注册），缺省通用 Link
+function iconOf(tab: UiTab): string {
+  return tab.icon ?? 'Link'
 }
 
 // VSCode 式搜索栏：占位，暂无搜索功能；Ctrl+K 聚焦
@@ -60,6 +60,12 @@ function moveIndicator() {
 }
 
 watch(() => route.path, moveIndicator)
+// 侧栏长度变化会挪动激活项位置，指示条跟着重算；项增删带 250ms
+// 过渡动画，收拢/展开结束后再校一次才是终位
+watch(tabs, () => {
+  moveIndicator()
+  window.setTimeout(moveIndicator, 300)
+})
 
 let timer: number | undefined
 
@@ -75,13 +81,12 @@ async function poll() {
 onMounted(() => {
   moveIndicator()
   poll()
-  fetchUiTabs()
-    .then((t) => {
-      if (t.length > 0) tabs.value = t
-    })
-    .catch(() => {}) // 拉不到就用内置三项
-    .finally(() => moveIndicator())
-  timer = window.setInterval(poll, 10_000)
+  refreshExtTabs().finally(() => moveIndicator())
+  // 状态 10s 一拍；tab 清单搭同一拍轮询，外部变更源最迟一个周期内出现
+  timer = window.setInterval(() => {
+    poll()
+    refreshExtTabs()
+  }, 10_000)
   window.addEventListener('keydown', onKeydown)
 })
 onUnmounted(() => {
@@ -104,6 +109,11 @@ onUnmounted(() => {
             <Fold v-else />
           </el-icon>
         </button>
+        <transition name="pop">
+          <button v-if="showBack" class="fold-btn" title="返回" @click="goBack">
+            <el-icon :size="16"><Back /></el-icon>
+          </button>
+        </transition>
         <span class="brand-dot" />
         <span class="brand-name">Loquat</span>
         <span class="brand-ver mono">v0.1</span>
@@ -137,10 +147,13 @@ onUnmounted(() => {
             :style="{ transform: `translateY(${indY}px)`, height: `${indH}px` }"
           />
           <el-menu router :default-active="route.path" class="menu">
-            <el-menu-item v-for="t in tabs" :key="t.id" :index="t.path">
-              <el-icon><component :is="iconOf(t.id)" /></el-icon>
-              <span>{{ t.title }}</span>
-            </el-menu-item>
+            <!-- 列表过渡：tab 增删时淡出收拢/生长展开，下方项随布局自然上移 -->
+            <transition-group name="tab">
+              <el-menu-item v-for="t in tabs" :key="t.id" :index="t.path">
+                <el-icon><component :is="iconOf(t)" /></el-icon>
+                <span>{{ t.title }}</span>
+              </el-menu-item>
+            </transition-group>
           </el-menu>
         </div>
       </el-aside>
@@ -168,6 +181,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 16px;
   padding: 0 12px;
+  position: relative; /* top-center 的 absolute 锚点 */
 }
 
 .top-left {
@@ -218,12 +232,38 @@ onUnmounted(() => {
   color: var(--text-1);
 }
 
+/* 返回按钮进出场：宽度 + 间距展开，brand 随之平滑让位 */
+.pop-enter-active,
+.pop-leave-active {
+  transition:
+    width 0.2s ease,
+    margin-left 0.2s ease,
+    opacity 0.15s ease,
+    transform 0.2s ease;
+  overflow: hidden;
+}
+
+.pop-enter-from,
+.pop-leave-to {
+  width: 0;
+  margin-left: -8px; /* 抵消 flex gap，总位移连续不跳变 */
+  opacity: 0;
+  transform: translateX(-6px);
+}
+
 .top-center {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  min-width: 0;
-  /* 搜索框悬在主内容区上方：在品牌与状态之间的区间居中 */
+  /* 钉在顶栏几何中心：左侧按钮增减、侧栏折叠都不带动搜索框位移；
+     宽度随窗口收缩，左右各留约 240px 给品牌与状态，不重叠 */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100% - 480px));
+  pointer-events: none; /* 空隙区域放行给下层，搜索框自己恢复 */
+}
+
+.top-center .search-box {
+  pointer-events: auto;
 }
 
 .search-box {
@@ -269,6 +309,7 @@ onUnmounted(() => {
 }
 
 .top-right {
+  margin-left: auto; /* top-center 脱离文档流后，靠它顶到最右 */
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -397,6 +438,50 @@ onUnmounted(() => {
 .menu :deep(.el-menu-item.is-active) {
   background: rgba(255, 255, 255, 0.07);
   color: var(--text-1);
+}
+
+/* ---- tab 增删的列表过渡（transition-group name="tab"）----
+   消失：淡出 + 高度 40→0 收拢，下方项随布局自然上移（下位上移）；
+   出现：反向生长，透明度延迟 50ms——空间先长出来，内容再浮现。
+   缓动与全站侧栏动画共用同一条曲线 */
+.menu :deep(.el-menu-item.tab-leave-active) {
+  overflow: hidden;
+  transition:
+    opacity 0.2s ease,
+    height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-bottom 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.2s ease;
+}
+
+.menu :deep(.el-menu-item.tab-leave-to) {
+  opacity: 0;
+  transform: translateX(-10px);
+  height: 0;
+  margin-bottom: 0;
+}
+
+.menu :deep(.el-menu-item.tab-enter-active) {
+  overflow: hidden;
+  transition-property: transform, height, margin-bottom, opacity;
+  transition-duration: 0.25s, 0.25s, 0.25s, 0.2s;
+  transition-timing-function:
+    cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.4, 0, 0.2, 1),
+    cubic-bezier(0.4, 0, 0.2, 1),
+    ease;
+  transition-delay: 0s, 0s, 0s, 0.05s;
+}
+
+.menu :deep(.el-menu-item.tab-enter-from) {
+  opacity: 0;
+  transform: translateY(-6px);
+  height: 0;
+  margin-bottom: 0;
+}
+
+/* 列表重排（中间项被移除）时其余项平滑滑动 */
+.menu :deep(.el-menu-item.tab-move) {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .main {

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { applyAdapters, fetchAdapters, type AdapterConfig, type AdapterState } from '../api'
 
+const router = useRouter()
+
 const loading = ref(false)
-const saving = ref(false)
 const config = ref<AdapterConfig>({
   adapters: [],
   napcat: { url: '', token: '', path: '' },
@@ -19,11 +21,19 @@ function stateOf(platform: string): AdapterState | undefined {
   return running.value.find((r) => r.platform === platform)
 }
 
-function toggle(name: 'napcat' | 'sandbox', on: boolean) {
+/** 列表页开关即改即用（写盘 + 热应用）；字段配置进子页。 */
+async function toggle(name: 'napcat' | 'sandbox', on: boolean) {
   const set = new Set(config.value.adapters)
   if (on) set.add(name)
   else set.delete(name)
   config.value.adapters = [...set]
+  try {
+    ElMessage.success(await applyAdapters(config.value))
+  } catch (e) {
+    ElMessage.error(String(e))
+  } finally {
+    await refresh() // 失败时回到实际状态
+  }
 }
 
 async function refresh() {
@@ -38,20 +48,6 @@ async function refresh() {
     loading.value = false
   }
 }
-
-async function save() {
-  saving.value = true
-  try {
-    const msg = await applyAdapters(config.value)
-    ElMessage.success(msg)
-    await refresh()
-  } catch (e) {
-    ElMessage.error(String(e))
-  } finally {
-    saving.value = false
-  }
-}
-
 onMounted(refresh)
 </script>
 
@@ -65,14 +61,13 @@ onMounted(refresh)
         </div>
       </div>
       <div>
-        <el-button size="small" style="margin-right: 8px" @click="refresh">刷新</el-button>
-        <el-button size="small" type="primary" :loading="saving" @click="save">保存并应用</el-button>
+        <el-button size="small" @click="refresh">刷新</el-button>
       </div>
     </div>
 
     <div v-loading="loading" class="cards">
       <!-- napcat -->
-      <div class="panel card">
+      <div class="panel card" @click="router.push('/adapters/napcat')">
         <div class="card-head">
           <div>
             <div class="card-title">napcat <el-tag size="small" effect="plain">QQ 真机</el-tag></div>
@@ -86,24 +81,17 @@ onMounted(refresh)
             >
               {{ stateOf('napcat')!.alive ? '运行中' : '已停止' }}
             </span>
-            <el-switch :model-value="napcatOn" @change="(v: any) => toggle('napcat', Boolean(v))" />
+            <el-switch
+              :model-value="napcatOn"
+              @click.stop
+              @change="(v: any) => toggle('napcat', Boolean(v))"
+            />
           </div>
         </div>
-        <el-form label-position="top" size="small" :disabled="!napcatOn" class="card-form">
-          <el-form-item label="WebSocket 地址">
-            <el-input v-model="config.napcat.url" placeholder="ws://127.0.0.1:3001" />
-          </el-form-item>
-          <el-form-item label="access_token">
-            <el-input v-model="config.napcat.token" placeholder="留空表示无鉴权" show-password />
-          </el-form-item>
-          <el-form-item label="适配器路径">
-            <el-input v-model="config.napcat.path" placeholder="bin/adapter-napcat.exe" />
-          </el-form-item>
-        </el-form>
       </div>
 
       <!-- sandbox -->
-      <div class="panel card">
+      <div class="panel card" @click="router.push('/adapters/sandbox')">
         <div class="card-head">
           <div>
             <div class="card-title">sandbox <el-tag size="small" effect="plain">开发沙箱</el-tag></div>
@@ -117,14 +105,13 @@ onMounted(refresh)
             >
               {{ stateOf('sandbox')!.alive ? '运行中' : '已停止' }}
             </span>
-            <el-switch :model-value="sandboxOn" @change="(v: any) => toggle('sandbox', Boolean(v))" />
+            <el-switch
+              :model-value="sandboxOn"
+              @click.stop
+              @change="(v: any) => toggle('sandbox', Boolean(v))"
+            />
           </div>
         </div>
-        <el-form label-position="top" size="small" :disabled="!sandboxOn" class="card-form">
-          <el-form-item label="适配器路径">
-            <el-input v-model="config.sandbox.path" placeholder="bin/adapter-sandbox.exe" />
-          </el-form-item>
-        </el-form>
       </div>
     </div>
   </div>
@@ -139,6 +126,7 @@ onMounted(refresh)
 
 .card {
   padding: 16px;
+  cursor: pointer;
 }
 
 .card-head {
@@ -188,9 +176,5 @@ onMounted(refresh)
 
 .state.off {
   color: var(--text-3);
-}
-
-.card-form {
-  margin-top: 4px;
 }
 </style>
