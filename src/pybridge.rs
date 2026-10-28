@@ -45,6 +45,7 @@ fn system_status() -> PyResult<String> {
 // Option 尾参 pyo3 自动可选：core.send_action(a, p, ms) 或 (a, p, ms, platform)
 #[pyfunction]
 fn send_action(
+    py: Python,
     action: String,
     params: String,
     timeout_ms: i64,
@@ -55,8 +56,11 @@ fn send_action(
         Some(p) => p,
         None => current_platform().unwrap_or_else(|| "napcat".to_string()),
     };
-    dll.send_action(&resolved, &action, &params, timeout_ms as i32)
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    // FFI 等平台应答最长 timeout_ms，期间放掉 GIL，其他 worker 的 Python 不停摆
+    py.detach(|| {
+        dll.send_action(&resolved, &action, &params, timeout_ms as i32)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    })
 }
 
 // 每线程当前消息来源平台：worker 与会话一一绑定（chat 哈希分桶），

@@ -393,3 +393,32 @@ fn ui_tabs_syncs_directory_before_aggregation() {
     assert_eq!(tabs[0]["id"], "demo-x");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn handle_does_not_hold_lock_across_plugin_chain() {
+    // 回归 #7：handle 曾持 plugins 锁跑完整条链，LLM 等待期间
+    // info()/WebUI/其他 worker 全部排队。现在锁内只做快照，
+    // 链路 sleep 时同锁的读端必须立即返回
+    let dir = plugin_dir("chain_lock");
+    write_plugin(
+        &dir,
+        "p",
+        "import time\ndef handle(ctx):\n    time.sleep(1.5)\n    return ['slow']\n",
+    );
+    let business = std::sync::Arc::new(Business::load(dir.to_str().unwrap()).unwrap());
+    let b2 = business.clone();
+    let chain =
+        std::thread::spawn(move || b2.handle(&ctx("k")).unwrap());
+    // 等链路进入插件 sleep
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let start = std::time::Instant::now();
+    let info = business.info();
+    assert!(
+        start.elapsed() < std::time::Duration::from_millis(300),
+        "info() 被链路阻塞了 {:.1?}",
+        start.elapsed()
+    );
+    assert!(info.contains("p"));
+    assert_eq!(chain.join().unwrap(), vec!["slow".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

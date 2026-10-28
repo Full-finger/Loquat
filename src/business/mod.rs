@@ -32,7 +32,7 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::time::SystemTime;
 
 use crate::{log_error, log_info};
@@ -93,7 +93,9 @@ impl LoadedPlugin {
 
 pub struct Business {
     dir: PathBuf,
-    plugins: Mutex<Vec<LoadedPlugin>>,
+    /// 读多写少：每条消息 handle 只读快照，sync/启停才写。handle 放锁后
+    /// 执行插件链，LLM 等长等待不堵其他线程。
+    plugins: RwLock<Vec<LoadedPlugin>>,
     reloads: AtomicU64,
     /// 共享库 mtime（毫秒），检测 _lib/config.py 变更并强制全量重载
     lib_mtime: AtomicU64,
@@ -105,7 +107,7 @@ impl Business {
     pub fn load(dir: &str) -> Result<Self, Box<dyn Error>> {
         let business = Self {
             dir: dir.into(),
-            plugins: Mutex::new(Vec::new()),
+            plugins: RwLock::new(Vec::new()),
             reloads: AtomicU64::new(0),
             lib_mtime: AtomicU64::new(0),
             installable: Mutex::new(Vec::new()),
@@ -117,7 +119,7 @@ impl Business {
     /// 重新扫描插件目录：发现新插件、重载有改动的（plugin.py 或 config.yaml）、
     /// 移除已删除的。单个插件加载失败只跳过自身，不拖垮整条链。
     fn sync(&self) -> Result<(), Box<dyn Error>> {
-        let mut plugins = self.plugins.lock().expect("业务锁中毒");
+        let mut plugins = self.plugins.write().expect("业务锁中毒");
 
         // 共享库变更：重注册后把所有插件标记为待重载，重新绑定 import
         let mt = sharedlib::lib_mtime_millis(&self.dir);
@@ -270,12 +272,21 @@ impl Business {
         if let Err(e) = self.sync() {
             log_error!("插件目录扫描失败（沿用已加载插件）: {e}");
         }
-        let plugins = self.plugins.lock().expect("业务锁中毒");
-        for plugin in plugins.iter().filter(|p| p.enabled()) {
-            match Self::call(&plugin.module, ctx) {
+        // 锁内只做快照，链路放锁外跑：Py<PyModule> 是强引用，即使中途热重载
+        // 换掉模块，快照仍持有旧模块存活；LLM 等长等待不再堵其他线程
+        let chain: Vec<(Py<PyModule>, String)> = Python::attach(|py| {
+            let plugins = self.plugins.read().expect("业务锁中毒");
+            plugins
+                .iter()
+                .filter(|p| p.enabled())
+                .map(|p| (p.module.clone_ref(py), p.dir_name.clone()))
+                .collect()
+        });
+        for (module, name) in &chain {
+            match Self::call(module, ctx) {
                 Ok(replies) if !replies.is_empty() => return Ok(replies),
                 Ok(_) => continue,
-                Err(e) => log_error!("插件 {} 处理出错: {e}", plugin.dir_name),
+                Err(e) => log_error!("插件 {name} 处理出错: {e}"),
             }
         }
         Ok(Vec::new())
@@ -322,7 +333,7 @@ impl Business {
             return false;
         }
 
-        let mut plugins = self.plugins.lock().expect("业务锁中毒");
+        let mut plugins = self.plugins.write().expect("业务锁中毒");
         match plugins.iter_mut().find(|p| p.dir_name == name) {
             Some(p) => {
                 p.marker_disabled = !enabled;
@@ -358,7 +369,7 @@ impl Business {
     /// WebUI 插件列表：已加载插件 + 已发现未安装的目录。
     /// 返回 (名称, 已安装, 已启用, 优先级)。未安装的优先级未知，报缺省 100。
     pub fn plugin_rows(&self) -> Vec<(String, bool, bool, i64)> {
-        let plugins = self.plugins.lock().expect("业务锁中毒");
+        let plugins = self.plugins.read().expect("业务锁中毒");
         let installable = self.installable.lock().expect("业务锁中毒");
         let mut rows: Vec<(String, bool, bool, i64)> = plugins
             .iter()
@@ -374,7 +385,7 @@ impl Business {
     }
 
     pub fn info(&self) -> String {
-        let plugins = self.plugins.lock().expect("业务锁中毒");
+        let plugins = self.plugins.read().expect("业务锁中毒");
         let names: Vec<String> = plugins
             .iter()
             .map(|p| {

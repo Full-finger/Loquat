@@ -54,7 +54,7 @@ pub fn spawn(dll: Arc<CoreDll>, business: Arc<Business>) {
     }
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            .worker_threads(4)
             .enable_all()
             .build();
         let Ok(rt) = rt else {
