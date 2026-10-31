@@ -1,6 +1,10 @@
 <script setup lang="ts">
+// 「消息流」页（原内置 Messages.vue 迁移为插件）。WS 地址走宿主注入的
+// ctx.wsUrl（token 查询参数兜底），重连策略与原页相同。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { USE_MOCK, wsUrl } from '../api'
+import PageHead from '@webui/components/PageHead.vue'
+import StateDot from '@webui/components/StateDot.vue'
+import { useCtx } from '@webui/ext/mount'
 
 interface MsgItem {
   time: string
@@ -8,6 +12,8 @@ interface MsgItem {
   chat: string
   text: string
 }
+
+const ctx = useCtx()
 
 const items = ref<MsgItem[]>([])
 const connected = ref(false)
@@ -17,7 +23,6 @@ const stick = ref(true)
 const listEl = ref<HTMLElement>()
 
 let ws: WebSocket | undefined
-let mockTimer: number | undefined
 let disposed = false
 let reconnectTimer: number | undefined
 
@@ -56,28 +61,10 @@ function fmt(d: Date): string {
   return d.toTimeString().slice(0, 8)
 }
 
-const MOCK_TEXTS = ['/ping', 'pong', '今天天气怎么样', '查到了，晴，26 度', '/status', '核心运行中']
-
-onMounted(() => {
-  if (USE_MOCK) {
-    mockTimer = window.setInterval(() => {
-      const dir = Math.random() > 0.5 ? 'in' : 'out'
-      push({
-        time: fmt(new Date()),
-        dir,
-        chat: Math.random() > 0.5 ? '群 12345' : '好友 67890',
-        text: MOCK_TEXTS[Math.floor(Math.random() * MOCK_TEXTS.length)],
-      })
-    }, 2000)
-  } else {
-    connect()
-  }
-})
-
-// 断线重连（与 Sandbox 同策略）：监控页常开，2s 间隔
+// 断线重连（与沙箱同策略）：监控页常开，2s 间隔
 function connect() {
   if (disposed) return
-  ws = new WebSocket(wsUrl())
+  ws = new WebSocket(ctx.wsUrl())
   ws.onopen = () => {
     connected.value = true
   }
@@ -100,26 +87,24 @@ function connect() {
   }
 }
 
+onMounted(connect)
+
 onUnmounted(() => {
   disposed = true
   ws?.close()
   if (reconnectTimer) clearTimeout(reconnectTimer)
-  if (mockTimer) clearInterval(mockTimer)
 })
 </script>
 
 <template>
   <div class="wrap">
-    <div class="page-head">
-      <div>
-        <h2>消息流</h2>
-        <div class="desc">实时收发监控，最多保留 500 条</div>
-      </div>
-      <el-tag v-if="USE_MOCK || connected" type="success" effect="plain" size="small">
-        已连接
-      </el-tag>
-      <el-tag v-else type="danger" effect="plain" size="small">连接断开</el-tag>
-    </div>
+    <PageHead>
+      <template #actions>
+        <StateDot :state="connected ? 'on' : 'off'">
+          {{ connected ? '已连接' : '连接断开' }}
+        </StateDot>
+      </template>
+    </PageHead>
 
     <div class="toolbar">
       <el-radio-group v-model="filter" size="small">
@@ -154,10 +139,6 @@ onUnmounted(() => {
   flex-direction: column;
   /* 视口 - 顶栏48 - 页头/工具条/主区内边距 */
   height: calc(100vh - 208px);
-}
-
-.page-head {
-  align-items: center;
 }
 
 .toolbar {
@@ -205,7 +186,7 @@ onUnmounted(() => {
 
 .msg-dir.in {
   color: var(--accent);
-  background: rgba(83, 155, 245, 0.15);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .msg-dir.out {

@@ -4,6 +4,10 @@
 //! 按职责分文件：REST/WS handlers 在 api.rs。
 
 mod api;
+mod api_plugins;
+mod api_sandbox;
+pub mod proc;
+pub mod sandbox_store;
 
 use std::sync::{Arc, OnceLock};
 
@@ -31,6 +35,17 @@ struct WebState {
 // 消息流广播：监控用途，容量满或无订阅者都直接丢。
 static STREAM_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
 
+// WebUI 启动时刻（spawn 时记）：仪表盘 uptime 用。
+static STARTED: OnceLock<std::time::Instant> = OnceLock::new();
+
+/// WebUI 已运行秒数（未启动返回 0）。
+pub fn uptime_sec() -> u64 {
+    STARTED
+        .get()
+        .map(|t| t.elapsed().as_secs())
+        .unwrap_or(0)
+}
+
 // WebUI 扩展机制（插件页面）：导航 tab 由 /api/extensions/ui 聚合插件
 // 的 TABS 声明，脚本经 /ext/<名>/ui.js 分发，前端动态挂载（docs/ext-ui.md）。
 // 内置页面的导航在前端 webui/src/tabs.ts，不经过宿主。
@@ -48,6 +63,7 @@ fn now_hms() -> String {
 
 /// 加载完成后调用：起独立线程跑 HTTP 服务。失败只记日志，不拖垮宿主。
 pub fn spawn(dll: Arc<CoreDll>, business: Arc<Business>) {
+    let _ = STARTED.set(std::time::Instant::now());
     let (tx, _) = broadcast::channel(256);
     if STREAM_TX.set(tx.clone()).is_err() {
         return; // 已初始化（测试场景重复调用）
@@ -71,7 +87,10 @@ async fn serve(
     dll: Arc<CoreDll>,
     business: Arc<Business>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (port, token) = read_config();
+    let cfg = read_config();
+    let (port, token) = (cfg.port, cfg.token);
+    // 沙箱记录：追加写 + 超限压缩，参数来自 config/webui.yaml 的 sandbox 段
+    sandbox_store::init(cfg.sandbox_keep, cfg.sandbox_max_sessions);
     let state = Arc::new(WebState { dll, business, token });
 
     // SPA：未命中的路径回 index.html（/dashboard 等前端路由直接访问）
@@ -149,21 +168,51 @@ fn origin_is_same_site(origin: &str, headers: &axum::http::HeaderMap) -> bool {
         .is_some_and(|host_port| host_port == port)
 }
 
-// 可选配置 config/webui.yaml（port / token），缺失用缺省值、不鉴权。
-fn read_config() -> (u16, Option<String>) {
+// 可选配置 config/webui.yaml，缺失用缺省值、不鉴权。
+struct WebConfig {
+    port: u16,
+    token: Option<String>,
+    /// 每个沙箱会话保留的条数（超过两倍时压缩）
+    sandbox_keep: usize,
+    /// 会话列表上限，超出按最久未用淘汰
+    sandbox_max_sessions: usize,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        WebConfig {
+            port: DEFAULT_PORT,
+            token: None,
+            sandbox_keep: 500,
+            sandbox_max_sessions: 50,
+        }
+    }
+}
+
+fn read_config() -> WebConfig {
+    let mut cfg = WebConfig::default();
     let Ok(text) = std::fs::read_to_string(CONFIG_FILE) else {
-        return (DEFAULT_PORT, None);
+        return cfg;
     };
     let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(&text) else {
         log_error!("WebUI 配置解析失败，用缺省值");
-        return (DEFAULT_PORT, None);
+        return cfg;
     };
-    let Some(cfg) = docs.into_iter().next() else {
-        return (DEFAULT_PORT, None);
+    let Some(doc) = docs.into_iter().next() else {
+        return cfg;
     };
-    let port = cfg["port"].as_i64().map(|p| p as u16).unwrap_or(DEFAULT_PORT);
-    let token = cfg["token"].as_str().filter(|t| !t.is_empty()).map(String::from);
-    (port, token)
+    if let Some(p) = doc["port"].as_i64() {
+        cfg.port = p as u16;
+    }
+    cfg.token = doc["token"].as_str().filter(|t| !t.is_empty()).map(String::from);
+    let sandbox = &doc["sandbox"];
+    if let Some(k) = sandbox["keep"].as_i64() {
+        cfg.sandbox_keep = k.clamp(20, 5000) as usize;
+    }
+    if let Some(m) = sandbox["max_sessions"].as_i64() {
+        cfg.sandbox_max_sessions = m.clamp(1, 500) as usize;
+    }
+    cfg
 }
 
 // 缓存策略：assets 文件名带内容 hash，可长缓存；HTML 与 API 禁缓存，
@@ -206,7 +255,9 @@ pub fn publish_incoming(platform: &str, message_type: &str, chat_id: &str, text:
         serde_json::json!({
             "dir": "in",
             "platform": platform,
-            "chat": format!("{where_} {chat_id}"),
+            "chat": format!("{where_} {}", display_chat(chat_id)),
+            // 会话标识（沙箱会话带后缀）：前端据此把帧归到对应会话
+            "chat_id": chat_id,
             "text": text,
             "time": now_hms(),
         })
@@ -217,16 +268,27 @@ pub fn publish_incoming(platform: &str, message_type: &str, chat_id: &str, text:
 /// 回复帧（worker 发送成功后调用）。
 pub fn publish_reply(platform: &str, message_type: &str, chat_id: &str, text: &str) {
     let where_ = if message_type == "group" { "群" } else { "好友" };
+    // 沙箱回复顺手记账：这是唯一能拿到回复文本的地方（适配器不落库）
+    if platform == "sandbox" {
+        sandbox_store::record_out(chat_id, message_type, text);
+    }
     publish(
         serde_json::json!({
             "dir": "out",
             "platform": platform,
-            "chat": format!("{where_} {chat_id}"),
+            "chat": format!("{where_} {}", display_chat(chat_id)),
+            "chat_id": chat_id,
             "text": text,
             "time": now_hms(),
         })
         .to_string(),
     );
+}
+
+/// 会话 ID 去掉沙箱会话后缀再展示：`10000.3fa2c1` → `10000`。
+/// 后缀只是给沙箱做会话隔离用，不该漏到「消息流」页的会话列里。
+fn display_chat(chat_id: &str) -> &str {
+    chat_id.split('.').next().unwrap_or(chat_id)
 }
 
 #[cfg(test)]

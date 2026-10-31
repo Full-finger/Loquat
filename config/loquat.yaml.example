@@ -1,15 +1,13 @@
-# 首次运行自动生成本文件（从 loquat.yaml.example 复制），按需修改后重启。
-# plugins.adapters 选拉起哪些适配器（可多选，下行按 platform 路由）：
-#   napcat  —— 连真实 QQ（经 NapCat）
-#   sandbox —— 开发沙箱（WebUI 沙箱选项卡对话，无需 NapCat）
-napcat:
-  url: ws://127.0.0.1:3001
-  token: 请填入你的access_token
+# 首次运行自动生成本文件。缺省只启用沙箱：直接启动即可在 WebUI「沙箱」选项卡对话。
+# plugins.adapters 拉起哪些适配器（可多选，下行按 platform 路由）：
+#   每项 = { name, path, env }；path 省略用默认 bin/adapter-<name>.exe；
+#   enabled: false 表示停用（保留定义与参数）；
+#   env 的键名由各适配器自己约定，核心不解释内容。
 plugins:
   adapters:
-    - napcat
-    - sandbox
-  napcat:
-    path: bin/adapter-napcat.exe
-  sandbox:
-    path: bin/adapter-sandbox.exe
+    - name: sandbox
+    # 连真实 QQ（经 NapCat）时解开注释并填入你的参数：
+    # - name: napcat
+    #   env:
+    #     LOQUAT_NAPCAT_URL: ws://127.0.0.1:3001
+    #     LOQUAT_NAPCAT_TOKEN: 请填入你的access_token

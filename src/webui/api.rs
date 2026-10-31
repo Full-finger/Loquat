@@ -1,5 +1,8 @@
 //! WebUI 的 REST 与 WS handlers。路由表在 mod.rs 的 serve()；
 //! 鉴权（authorized）与状态（WebState/STREAM_TX）由 mod.rs 持有。
+//!
+//! 文件划分：api.rs 是核心与扩展页分发，api_sandbox.rs 是沙箱选项卡，
+//! api_plugins.rs 是适配器/Provider/插件管理面。R4 规则限单文件 400 行。
 
 use std::sync::Arc;
 
@@ -7,14 +10,23 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 
+use super::api_plugins::{
+    api_adapters, api_adapters_apply, api_disable, api_enable, api_install, api_plugin_asset_delete,
+    api_plugin_asset_upload, api_plugin_asset_view, api_plugin_assets, api_plugin_config,
+    api_plugin_config_save, api_plugins, api_providers, api_providers_save,
+};
+use super::api_sandbox::{
+    api_sandbox_history, api_sandbox_media, api_sandbox_send, api_sandbox_session_create,
+    api_sandbox_session_delete, api_sandbox_session_rename, api_sandbox_sessions,
+};
 use super::{authorized, unauthorized, STREAM_TX, WebState};
 use crate::stats;
 
 /// spawn_blocking 任务 panic 时兜底，不让请求静默挂死。
-fn join_lost() -> Response {
+pub(super) fn join_lost() -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({ "error": "后台任务异常" })),
@@ -29,6 +41,7 @@ macro_rules! blocking {
         tokio::task::spawn_blocking(move || $body).await.unwrap_or_else(|_| join_lost())
     };
 }
+pub(crate) use blocking;
 
 /// 全部 API 路由（宿主能力面）。新增端点在此登记。
 pub fn routes() -> Router<Arc<WebState>> {
@@ -36,10 +49,28 @@ pub fn routes() -> Router<Arc<WebState>> {
         .route("/api/status", get(api_status))
         .route("/api/extensions/ui", get(api_extensions_ui))
         .route("/api/sandbox/send", post(api_sandbox_send))
+        // 沙箱会话：列表 / 新建 / 改名+删除 / 历史 / 图片（记录见 sandbox_store）
+        .route(
+            "/api/sandbox/sessions",
+            get(api_sandbox_sessions).post(api_sandbox_session_create),
+        )
+        .route(
+            "/api/sandbox/sessions/{chat_id}",
+            patch(api_sandbox_session_rename).delete(api_sandbox_session_delete),
+        )
+        .route("/api/sandbox/history", get(api_sandbox_history))
+        .route("/api/sandbox/media/{name}", get(api_sandbox_media))
         .route("/api/adapters", get(api_adapters))
         .route("/api/adapters/apply", post(api_adapters_apply))
         .route("/api/providers", get(api_providers).post(api_providers_save))
         .route("/api/plugins/{name}/config", get(api_plugin_config).put(api_plugin_config_save))
+        .route(
+            "/api/plugins/{name}/assets",
+            get(api_plugin_assets)
+                .post(api_plugin_asset_upload)
+                .delete(api_plugin_asset_delete),
+        )
+        .route("/api/plugins/{name}/assets/view", get(api_plugin_asset_view))
         .route("/api/plugins", get(api_plugins))
         .route("/api/plugins/{name}/enable", post(api_enable))
         .route("/api/plugins/{name}/disable", post(api_disable))
@@ -59,7 +90,7 @@ async fn api_status(
     }
     blocking!(state, {
         let raw = state.dll.status();
-        let core: serde_json::Value =
+        let mut core: serde_json::Value =
             serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
         // 多适配器：任意平台存活即视为运行中
         let alive = core
@@ -67,108 +98,30 @@ async fn api_status(
             .and_then(|v| v.as_array())
             .map(|a| a.iter().any(|x| x.get("alive").and_then(|b| b.as_bool()).unwrap_or(false)))
             .unwrap_or(false);
+        // 适配器子进程占用：按 pid 探测 CPU/内存，进程已退出的留空
+        if let Some(arr) = core.get_mut("adapters").and_then(|v| v.as_array_mut()) {
+            for a in arr {
+                if let Some(pid) = a.get("pid").and_then(|v| v.as_u64()) {
+                    if let Some((cpu, mem)) = super::proc::probe(pid as u32) {
+                        a["cpu"] = serde_json::json!(cpu);
+                        a["mem"] = serde_json::json!(mem);
+                    }
+                }
+            }
+        }
         Json(serde_json::json!({
             "core": if alive { "运行中" } else { "未就绪" },
             "core_detail": core,
             "events": stats::event_count(),
             "replies": stats::reply_count(),
             "workers": stats::worker_backlogs(),
+            "workers_done": stats::worker_done(),
+            "active_chats": stats::active_chats(),
+            "uptime_sec": super::uptime_sec(),
+            "sys": super::proc::host(),
             "business": state.business.info(),
         }))
         .into_response()
-    })
-}
-
-/// 适配器配置 + 运行状态。
-async fn api_adapters(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, {
-        let raw = state.dll.adapters_config();
-        let v: serde_json::Value =
-            serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
-        Json(v).into_response()
-    })
-}
-
-/// 应用适配器配置（写盘 + 热应用）。body 即 config 载荷。
-async fn api_adapters_apply(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, match state.dll.apply_adapters_config(&body.to_string()) {
-        Ok(s) => {
-            let v: serde_json::Value = serde_json::from_str(&s).unwrap_or(serde_json::Value::Null);
-            Json(v).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    })
-}
-
-/// 服务配置（provider 层）：api_key 打码，has_api_key 标记是否已配置。
-async fn api_providers(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    Json(crate::providers::view()).into_response()
-}
-
-/// 保存服务配置（api_key 空 = 保持已有，null = 清除），热生效。
-async fn api_providers_save(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, match crate::providers::save(&body) {
-        Ok(()) => {
-            state.business.refresh_providers();
-            Json(serde_json::json!({ "ok": true, "msg": "已保存，服务配置热生效" }))
-                .into_response()
-        }
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
-}
-
-/// 插件配置读取（SCHEMA + 当前值）。
-async fn api_plugin_config(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Path(name): Path<String>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, match state.business.plugin_config(&name) {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
-}
-
-/// 插件配置保存（cfglib 校验渲染，热重载即时生效）。
-async fn api_plugin_config_save(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Path(name): Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, match state.business.save_plugin_config(&name, body) {
-        Ok(()) => Json(serde_json::json!({ "ok": true, "msg": "已保存并热重载" })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
     })
 }
 
@@ -220,110 +173,6 @@ async fn ext_ui_js(
     }
 }
 
-/// 沙箱选项卡的输入通路：注入一条消息进沙箱适配器的事件链路。
-/// body: {"text": "...", "mode": "private"|"group", "atBot": bool}
-async fn api_sandbox_send(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    // owned 提取：闭包要进 spawn_blocking，不能借用局部 body
-    let text = body.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
-    let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("private").to_string();
-    let at_bot = body.get("atBot").and_then(|b| b.as_bool()).unwrap_or(false);
-    if text.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "text 为空" }))).into_response();
-    }
-    if mode != "private" && mode != "group" {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "mode 仅支持 private/group" }))).into_response();
-    }
-    blocking!(state, match state.dll.inject_event("sandbox", &text, at_bot, &mode) {
-        Ok(resp) => Json(serde_json::json!({ "ok": true, "detail": resp })).into_response(),
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    })
-}
-
-async fn api_plugins(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, {
-        let rows: Vec<serde_json::Value> = state
-            .business
-            .plugin_rows()
-            .into_iter()
-            .map(|(name, installed, enabled, priority)| {
-                serde_json::json!({
-                    "name": name,
-                    "installed": installed,
-                    "enabled": enabled,
-                    "priority": priority,
-                })
-            })
-            .collect();
-        Json(serde_json::Value::Array(rows)).into_response()
-    })
-}
-
-// 启停与安装：set_enabled 返回是否找到插件，install 返回结果文本。
-async fn api_enable(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Path(name): Path<String>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, if state.business.set_enabled(&name, true) {
-        (StatusCode::OK, Json(serde_json::json!({ "msg": format!("{name} 已启用") }))).into_response()
-    } else {
-        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "插件不存在" }))).into_response()
-    })
-}
-
-async fn api_disable(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Path(name): Path<String>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, if state.business.set_enabled(&name, false) {
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({ "msg": format!("{name} 已禁用（重启后回到文件内声明）") })),
-        )
-            .into_response()
-    } else {
-        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "插件不存在" }))).into_response()
-    })
-}
-
-async fn api_install(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-    Path(name): Path<String>,
-) -> Response {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    blocking!(state, match state.business.install(&name) {
-        Ok(msg) => (StatusCode::OK, Json(serde_json::json!({ "msg": msg }))).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
-}
-
 async fn api_reload_napcat(
     State(state): State<Arc<WebState>>,
     headers: HeaderMap,
@@ -343,7 +192,7 @@ async fn api_reload_napcat(
 
 // token 走 ?token= 查询参数兜底的校验：浏览器 WebSocket API 与动态
 // import() 都带不了 Authorization 头（token 会进访问日志；服务只绑回环）。
-fn token_query_ok(state: &WebState, query: Option<&str>) -> bool {
+pub(super) fn token_query_ok(state: &WebState, query: Option<&str>) -> bool {
     match (&state.token, query) {
         (Some(expected), Some(q)) => q.split('&').any(|kv| {
             let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
@@ -351,6 +200,52 @@ fn token_query_ok(state: &WebState, query: Option<&str>) -> bool {
         }),
         (Some(_), None) => false,
         (None, _) => true,
+    }
+}
+
+// ?a=1&b=2 里取指定参数的值并做百分号解码（文件名可能是中文）。
+pub(super) fn query_param(query: Option<&str>, key: &str) -> Option<String> {
+    query?.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+        (k == key).then(|| percent_decode(v))
+    })
+}
+
+// 手写百分号解码：文件名来自 fetch 的 encodeURIComponent，多字节
+// 序列按字节还原；非法转义原样保留。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+// 按扩展名给 Content-Type；浏览器预览只认图片，其余当下载。
+pub(super) fn asset_content_type(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "txt" | "log" | "json" | "yaml" | "yml" => "text/plain",
+        _ => "application/octet-stream",
     }
 }
 

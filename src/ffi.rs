@@ -32,6 +32,7 @@ type InjectEventFn = unsafe extern "C" fn(
     text: *const c_char,
     at_bot: i32,
     mode: *const c_char,
+    chat_id: *const c_char,
 ) -> *mut c_char;
 type AdaptersConfigFn = unsafe extern "C" fn() -> *mut c_char;
 type ApplyAdaptersConfigFn = unsafe extern "C" fn(config_json: *const c_char) -> *mut c_char;
@@ -175,12 +176,25 @@ impl CoreDll {
         Ok(take_c_string(ptr, &self.free))
     }
 
-    /// 注入一条沙箱消息（WebUI 沙箱选项卡的输入通路）。
-    pub fn inject_event(&self, platform: &str, text: &str, at_bot: bool, mode: &str) -> Result<String, Box<dyn Error>> {
+    /// 注入一条沙箱消息（WebUI 沙箱选项卡的输入通路）。segments 是
+    /// protojson Segment 数组 JSON（与 SendMessage 同构）；应答含注入消息 ID。
+    /// 注入一条沙箱事件。`chat_id` 为空表示用适配器缺省会话
+    /// （老调用方不传时保持原行为），非空则按会话隔离记忆。
+    pub fn inject_event(
+        &self,
+        platform: &str,
+        segments: &str,
+        at_bot: bool,
+        mode: &str,
+        chat_id: &str,
+    ) -> Result<String, Box<dyn Error>> {
         let pl = CString::new(platform)?;
-        let t = CString::new(text)?;
+        let t = CString::new(segments)?;
         let m = CString::new(mode)?;
-        let ptr = unsafe { (self.inject_event)(pl.as_ptr(), t.as_ptr(), at_bot as i32, m.as_ptr()) };
+        let c = CString::new(chat_id)?;
+        let ptr = unsafe {
+            (self.inject_event)(pl.as_ptr(), t.as_ptr(), at_bot as i32, m.as_ptr(), c.as_ptr())
+        };
         Ok(take_c_string(ptr, &self.free))
     }
 

@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "plugins": "node scripts/build-plugins.mjs",
+    "plugins:watch": "node scripts/build-plugins.mjs --watch"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "element-plus": "^2.14.7",
+    "lxgw-wenkai-screen-webfont": "^1.7.0",
     "vue": "^3.5.44",
     "vue-router": "^5.4.0"
   },

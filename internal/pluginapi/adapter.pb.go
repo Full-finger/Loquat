@@ -78,10 +78,16 @@ func (EventKind) EnumDescriptor() ([]byte, []int) {
 }
 
 type InjectEventRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`                 // 消息文本
-	AtBot         bool                   `protobuf:"varint,2,opt,name=at_bot,json=atBot,proto3" json:"at_bot,omitempty"` // 是否模拟 at 机器人（群聊模式有效）
-	Mode          string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`                 // private | group
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Text  string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`                 // 消息文本（无 segments 时的兑底，构造单个 text 段）
+	AtBot bool                   `protobuf:"varint,2,opt,name=at_bot,json=atBot,proto3" json:"at_bot,omitempty"` // 是否模拟 at 机器人（群聊模式有效，插在最前）
+	Mode  string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`                 // private | group
+	// 完整段列表（protojson Segment 形态）：比 text 富的注入用（图片、回复引用等）。
+	// 非空时优先于 text；mentions_bot 由适配器扫 at 段判定
+	Segments []*Segment `protobuf:"bytes,4,rep,name=segments,proto3" json:"segments,omitempty"`
+	// 会话标识：沙箱按会话隔离记忆（核心与插件按 (mode, chat_id) 存历史），
+	// 留空则用适配器的缺省会话。WebUI 的「新建会话」靠它拿到独立 chat。
+	ChatId        string `protobuf:"bytes,5,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -137,8 +143,24 @@ func (x *InjectEventRequest) GetMode() string {
 	return ""
 }
 
+func (x *InjectEventRequest) GetSegments() []*Segment {
+	if x != nil {
+		return x.Segments
+	}
+	return nil
+}
+
+func (x *InjectEventRequest) GetChatId() string {
+	if x != nil {
+		return x.ChatId
+	}
+	return ""
+}
+
 type InjectEventResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 注入消息的平台 ID：前端把它绑到本地气泡，后续引用回复用
+	MessageId     string `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -171,6 +193,13 @@ func (x *InjectEventResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use InjectEventResponse.ProtoReflect.Descriptor instead.
 func (*InjectEventResponse) Descriptor() ([]byte, []int) {
 	return file_internal_pluginapi_adapter_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *InjectEventResponse) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
 }
 
 type StreamEventsRequest struct {
@@ -1303,12 +1332,16 @@ var File_internal_pluginapi_adapter_proto protoreflect.FileDescriptor
 
 const file_internal_pluginapi_adapter_proto_rawDesc = "" +
 	"\n" +
-	" internal/pluginapi/adapter.proto\x12\fpluginapi.v2\x1a\x1cgoogle/protobuf/struct.proto\"S\n" +
+	" internal/pluginapi/adapter.proto\x12\fpluginapi.v2\x1a\x1cgoogle/protobuf/struct.proto\"\x9f\x01\n" +
 	"\x12InjectEventRequest\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x15\n" +
 	"\x06at_bot\x18\x02 \x01(\bR\x05atBot\x12\x12\n" +
-	"\x04mode\x18\x03 \x01(\tR\x04mode\"\x15\n" +
-	"\x13InjectEventResponse\"\x15\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\x121\n" +
+	"\bsegments\x18\x04 \x03(\v2\x15.pluginapi.v2.SegmentR\bsegments\x12\x17\n" +
+	"\achat_id\x18\x05 \x01(\tR\x06chatId\"4\n" +
+	"\x13InjectEventResponse\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\"\x15\n" +
 	"\x13StreamEventsRequest\"\xd4\x01\n" +
 	"\rEventEnvelope\x12\x1a\n" +
 	"\bplatform\x18\x01 \x01(\tR\bplatform\x12+\n" +
@@ -1430,36 +1463,37 @@ var file_internal_pluginapi_adapter_proto_goTypes = []any{
 	(*structpb.Struct)(nil),     // 19: google.protobuf.Struct
 }
 var file_internal_pluginapi_adapter_proto_depIdxs = []int32{
-	0,  // 0: pluginapi.v2.EventEnvelope.kind:type_name -> pluginapi.v2.EventKind
-	5,  // 1: pluginapi.v2.EventEnvelope.message:type_name -> pluginapi.v2.UnifiedMessage
-	6,  // 2: pluginapi.v2.UnifiedMessage.chat:type_name -> pluginapi.v2.ChatRef
-	7,  // 3: pluginapi.v2.UnifiedMessage.sender:type_name -> pluginapi.v2.Sender
-	8,  // 4: pluginapi.v2.UnifiedMessage.segments:type_name -> pluginapi.v2.Segment
-	9,  // 5: pluginapi.v2.Segment.text:type_name -> pluginapi.v2.TextSeg
-	10, // 6: pluginapi.v2.Segment.at:type_name -> pluginapi.v2.AtSeg
-	11, // 7: pluginapi.v2.Segment.reply:type_name -> pluginapi.v2.ReplySeg
-	13, // 8: pluginapi.v2.Segment.image:type_name -> pluginapi.v2.MediaSeg
-	12, // 9: pluginapi.v2.Segment.face:type_name -> pluginapi.v2.FaceSeg
-	13, // 10: pluginapi.v2.Segment.voice:type_name -> pluginapi.v2.MediaSeg
-	13, // 11: pluginapi.v2.Segment.video:type_name -> pluginapi.v2.MediaSeg
-	13, // 12: pluginapi.v2.Segment.file:type_name -> pluginapi.v2.MediaSeg
-	14, // 13: pluginapi.v2.Segment.extension:type_name -> pluginapi.v2.ExtensionSeg
-	19, // 14: pluginapi.v2.ExtensionSeg.data:type_name -> google.protobuf.Struct
-	6,  // 15: pluginapi.v2.SendMessageRequest.chat:type_name -> pluginapi.v2.ChatRef
-	8,  // 16: pluginapi.v2.SendMessageRequest.segments:type_name -> pluginapi.v2.Segment
-	3,  // 17: pluginapi.v2.Adapter.StreamEvents:input_type -> pluginapi.v2.StreamEventsRequest
-	1,  // 18: pluginapi.v2.Adapter.InjectEvent:input_type -> pluginapi.v2.InjectEventRequest
-	15, // 19: pluginapi.v2.Adapter.SendMessage:input_type -> pluginapi.v2.SendMessageRequest
-	17, // 20: pluginapi.v2.Adapter.SendAction:input_type -> pluginapi.v2.SendActionRequest
-	4,  // 21: pluginapi.v2.Adapter.StreamEvents:output_type -> pluginapi.v2.EventEnvelope
-	2,  // 22: pluginapi.v2.Adapter.InjectEvent:output_type -> pluginapi.v2.InjectEventResponse
-	16, // 23: pluginapi.v2.Adapter.SendMessage:output_type -> pluginapi.v2.SendMessageResponse
-	18, // 24: pluginapi.v2.Adapter.SendAction:output_type -> pluginapi.v2.SendActionResponse
-	21, // [21:25] is the sub-list for method output_type
-	17, // [17:21] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	8,  // 0: pluginapi.v2.InjectEventRequest.segments:type_name -> pluginapi.v2.Segment
+	0,  // 1: pluginapi.v2.EventEnvelope.kind:type_name -> pluginapi.v2.EventKind
+	5,  // 2: pluginapi.v2.EventEnvelope.message:type_name -> pluginapi.v2.UnifiedMessage
+	6,  // 3: pluginapi.v2.UnifiedMessage.chat:type_name -> pluginapi.v2.ChatRef
+	7,  // 4: pluginapi.v2.UnifiedMessage.sender:type_name -> pluginapi.v2.Sender
+	8,  // 5: pluginapi.v2.UnifiedMessage.segments:type_name -> pluginapi.v2.Segment
+	9,  // 6: pluginapi.v2.Segment.text:type_name -> pluginapi.v2.TextSeg
+	10, // 7: pluginapi.v2.Segment.at:type_name -> pluginapi.v2.AtSeg
+	11, // 8: pluginapi.v2.Segment.reply:type_name -> pluginapi.v2.ReplySeg
+	13, // 9: pluginapi.v2.Segment.image:type_name -> pluginapi.v2.MediaSeg
+	12, // 10: pluginapi.v2.Segment.face:type_name -> pluginapi.v2.FaceSeg
+	13, // 11: pluginapi.v2.Segment.voice:type_name -> pluginapi.v2.MediaSeg
+	13, // 12: pluginapi.v2.Segment.video:type_name -> pluginapi.v2.MediaSeg
+	13, // 13: pluginapi.v2.Segment.file:type_name -> pluginapi.v2.MediaSeg
+	14, // 14: pluginapi.v2.Segment.extension:type_name -> pluginapi.v2.ExtensionSeg
+	19, // 15: pluginapi.v2.ExtensionSeg.data:type_name -> google.protobuf.Struct
+	6,  // 16: pluginapi.v2.SendMessageRequest.chat:type_name -> pluginapi.v2.ChatRef
+	8,  // 17: pluginapi.v2.SendMessageRequest.segments:type_name -> pluginapi.v2.Segment
+	3,  // 18: pluginapi.v2.Adapter.StreamEvents:input_type -> pluginapi.v2.StreamEventsRequest
+	1,  // 19: pluginapi.v2.Adapter.InjectEvent:input_type -> pluginapi.v2.InjectEventRequest
+	15, // 20: pluginapi.v2.Adapter.SendMessage:input_type -> pluginapi.v2.SendMessageRequest
+	17, // 21: pluginapi.v2.Adapter.SendAction:input_type -> pluginapi.v2.SendActionRequest
+	4,  // 22: pluginapi.v2.Adapter.StreamEvents:output_type -> pluginapi.v2.EventEnvelope
+	2,  // 23: pluginapi.v2.Adapter.InjectEvent:output_type -> pluginapi.v2.InjectEventResponse
+	16, // 24: pluginapi.v2.Adapter.SendMessage:output_type -> pluginapi.v2.SendMessageResponse
+	18, // 25: pluginapi.v2.Adapter.SendAction:output_type -> pluginapi.v2.SendActionResponse
+	22, // [22:26] is the sub-list for method output_type
+	18, // [18:22] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_internal_pluginapi_adapter_proto_init() }

@@ -24,40 +24,52 @@ import (
 )
 
 var (
-	adapterBin      string // 测试用适配器可执行文件路径，空表示构建失败
+	adapterBin      string // 测试用适配器可执行文件路径（napcat：WS 重连语义），空表示构建失败
+	sandboxBin      string // 测试用沙箱适配器路径：InjectEvent 只有沙箱实现，注入测试用
 	adapterBuildErr error
 )
 
 // TestMain 构建测试用适配器。构建失败不致命：测试里 skip 并说明原因。
 func TestMain(m *testing.M) {
-	adapterBin, adapterBuildErr = buildTestAdapter()
+	adapterBin, sandboxBin, adapterBuildErr = buildTestAdapters()
 	m.Run()
-	if adapterBin != "" {
-		os.RemoveAll(filepath.Dir(adapterBin))
+	for _, bin := range []string{adapterBin, sandboxBin} {
+		if bin != "" {
+			os.RemoveAll(filepath.Dir(bin))
+		}
 	}
 }
 
-// buildTestAdapter 把 cmd/adapter-napcat 编到临时目录。cwd 是本包目录（internal/core），
-// 模块根即 ../..。不依赖网络，依赖均在模块缓存。
-func buildTestAdapter() (string, error) {
-	if _, err := exec.LookPath("go"); err != nil {
-		return "", fmt.Errorf("PATH 中找不到 go 工具链: %w", err)
+// buildTestAdapters 把 cmd/adapter-napcat 与 cmd/adapter-sandbox 编到临时目录。
+// cwd 是本包目录（internal/core），模块根即 ../..。不依赖网络，依赖均在模块缓存。
+func buildTestAdapters() (napcatBin, sandboxBin string, err error) {
+	if _, e := exec.LookPath("go"); e != nil {
+		return "", "", fmt.Errorf("PATH 中找不到 go 工具链: %w", e)
 	}
 	dir, err := os.MkdirTemp("", "loquat-adapter-*")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	bin := filepath.Join(dir, "adapter-test")
-	if runtime.GOOS == "windows" {
-		bin += ".exe" // go build -o 在 Windows 上不会自动补扩展名
+	build := func(pkg, name string) string {
+		bin := filepath.Join(dir, name)
+		if runtime.GOOS == "windows" {
+			bin += ".exe" // go build -o 在 Windows 上不会自动补扩展名
+		}
+		cmd := exec.Command("go", "build", "-o", bin, pkg)
+		cmd.Dir = "../.."
+		if out, e := cmd.CombinedOutput(); e != nil {
+			err = fmt.Errorf("构建 %s: %w\n%s", pkg, e, out)
+			return ""
+		}
+		return bin
 	}
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/adapter-napcat")
-	cmd.Dir = "../.."
-	if out, err := cmd.CombinedOutput(); err != nil {
+	napcatBin = build("./cmd/adapter-napcat", "adapter-napcat")
+	sandboxBin = build("./cmd/adapter-sandbox", "adapter-sandbox")
+	if err != nil {
 		os.RemoveAll(dir)
-		return "", fmt.Errorf("构建 adapter-napcat: %w\n%s", err, out)
+		return "", "", err
 	}
-	return bin, nil
+	return napcatBin, sandboxBin, nil
 }
 
 func TestRuntimeSwapRace(t *testing.T) {
@@ -294,9 +306,7 @@ func TestRemoveThenReAddAdapter(t *testing.T) {
 
 	// 移除 napcat（adapters 只留 sandbox，拿 napcat 二进制当替身）：
 	// 断言 stale 条目出册
-	removeCfg := fmt.Sprintf(
-		`{"adapters":["sandbox"],"napcat":{"url":"ws://127.0.0.1:1","token":"","path":%q},"sandbox":{"path":%q}}`,
-		adapterBin, adapterBin)
+	removeCfg := fmt.Sprintf(`{"adapters":[{"name":"sandbox","path":%q}]}`, adapterBin)
 	if _, err := ApplyAdaptersConfig(removeCfg); err != nil {
 		t.Fatalf("移除 napcat: %v", err)
 	}
@@ -308,8 +318,8 @@ func TestRemoveThenReAddAdapter(t *testing.T) {
 
 	// 重加 napcat：修复前 stale 条目挡路，这里必须真正重新 spawn
 	reAddCfg := fmt.Sprintf(
-		`{"adapters":["napcat"],"napcat":{"url":"ws://127.0.0.1:1","token":"","path":%q},"sandbox":{"path":%q}}`,
-		adapterBin, adapterBin)
+		`{"adapters":[{"name":"napcat","path":%q,"env":{"LOQUAT_NAPCAT_URL":"ws://127.0.0.1:1"}}]}`,
+		adapterBin)
 	if _, err := ApplyAdaptersConfig(reAddCfg); err != nil {
 		t.Fatalf("重加 napcat: %v", err)
 	}

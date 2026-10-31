@@ -161,12 +161,17 @@ func marshalFFIError(msg string) *C.char {
 	return C.CString(string(b))
 }
 
+// chatID 为空表示用适配器缺省会话（老前端不传时的兼容路径）。
+//
 //export LoquatInjectEvent
-func LoquatInjectEvent(platform *C.char, text *C.char, atBot C.int, mode *C.char) *C.char {
-	if err := core.InjectEvent(C.GoString(platform), C.GoString(text), atBot != 0, C.GoString(mode)); err != nil {
+func LoquatInjectEvent(platform *C.char, segments *C.char, atBot C.int, mode *C.char, chatID *C.char) *C.char {
+	resp, err := core.InjectEvent(C.GoString(platform), C.GoString(segments), atBot != 0,
+		C.GoString(mode), C.GoString(chatID))
+	if err != nil {
 		return marshalFFIError(err.Error())
 	}
-	return C.CString(`{"ok":true}`)
+	b, _ := protojson.Marshal(resp)
+	return C.CString(string(b))
 }
 
 //export LoquatAdaptersConfig

@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
@@ -51,32 +52,47 @@ func newSandbox(logger hclogSlim) *Sandbox {
 
 // InjectEvent 接收 WebUI 沙箱选项卡注入的消息（经核心转发），
 // 包装成统一信封入队，走与真实平台完全相同的事件链路。
+// segments 优先（富注入：图片、回复引用等），否则按 text 构造单个文本段；
+// 群聊 + atBot 时在段首插 at 段，mentions_bot 由段扫描判定。
 func (s *Sandbox) InjectEvent(ctx context.Context, req *pluginapi.InjectEventRequest) (*pluginapi.InjectEventResponse, error) {
-	if req.GetText() == "" {
-		return nil, fmt.Errorf("注入消息文本为空")
-	}
 	// 未知 mode 直接拒绝：按私聊处理会静默错路由
 	mode := req.GetMode()
 	if mode != "private" && mode != "group" {
 		return nil, fmt.Errorf("未知 mode %q", mode)
 	}
+	// chat_id 会进会话文件路径（data/sessions/<mode>_<chat_id>.json），
+	// 只放行安全字符，挡住 ../ 之类的目录穿越
+	if chatID := req.GetChatId(); chatID != "" && !validChatID(chatID) {
+		return nil, fmt.Errorf("非法 chat_id %q", chatID)
+	}
 
-	var segments []*pluginapi.Segment
-	mentionsBot := false
+	segments := append([]*pluginapi.Segment{}, req.GetSegments()...)
+	if len(segments) == 0 {
+		if req.GetText() == "" {
+			return nil, fmt.Errorf("注入消息为空")
+		}
+		segments = append(segments, &pluginapi.Segment{
+			Body: &pluginapi.Segment_Text{Text: &pluginapi.TextSeg{Text: req.GetText()}},
+		})
+	}
 	if mode == "group" && req.GetAtBot() {
 		// at 段在前，贴近真实消息形态；target = bot 自身 ID
-		segments = append(segments, &pluginapi.Segment{
+		segments = append([]*pluginapi.Segment{{
 			Body: &pluginapi.Segment_At{At: &pluginapi.AtSeg{Target: botID}},
-		})
-		mentionsBot = true
+		}}, segments...)
 	}
-	segments = append(segments, &pluginapi.Segment{
-		Body: &pluginapi.Segment_Text{Text: &pluginapi.TextSeg{Text: req.GetText()}},
-	})
+	mentionsBot := false
+	for _, seg := range segments {
+		if at := seg.GetAt(); at != nil && at.GetTarget() == botID {
+			mentionsBot = true
+			break
+		}
+	}
 
+	id := s.nextID()
 	msg := &pluginapi.UnifiedMessage{
-		Id:          s.nextID(),
-		Chat:        sandboxChat(mode),
+		Id:          id,
+		Chat:        sandboxChat(mode, req.GetChatId()),
 		Sender:      &pluginapi.Sender{Id: userID, Nickname: userNick},
 		Segments:    segments,
 		MentionsBot: mentionsBot,
@@ -93,7 +109,7 @@ func (s *Sandbox) InjectEvent(ctx context.Context, req *pluginapi.InjectEventReq
 	default:
 		s.logger.Error("事件队列已满，丢弃一条消息")
 	}
-	return &pluginapi.InjectEventResponse{}, nil
+	return &pluginapi.InjectEventResponse{MessageId: id}, nil
 }
 
 // StreamEvents 把信封流式推给核心。核心断开或退出时返回。
@@ -116,17 +132,60 @@ func (s *Sandbox) SendMessage(ctx context.Context, req *pluginapi.SendMessageReq
 	return &pluginapi.SendMessageResponse{MessageId: s.nextID()}, nil
 }
 
-// SendAction 沙箱不支持长尾动作：一律回成功空数据，
-// 插件的撤回/戳一戳等调用不报错（开发期少噪音）。
+// SendAction 沙箱专用动作（sandbox. 前缀）真实处理：
+//
+//	sandbox.echo    原样返回 params（链路连通性验证）
+//	sandbox.status  返回沙盒状态（缓冲事件数等）
+//
+// 其余动作一律回成功空数据：插件的撤回/戳一戳等调用不报错（开发期少噪音），
+// 但也测不到真平台的失败分支——那要靠 napcat。
 func (s *Sandbox) SendAction(ctx context.Context, req *pluginapi.SendActionRequest) (*pluginapi.SendActionResponse, error) {
+	switch req.GetAction() {
+	case "sandbox.echo":
+		return &pluginapi.SendActionResponse{Status: "ok", Retcode: 0, Data: req.GetParams()}, nil
+	case "sandbox.status":
+		s.mu.Lock()
+		buffered := len(s.events)
+		s.mu.Unlock()
+		data, _ := json.Marshal(map[string]any{
+			"platform": platform, "events_buffered": buffered,
+		})
+		return &pluginapi.SendActionResponse{Status: "ok", Retcode: 0, Data: data}, nil
+	}
 	return &pluginapi.SendActionResponse{Status: "ok", Retcode: 0, Data: []byte("{}")}, nil
 }
 
-func sandboxChat(mode string) *pluginapi.ChatRef {
-	if mode == "group" {
-		return &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_GroupId{GroupId: groupID}}
+// validChatID：1-64 位，只允许字母数字与 . _ -。
+// 会话标识最终会拼进文件名，白名单比黑名单省心。
+func validChatID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
 	}
-	return &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_PrivateId{PrivateId: userID}}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// sandboxChat 构造会话引用：chatID 由调用方给（WebUI 每个会话一个），
+// 留空回落到固定缺省会话，兼容老前端与手工 curl 注入。
+func sandboxChat(mode, chatID string) *pluginapi.ChatRef {
+	if chatID == "" {
+		if mode == "group" {
+			chatID = groupID
+		} else {
+			chatID = userID
+		}
+	}
+	if mode == "group" {
+		return &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_GroupId{GroupId: chatID}}
+	}
+	return &pluginapi.ChatRef{Kind: &pluginapi.ChatRef_PrivateId{PrivateId: chatID}}
 }
 
 // nextID 发消息 ID：Mutex 保底。

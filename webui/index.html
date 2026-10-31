@@ -2,11 +2,23 @@
 <html lang="zh-CN" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <title>Loquat WebUI</title>
   </head>
   <body>
     <div id="app"></div>
+    <script>
+      // 首帧前应用 UI 偏好（与 src/ext/prefs.ts 同键）：主题 class 与
+      // 自定义主色，避免亮色用户先看到暗色闪一下。main.ts 随后接管
+      try {
+        var p = JSON.parse(localStorage.getItem('loquat_prefs') || '{}')
+        if (p.theme === 'light') document.documentElement.classList.remove('dark')
+        if (p.accent) document.documentElement.style.setProperty('--accent', p.accent)
+      } catch (e) {}
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

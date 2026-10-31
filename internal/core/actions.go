@@ -6,8 +6,11 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/full-finger/loquat/internal/pluginapi"
 )
@@ -38,23 +41,40 @@ func SendAction(platform, action string, params []byte, timeout time.Duration) (
 }
 
 // InjectEvent 注入一条本地事件（沙箱调试用），按 platform 路由。并发安全。
-func InjectEvent(platform, text string, atBot bool, mode string) error {
+// segmentsJSON 是 protojson Segment 数组（与 SendMessage 的 segments 同构，
+// 宿主 WebUI 透传），解析后交适配器；解析失败报错，不静默降级。
+// 返回适配器应答（含注入消息 ID，前端绑气泡用）。
+func InjectEvent(platform, segmentsJSON string, atBot bool, mode, chatID string) (*pluginapi.InjectEventResponse, error) {
 	mu.Lock()
 	c := active
 	mu.Unlock()
 	if c == nil {
-		return ErrNotStarted
+		return nil, ErrNotStarted
 	}
 	rt, err := c.runtimeFor(platform)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	var rawSegs []*pluginapi.Segment
+	if segmentsJSON != "" {
+		var raw []json.RawMessage
+		if err := json.Unmarshal([]byte(segmentsJSON), &raw); err != nil {
+			return nil, fmt.Errorf("segments JSON 解析失败: %w", err)
+		}
+		for i, r := range raw {
+			var seg pluginapi.Segment
+			// protojson 容忍未知字段：适配器/前端先行时核心不拦
+			if err := protojson.Unmarshal(r, &seg); err != nil {
+				return nil, fmt.Errorf("segments[%d] 解析失败: %w", i, err)
+			}
+			rawSegs = append(rawSegs, &seg)
+		}
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, actionTimeout)
 	defer cancel()
-	_, err = rt.adapter.InjectEvent(ctx, &pluginapi.InjectEventRequest{
-		Text: text, AtBot: atBot, Mode: mode,
+	return rt.adapter.InjectEvent(ctx, &pluginapi.InjectEventRequest{
+		Segments: rawSegs, AtBot: atBot, Mode: mode, ChatId: chatID,
 	})
-	return err
 }
 
 // SendMessage 统一发送：段列表交适配器翻译成平台消息。并发安全。

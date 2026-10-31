@@ -149,9 +149,22 @@ impl Business {
         let installed = cfg_path.is_file();
         let enabled = values.get("enabled").and_then(|b| b.as_bool()).unwrap_or(true);
         values.remove("enabled"); // 宿主保留键，表单不显示
+        // secret 打码：明文不出后端。前端拿空串 + secret_keys（已配置
+        // 清单）；留空保持 / null 清除的合并语义在保存侧。
+        let mut secret_keys: Vec<String> = Vec::new();
+        for k in secret_fields(&schema) {
+            match values.get(&k) {
+                Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                    secret_keys.push(k.clone());
+                }
+                _ => {}
+            }
+            values.insert(k, serde_json::Value::String(String::new()));
+        }
         Ok(serde_json::json!({
             "schema": schema,
             "values": values,
+            "secret_keys": secret_keys,
             "installed": installed,
             "enabled": enabled,
         }))
@@ -171,14 +184,23 @@ impl Business {
             return Err(format!("{name} 未声明 SCHEMA，无可保存配置"));
         }
         // enabled 是宿主保留键：不在 SCHEMA 里，原样保留
-        let had_enabled = std::fs::read_to_string(&cfg_path)
+        let existing = std::fs::read_to_string(&cfg_path)
             .ok()
             .and_then(|t| serde_yamlish(&t).ok())
-            .and_then(|v| v.get("enabled").cloned())
-            .and_then(|b| b.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(serde_json::Value::Null);
+        let had_enabled = existing.get("enabled").and_then(|b| b.as_bool()).unwrap_or(true);
         let mut py_values = values;
+        if !py_values.is_object() {
+            return Err("配置载荷必须是对象".into());
+        }
         py_values["enabled"] = serde_json::Value::Bool(had_enabled);
+        // secret 字段的合并需要 SCHEMA 键清单，先转一份 JSON
+        let schema_json: serde_json::Value = Python::attach(|py| -> Result<serde_json::Value, String> {
+            let schema = loaded.0.bind(py).getattr("SCHEMA").map_err(|e| e.to_string())?;
+            serde_json::from_str(&py_obj_to_json(&schema))
+                .map_err(|e| format!("SCHEMA 转换失败: {e}"))
+        })?;
+        merge_secrets(&mut py_values, &schema_json, &existing);
         let yaml_text = Python::attach(|py| -> Result<String, String> {
             let schema = loaded.0.bind(py).getattr("SCHEMA").map_err(|e| e.to_string())?;
             let cfglib = py
@@ -190,6 +212,10 @@ impl Business {
                 .and_then(|t| t.extract::<String>())
                 .map_err(|e| format!("渲染配置失败: {e}"))
         })?;
+        // 写盘前自检：渲染器出过「dict 字段缺换行」的 bug（qa 插件整份
+        // 配置因此无法解析、启动即被跳过）。宁可这次保存报错，也不能把
+        // 用户现有配置覆盖成坏的——坏文件要到下次启动才暴露，代价太高。
+        serde_yamlish(&yaml_text).map_err(|e| format!("渲染结果不是合法 YAML，已中止写入: {e}"))?;
         std::fs::write(&cfg_path, yaml_text).map_err(|e| format!("写 config.yaml 失败: {e}"))?;
         let _ = self.sync(); // 触发热重载，改动即时生效
         Ok(())
@@ -271,6 +297,8 @@ impl Business {
                     "entry": format!("/ext/{}/{}", p.dir_name, UI_FILE),
                     "icon": entry.get("icon").and_then(|x| x.as_str()).unwrap_or("Link"),
                     "v": v,
+                    // 侧栏排序权重（小在前）；缺省排到内置页之后
+                    "order": entry.get("order").and_then(|x| x.as_i64()).unwrap_or(100),
                 }));
             }
         }
@@ -293,7 +321,7 @@ impl Business {
 }
 
 // tab id / 插件名进 URL 与自定义元素名（loquat-page-<插件>-<tab>），收紧字符集
-fn valid_ext_id(s: &str) -> bool {
+pub(super) fn valid_ext_id(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
@@ -310,3 +338,38 @@ fn ui_js_version(plugin_dir: &Path) -> Option<u64> {
             .unwrap_or(0),
     )
 }
+
+// SCHEMA 里声明为 secret 的字段键名（非数组形式的 SCHEMA 返回空）。
+fn secret_fields(schema: &serde_json::Value) -> Vec<String> {
+    match schema {
+        serde_json::Value::Array(fields) => fields
+            .iter()
+            .filter(|f| f.get("type").and_then(|t| t.as_str()) == Some("secret"))
+            .filter_map(|f| f.get("key").and_then(|k| k.as_str()).map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// secret 字段保存侧合并（明文不出后端）：前端送回 空串/缺失=保持
+/// 已有，null=清除（落空串），非空串=新值。
+fn merge_secrets(
+    values: &mut serde_json::Value,
+    schema: &serde_json::Value,
+    existing: &serde_json::Value,
+) {
+    for k in secret_fields(schema) {
+        let merged = match values.get(&k) {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => {
+                serde_json::Value::String(s.clone())
+            }
+            Some(serde_json::Value::Null) => serde_json::Value::String(String::new()),
+            _ => existing
+                .get(&k)
+                .cloned()
+                .unwrap_or(serde_json::Value::String(String::new())),
+        };
+        values[&k] = merged;
+    }
+}
+

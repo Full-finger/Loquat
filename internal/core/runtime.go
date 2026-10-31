@@ -19,10 +19,8 @@ type pluginRuntime struct {
 	client  *plugin.Client
 	adapter pluginapi.AdapterClient
 	pid     int // 适配器子进程 PID，供系统状态采集
-	// spawn 时的启动参数快照：适配器管理 diff「参数是否变更」用
-	launchedPath  string
-	launchedURL   string
-	launchedToken string
+	// spawn 时的启动定义快照：适配器管理 diff「参数是否变更」用
+	launched AdapterDef
 }
 
 // getRuntime 取平台对应的 runtime。未启用/未就绪返回 false。

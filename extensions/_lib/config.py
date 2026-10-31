@@ -5,9 +5,16 @@
 #
 # SCHEMA 字段声明格式（list[dict]）：
 #   {"key": "api_base", "type": "string", "default": "...", "desc": "...",
-#    "options": ["a", "b"],   # 可选：限定可选值
-#    "min": 0, "max": 2}      # 可选：数值范围（仅提示与校验）
-# type ∈ string/int/float/bool/list/dict，缺省 string。
+#    "options": ["a", "b"],   # 可选：限定可选值（WebUI 按数量渲染单选块/下拉）
+#    "min": 0, "max": 2,      # 可选：数值范围（仅提示与校验）
+#    "group": "行为",          # 可选：WebUI 表单分组标签，同名归组可折叠
+#    "multiline": True,       # 可选：string 用多行输入框（仅 WebUI 用）
+#    "when": {"key": "开关字段", "oneOf": [True]}}  # 可选：条件显隐（仅 WebUI 用）
+# type ∈ string/secret/asset/int/float/bool/list/dict，缺省 string。
+# secret/asset 值均为字符串：secret 是敏感凭据（宿主接口打码，保存时
+# 留空=保持已有、null=清除），asset 是资源路径（assets/<文件名>，
+# WebUI 上传，宿主只存文件不做语义）。group/multiline/when 是 WebUI
+# 渲染提示，校验与 YAML 渲染忽略之。
 # enabled 是宿主保留键，不进 SCHEMA。
 # 校验策略：宽松——未知字段忽略、类型/可选值不符告警并回退默认值，
 # 宁可带病运行也不把插件打挂。
@@ -17,7 +24,7 @@ from pathlib import Path
 
 import loquat_log
 
-_TYPES = ("string", "int", "float", "bool", "list", "dict")
+_TYPES = ("string", "secret", "asset", "int", "float", "bool", "list", "dict")
 
 
 def resolve(schema: list, raw: dict) -> dict:
@@ -70,7 +77,7 @@ def ensure_file(schema: list, dir_path: str, raw: dict) -> bool:
 
 
 def _type_ok(v, t: str) -> bool:
-    if t == "string":
+    if t in ("string", "secret", "asset"):
         return isinstance(v, str)
     if t == "int":
         return isinstance(v, int) and not isinstance(v, bool)
@@ -105,7 +112,15 @@ def render(schema: list, values: dict) -> str:
         note = _note(field)
         if note:
             lines.append(f"# {note}")
-        lines.append(f"{key}: {_emit(v)}")
+        text = _emit(v)
+        # 非空 dict 必须另起一行展开：`rules:    "a": 1` 不是合法 YAML
+        # （报错形如 mapping values are not allowed in this context）。
+        # 块标量（多行字符串）反而要跟 `key: |-` 同一行，不能走这条分支。
+        if isinstance(v, dict) and v:
+            lines.append(f"{key}:")
+            lines.append(text)
+        else:
+            lines.append(f"{key}: {text}")
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -116,6 +131,8 @@ def _note(field: dict) -> str:
         notes.append("可选值: " + " / ".join(_as_text(o) for o in field["options"]))
     if field.get("min") is not None or field.get("max") is not None:
         notes.append(f"范围: {field.get('min', '-inf')} ~ {field.get('max', 'inf')}")
+    if field.get("type") == "secret":
+        notes.append("敏感：已配置时留空保存即保持原值")
     return "；".join(notes)
 
 
@@ -123,11 +140,12 @@ def _as_text(v) -> str:
     return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
 
 
-def _emit(v) -> str:
-    """标量/容器 -> YAML 文本。字符串一律 JSON 引用（合法 YAML），多行用块标量。"""
+def _emit(v, depth: int = 0) -> str:
+    """标量/容器 -> YAML 文本。字符串一律 JSON 引用（合法 YAML），多行用块标量。
+    depth 只影响块标量的缩进（≥1 层时子块要跟着父键缩进）。"""
     if isinstance(v, str):
         if "\n" in v:
-            return _block(v)
+            return _block(v, depth)
         return json.dumps(v, ensure_ascii=False)
     if isinstance(v, bool) or v is None:
         return json.dumps(v)
@@ -142,12 +160,13 @@ def _emit(v) -> str:
     if isinstance(v, dict):
         if not v:
             return "{}"
-        return _dict_block(v, 0)
+        return _dict_block(v, depth)
     return json.dumps(v, ensure_ascii=False)
 
 
-def _block(s: str) -> str:
-    body = "\n".join("    " + line for line in s.rstrip("\n").split("\n"))
+def _block(s: str, depth: int = 0) -> str:
+    pad = "    " * (depth + 1)
+    body = "\n".join(pad + line for line in s.rstrip("\n").split("\n"))
     return "|-\n" + body
 
 
@@ -160,5 +179,5 @@ def _dict_block(d: dict, depth: int) -> str:
             lines.append(f"{pad}{key}:")
             lines.append(_dict_block(v, depth + 1))
         else:
-            lines.append(f"{pad}{key}: {_emit(v)}")
+            lines.append(f"{pad}{key}: {_emit(v, depth + 1)}")
     return "\n".join(lines)

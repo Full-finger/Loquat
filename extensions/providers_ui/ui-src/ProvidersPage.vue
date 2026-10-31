@@ -1,14 +1,48 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+// 「服务」页（原内置 Providers.vue 迁移为插件）。数据与保存走宿主注入的
+// ctx.api；未保存守卫改走 ctx.guardDirty（插件页没有 vue-router）。
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchProviders, saveProviders, type ProvidersConfig } from '../api'
+import type { ProviderEntry, ProvidersConfig } from '@webui/api'
+import { useResource } from '@webui/composables/use-resource'
+import PageHead from '@webui/components/PageHead.vue'
+import Panel from '@webui/components/Panel.vue'
+import FieldRow from '@webui/components/FieldRow.vue'
+import { useCtx } from '@webui/ext/mount'
 
-const loading = ref(false)
+const ctx = useCtx()
+
 const saving = ref(false)
 const cfg = ref<ProvidersConfig>({
   llm: { active: '', providers: {} },
   search: { active: '', providers: {} },
 })
+
+// 卡片编辑走本视图的 cfg（深改耦合 useResource 的 data 不划算）；
+// 快照整体对比得 dirty（守卫/按钮），逐字段对比得条目高亮
+const snap = ref<ProvidersConfig | null>(null)
+
+const { loading, refresh } = useResource(() => ctx.api.get<ProvidersConfig>('/api/providers'), {
+  onSuccess: (c) => {
+    cfg.value = c
+    snap.value = JSON.parse(JSON.stringify(c))
+  },
+})
+
+const dirty = computed(() => JSON.stringify(cfg.value) !== JSON.stringify(snap.value))
+
+// 插件页没有路由离开事件：守卫注册到宿主挂载器（ExtensionPage），
+// 由它拦路由离开与刷新关页
+ctx.guardDirty(() => dirty.value)
+
+/** 单条配置是否改过：给 FieldRow 亮未保存警示条。快照里没有的
+ * provider（新增未保存）全部字段都算改过。 */
+function fieldDirty(section: 'llm' | 'search', name: string, key: keyof ProviderEntry): boolean {
+  return (
+    JSON.stringify(cfg.value[section].providers[name]?.[key]) !==
+    JSON.stringify(snap.value?.[section].providers[name]?.[key])
+  )
+}
 
 // 新增 provider 的名字输入
 const newName = ref('')
@@ -60,22 +94,11 @@ function clearKey(section: 'llm' | 'search', name: string) {
   if (e) e.api_key = null as unknown as string
 }
 
-async function refresh() {
-  loading.value = true
-  try {
-    cfg.value = await fetchProviders()
-  } catch (e) {
-    ElMessage.error(String(e))
-  } finally {
-    loading.value = false
-  }
-}
-
 async function save() {
   saving.value = true
   try {
-    const msg = await saveProviders(cfg.value)
-    ElMessage.success(msg)
+    const r = await ctx.api.post<{ msg?: string }>('/api/providers', cfg.value)
+    ElMessage.success(r.msg ?? '已保存')
     await refresh()
   } catch (e) {
     ElMessage.error(String(e))
@@ -99,28 +122,19 @@ onMounted(refresh)
 
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h2>服务</h2>
-        <div class="desc">
-          LLM 与联网搜索的接入点、凭据，宿主级统一管理；插件零改动，
-          切换激活项即换后端。保存即热生效
-        </div>
-      </div>
-      <div>
-        <el-button size="small" style="margin-right: 8px" @click="refresh">刷新</el-button>
-        <el-button size="small" type="primary" :loading="saving" @click="save">保存</el-button>
-      </div>
-    </div>
+    <PageHead>
+      <template #actions>
+        <el-button size="small" @click="refresh">刷新</el-button>
+        <el-button size="small" type="primary" :loading="saving" :disabled="!dirty" @click="save">
+          保存
+        </el-button>
+      </template>
+    </PageHead>
 
     <div v-loading="loading">
       <!-- LLM 后端 -->
-      <div class="panel section">
-        <div class="section-head">
-          <div>
-            <div class="section-title">LLM 后端</div>
-            <div class="section-desc">OpenAI 兼容 /chat/completions；激活项供所有会话使用</div>
-          </div>
+      <Panel class="section" title="LLM 后端" desc="OpenAI 兼容 /chat/completions；激活项供所有会话使用">
+        <template #actions>
           <div class="new-row">
             <el-input
               v-model="newName"
@@ -131,7 +145,7 @@ onMounted(refresh)
             />
             <el-button size="small" @click="addLlm">新增</el-button>
           </div>
-        </div>
+        </template>
 
         <div class="cards">
           <div
@@ -150,24 +164,21 @@ onMounted(refresh)
               </div>
             </div>
 
-            <div class="fitem">
-              <span class="flabel">API 地址</span>
+            <FieldRow label="API 地址" :dirty="fieldDirty('llm', pname, 'api_base')">
               <el-input
                 :model-value="cfg.llm.providers[pname].api_base"
                 :placeholder="API_BASE_PLACEHOLDER"
                 @update:model-value="(v: string) => setLlm(pname, 'api_base', v)"
               />
-            </div>
-            <div class="fitem">
-              <span class="flabel">模型</span>
+            </FieldRow>
+            <FieldRow label="模型" :dirty="fieldDirty('llm', pname, 'model')">
               <el-input
                 :model-value="cfg.llm.providers[pname].model"
                 placeholder="deepseek-chat"
                 @update:model-value="(v: string) => setLlm(pname, 'model', v)"
               />
-            </div>
-            <div class="fitem">
-              <span class="flabel">API 密钥</span>
+            </FieldRow>
+            <FieldRow label="API 密钥" :dirty="fieldDirty('llm', pname, 'api_key')">
               <div class="key-row">
                 <el-input
                   :model-value="cfg.llm.providers[pname].api_key"
@@ -184,61 +195,49 @@ onMounted(refresh)
                   清除
                 </el-button>
               </div>
-            </div>
-            <div class="field-row">
-              <div class="fitem">
-                <span class="flabel">温度</span>
-                <el-input-number
-                  :model-value="cfg.llm.providers[pname].temperature"
-                  :min="0"
-                  :max="2"
-                  :step="0.1"
-                  controls-position="right"
-                  @update:model-value="(v: number | undefined) => setLlm(pname, 'temperature', v)"
-                />
-              </div>
-              <div class="fitem">
-                <span class="flabel">max_tokens</span>
-                <el-input-number
-                  :model-value="cfg.llm.providers[pname].max_tokens"
-                  :min="1"
-                  controls-position="right"
-                  @update:model-value="(v: number | undefined) => setLlm(pname, 'max_tokens', v)"
-                />
-              </div>
-              <div class="fitem">
-                <span class="flabel">超时（秒）</span>
-                <el-input-number
-                  :model-value="cfg.llm.providers[pname].timeout_seconds"
-                  :min="1"
-                  controls-position="right"
-                  @update:model-value="(v: number | undefined) => setLlm(pname, 'timeout_seconds', v)"
-                />
-              </div>
-            </div>
-            <div class="fitem">
-              <span class="flabel">识图（vision）</span>
-              <div class="switch-row">
-                <el-switch
-                  :model-value="cfg.llm.providers[pname].vision"
-                  @update:model-value="(v: boolean) => setLlm(pname, 'vision', v)"
-                />
-                <span class="inline-hint">后端支持图片输入时开启</span>
-              </div>
-            </div>
+            </FieldRow>
+            <FieldRow label="温度" :dirty="fieldDirty('llm', pname, 'temperature')">
+              <el-input-number
+                :model-value="cfg.llm.providers[pname].temperature"
+                :min="0"
+                :max="2"
+                :step="0.1"
+                controls-position="right"
+                @update:model-value="(v: number | undefined) => setLlm(pname, 'temperature', v)"
+              />
+            </FieldRow>
+            <FieldRow label="max_tokens" :dirty="fieldDirty('llm', pname, 'max_tokens')">
+              <el-input-number
+                :model-value="cfg.llm.providers[pname].max_tokens"
+                :min="1"
+                controls-position="right"
+                @update:model-value="(v: number | undefined) => setLlm(pname, 'max_tokens', v)"
+              />
+            </FieldRow>
+            <FieldRow label="超时（秒）" :dirty="fieldDirty('llm', pname, 'timeout_seconds')">
+              <el-input-number
+                :model-value="cfg.llm.providers[pname].timeout_seconds"
+                :min="1"
+                controls-position="right"
+                @update:model-value="(v: number | undefined) => setLlm(pname, 'timeout_seconds', v)"
+              />
+            </FieldRow>
+            <FieldRow
+              label="识图（vision）"
+              hint="后端支持图片输入时开启"
+              :dirty="fieldDirty('llm', pname, 'vision')"
+            >
+              <el-switch
+                :model-value="cfg.llm.providers[pname].vision"
+                @update:model-value="(v: boolean) => setLlm(pname, 'vision', v)"
+              />
+            </FieldRow>
           </div>
         </div>
-      </div>
+      </Panel>
 
       <!-- 联网搜索 -->
-      <div class="panel section">
-        <div class="section-head">
-          <div>
-            <div class="section-title">联网搜索</div>
-            <div class="section-desc">web_search / read_webpage 的通道；激活项决定走哪家</div>
-          </div>
-        </div>
-
+      <Panel class="section" title="联网搜索" desc="web_search / read_webpage 的通道；激活项决定走哪家">
         <div class="cards search-cards">
           <div
             v-for="sname in searchNames()"
@@ -253,8 +252,7 @@ onMounted(refresh)
               </el-tag>
             </div>
             <div class="card-desc">{{ SEARCH_HINTS[sname] ?? '自定义通道' }}</div>
-            <div class="fitem">
-              <span class="flabel">API 密钥</span>
+            <FieldRow label="API 密钥" :dirty="fieldDirty('search', sname, 'api_key')">
               <div class="key-row">
                 <el-input
                   :model-value="cfg.search.providers[sname].api_key"
@@ -272,36 +270,17 @@ onMounted(refresh)
                   清除
                 </el-button>
               </div>
-            </div>
+            </FieldRow>
           </div>
         </div>
-      </div>
+      </Panel>
     </div>
   </div>
 </template>
 
 <style scoped>
 .section {
-  padding: 16px;
   margin-bottom: 16px;
-}
-
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 12px;
-}
-
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.section-desc {
-  font-size: 12px;
-  color: var(--text-3);
-  margin-top: 4px;
 }
 
 .new-row {
@@ -346,38 +325,9 @@ onMounted(refresh)
   margin-bottom: 8px;
 }
 
-.fitem {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 10px;
-}
-
-.flabel {
-  font-size: 12px;
-  color: var(--text-3);
-}
-
 .key-row {
   display: flex;
   gap: 8px;
   width: 100%;
-}
-
-.field-row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.switch-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.inline-hint {
-  font-size: 12px;
-  color: var(--text-3);
 }
 </style>

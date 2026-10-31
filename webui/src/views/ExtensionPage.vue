@@ -4,21 +4,48 @@
 // 等它注册自定义元素 loquat-page-<插件>-<tab> → 挂载并注入 ctx。
 // Python 插件本就在进程内跑任意代码，插件 JS 与其同信任域，不做沙箱。
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { extCtxApi, fetchUiTabs, USE_MOCK, type ExtCtx, type UiTab } from '../api'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { extCtxApi, fetchUiTabs, USE_MOCK, wsUrl, type ExtCtx, type UiTab } from '../api'
 
 const route = useRoute()
+const router = useRouter()
 const name = computed(() => String(route.params.name ?? ''))
+// tab 支持子路径（/ext/a/main ↔ /ext/a/detail/x），插件自行分段解析；
+// 元素标签与 ui.js 元数据只认第一段
 const tab = computed(() => String(route.params.tab ?? ''))
+const base = computed(() => tab.value.split('/')[0])
 // 元素标签契约：loquat-page-<插件名>-<tab id>（ui.js 按 it define）
-const tag = computed(() => `loquat-page-${name.value}-${tab.value}`)
+const tag = computed(() => `loquat-page-${name.value}-${base.value}`)
 
 const host = ref<HTMLElement>()
 const state = ref<'loading' | 'ok' | 'error'>('loading')
 const errMsg = ref('')
 
+// 未保存守卫（ctx.guardDirty 注册）：插件页在时拦路由离开与刷新关页
+let dirtyFn: (() => boolean) | null = null
+const onBeforeUnload = (e: BeforeUnloadEvent) => {
+  if (dirtyFn?.()) {
+    e.preventDefault()
+    e.returnValue = '' // Chromium 走 returnValue，Firefox 走 preventDefault
+  }
+}
+onBeforeRouteLeave(async () => {
+  if (!dirtyFn?.()) return true
+  try {
+    await ElMessageBox.confirm('更改尚未保存，离开后将丢失。', '未保存的更改', {
+      type: 'warning',
+      confirmButtonText: '不保存并离开',
+      cancelButtonText: '留在此页',
+    })
+    return true
+  } catch {
+    return false
+  }
+})
+
 function unmountPage() {
+  dirtyFn = null
   host.value?.replaceChildren()
 }
 
@@ -28,6 +55,17 @@ function makeCtx(): ExtCtx {
     tab: tab.value,
     api: extCtxApi(),
     toast: (msg, type) => ElMessage({ message: msg, type: type ?? 'info' }),
+    nav: (path) => {
+      // 冗余导航（同路径重跳）会被 vue-router 拒绝，属正常
+      router.push(path).catch(() => {})
+    },
+    wsUrl,
+    guardDirty: (fn) => {
+      dirtyFn = fn
+      return () => {
+        if (dirtyFn === fn) dirtyFn = null
+      }
+    },
   }
 }
 
@@ -48,9 +86,15 @@ async function load() {
     } catch (e) {
       throw new Error(`宿主不可达（/api/extensions/ui）：${e}`)
     }
-    const meta = tabs.find((t) => t.id === `${name.value}-${tab.value}`)
+    // 子路径（detail/x）不单独声明 TABS：先按 完整 base 找，找不到就
+    // 回退到同插件任一 tab 的入口（ui.js 是插件级分发，不是 tab 级）
+    const meta =
+      tabs.find((t) => t.id === `${name.value}-${base.value}`) ??
+      tabs.find((t) => t.id.startsWith(`${name.value}-`))
     if (!meta?.entry) {
-      throw new Error(`插件 ${name.value} 未注册页面「${tab.value}」（可能已被禁用或未声明 TABS）`)
+      throw new Error(
+        `插件 ${name.value} 未注册页面「${base.value}」（可能已被禁用或未声明 TABS）`,
+      )
     }
 
     // 动态 import() 带不了 Authorization 头：token 走查询参数（宿主同步
@@ -81,10 +125,16 @@ async function load() {
   }
 }
 
-onMounted(load)
-// /ext/a/x ↔ /ext/b/y 复用同一组件实例，参数变化时重挂
+onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload)
+  load()
+})
+// /ext/a/x ↔ /ext/a/detail/y 复用同一组件实例，参数变化时重挂
 watch([name, tab], load)
-onUnmounted(unmountPage)
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
+  unmountPage()
+})
 </script>
 
 <template>

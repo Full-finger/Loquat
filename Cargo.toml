@@ -15,3 +15,9 @@ pyo3 = { version = "0.26", features = ["auto-initialize"] }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 tower-http = { version = "0.6", features = ["fs"] }
+# 仪表盘：宿主/适配器进程 CPU、内存与硬件静态信息
+sysinfo = "0.33"
+
+# GPU 型号探测（仪表盘系统信息）：仅 Windows 走 WMI
+[target.'cfg(windows)'.dependencies]
+wmi = "0.17"

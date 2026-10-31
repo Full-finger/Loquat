@@ -39,7 +39,7 @@ type Core struct {
 	events     chan *pluginapi.EventEnvelope
 	onEvent    func(payload []byte)
 	// cfg 的字段可被 ApplyAdaptersConfig 热更（适配器管理写回），
-	// 读取点（adapterPath/adapterEnv/enabledAdapters/napcat 参数）持 cfgMu
+	// 读取点（enabledAdapters/adapterDef/整个定义列表）持 cfgMu
 	cfgMu sync.Mutex
 	// c.ctx 是进程级总闸（Stop 取消）；每平台 run 循环另持派生 ctx，
 	// 移除单个平台时只取消它自己的
@@ -81,11 +81,14 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	}
 	mu.Unlock()
 
-	cfg, err := loadConfig(configPath)
+	cfg, firstRun, err := loadConfig(configPath)
 	if err != nil {
 		return err
 	}
-	logger.Info("配置已加载", "napcat", cfg.Napcat.URL, "adapters", cfg.enabledAdapters())
+	if firstRun {
+		logger.Info("已生成配置模板 config/loquat.yaml；缺省沙箱开箱即用，接真实平台请编辑该文件后重启")
+	}
+	logger.Info("配置已加载", "adapters", names(cfg.Plugins.Adapters))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Core{
@@ -104,8 +107,8 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	c.lockCfg()
 	adapters := cfg.enabledAdapters()
 	c.unlockCfg()
-	for _, name := range adapters {
-		if err := c.spawn(name); err != nil {
+	for _, def := range adapters {
+		if err := c.spawn(def); err != nil {
 			cancel()
 			c.killAllRuntimes()
 			return err
@@ -124,10 +127,10 @@ func Start(configPath string, onEvent func([]byte), logger hclog.Logger) error {
 	// 每平台一条事件流循环：断流重启互不影响，沙箱死不连累 napcat
 	c.wg.Add(1)
 	go func() { defer c.wg.Done(); c.consume() }()
-	for _, name := range adapters {
-		c.startRunLoop(name)
+	for _, def := range adapters {
+		c.startRunLoop(def.Name)
 	}
-	c.logger.Info("核心已启动", "napcat", cfg.Napcat.URL, "adapters", adapters)
+	c.logger.Info("核心已启动", "adapters", names(adapters))
 	return nil
 }
 
@@ -156,15 +159,11 @@ func (c *Core) stopRunLoop(platform string) {
 	}
 }
 
-// spawn 创建平台适配器子进程并完成握手，成功后换装该平台的 runtime。
+// spawn 按启动定义创建适配器子进程并完成握手，成功后换装该平台的 runtime。
 // 断流重启时会被再次调用。失败路径回收已创建的客户端，避免泄漏子进程。
-func (c *Core) spawn(platform string) error {
-	c.lockCfg()
-	cmd := exec.Command(c.cfg.adapterPath(platform))
-	cmd.Env = append(os.Environ(), c.cfg.adapterEnv(platform)...)
-	launchedPath := c.cfg.adapterPath(platform)
-	launchedURL, launchedToken := c.cfg.Napcat.URL, c.cfg.Napcat.Token
-	c.unlockCfg()
+func (c *Core) spawn(def AdapterDef) error {
+	cmd := exec.Command(def.Path)
+	cmd.Env = append(os.Environ(), def.EnvSlice()...)
 	client := plugin.NewClient(&plugin.ClientConfig{
 		Cmd:              cmd,
 		HandshakeConfig:  pluginapi.Handshake,
@@ -203,12 +202,19 @@ func (c *Core) spawn(platform string) error {
 		client.Kill()
 		return fmt.Errorf("核心已停止，放弃入册新插件实例: %w", err)
 	}
-	c.runtimes[platform] = &pluginRuntime{
+	c.runtimes[def.Name] = &pluginRuntime{
 		client: client, adapter: adapter, pid: pid,
-		launchedPath: launchedPath, launchedURL: launchedURL, launchedToken: launchedToken,
+		launched: def,
 	}
 	c.runtimesMu.Unlock()
 	return nil
+}
+
+// adapterDef 按名字查启动定义（含停用项）：run 循环断流重启用。
+func (c *Core) adapterDef(platform string) (AdapterDef, bool) {
+	c.lockCfg()
+	defer c.unlockCfg()
+	return c.cfg.adapterDef(platform)
 }
 
 // guard 捕获单次 panic 并记日志，让循环继续。onEvent 是宿主注入的
@@ -244,7 +250,14 @@ func (c *Core) run(platform string, ctx context.Context) {
 		if backoff < maxBackoff {
 			backoff *= 2
 		}
-		if err := c.spawn(platform); err != nil {
+		def, ok := c.adapterDef(platform)
+		if !ok || !def.IsEnabled() {
+			// 配置里已删/停用：applyAdapters 的移除分支会 cancel 本循环，
+			// 走到这里说明 cancel 与断流重赛且 cancel 晚了一步，不重拉
+			c.logger.Info("适配器已移除或停用，不再重启", "adapter", platform)
+			return
+		}
+		if err := c.spawn(def); err != nil {
 			c.logger.Error("插件重启失败", "adapter", platform, "err", err)
 			continue
 		}

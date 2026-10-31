@@ -1,29 +1,38 @@
-/* 主题：GitHub Primer Dark 风（参考 github.com 暗色主题与 Fluent 圆角）。
- * 带蓝调的黑底，1px 细描边分层（面板 hover 点亮，不加投影）；
- * 全部映射到 --el-* 变量，Element Plus 组件自动跟随。
+/* 主题：GitHub Primer 风（暗 = Primer Dark，亮 = Primer Light），
+ * 参考 github.com 配色与 Fluent 圆角。带蓝调的中性底，1px 细描边分层
+ * （面板 hover 点亮，不加投影）。全部映射到 --el-* 变量，Element Plus
+ * 组件自动跟随。主题切换 = html 上 dark class 的有无（ext/prefs.ts）。
  * 不引外部字体文件（面板可能内网跑），等宽栈用系统自带。 */
 
-html.dark {
-  color-scheme: dark;
-
-  /* ---- tokens（GitHub Primer Dark Dimmed，严格按官方色号）---- */
-  --bg-frame: #1c2128; /* canvas.inset：顶栏/侧栏框架 */
-  --bg-page: #22272e; /* canvas.default：主内容面板 */
-  --bg-panel: #2d333b; /* canvas.subtle：卡片 */
-  --bg-raised: #2d333b; /* hover/输入框 */
-  --border: #444c56; /* border.default：hover 点亮 */
-  --border-subtle: #323a44; /* 静置描边：比面板深半档，分层不抢眼 */
-  --text-1: #cdd9e5; /* fg.default */
-  --text-2: #909dab; /* fg.muted */
-  --text-3: #616e7b; /* fg.subtle */
-  --accent: #539bf5; /* accent.fg */
-  --pink: #986ee2; /* 点缀紫（done.fg），logo 渐变与“发”方向用 */
-  --ok: #57ab5a;
-  --warn: #c69026;
-  --danger: #e5534b;
+/* ---- 共享令牌：结构与映射，两主题一致 ---- */
+:root {
   --mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
 
-  /* ---- Element Plus 映射 ---- */
+  /* UI 主字体：霞鹜文楷屏幕版，加载失败/未完成时退回系统字体栈。
+     --el-font-family 覆盖 Element Plus 组件栈，否则按钮表格仍是雅黑 */
+  --font-ui:
+    "LXGW WenKai Screen", system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --el-font-family: var(--font-ui);
+
+  /* 圆角梯度：控件 8 / 卡片 12 / 气泡 16 / 胶囊 999 */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* 主色描边光晕：输入聚焦、发送按钮激活。跟随用户自定义主色 */
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+
+  /* 动效：一条「出快入慢」的缓动曲线统一全站，另留一条带回弹的用于
+     小元素（胶囊滑片、发送键）——过冲控制在 4% 以内，不喧哗 */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
+  --dur-fast: 0.14s;
+  --dur: 0.22s;
+  --dur-slow: 0.36s;
+
+  /* ---- Element Plus 映射（值随主题变，映射关系不变）---- */
   --el-color-primary: var(--accent);
   --el-color-success: var(--ok);
   --el-color-warning: var(--warn);
@@ -43,8 +52,88 @@ html.dark {
   --el-fill-color-light: var(--bg-raised);
   --el-fill-color-lighter: var(--bg-raised);
   --el-fill-color-blur: var(--bg-raised);
-  --el-fill-color-blank: var(--bg-raised); /* 输入框底色，别用默认白 */
+  --el-fill-color-blank: var(--bg-raised);
   --el-border-radius-base: 6px;
+}
+
+/* ---- 暗色（默认）：GitHub Primer Dark Dimmed，严格按官方色号 ---- */
+html.dark {
+  color-scheme: dark;
+
+  --bg-frame: #1c2128; /* canvas.inset：顶栏/侧栏框架 */
+  --bg-page: #22272e; /* canvas.default：主内容面板 */
+  --bg-panel: #2d333b; /* canvas.subtle：卡片 */
+  --bg-raised: #2d333b; /* hover/输入框 */
+  --border: #444c56; /* border.default：hover 点亮 */
+  --border-subtle: #323a44; /* 静置描边：比面板深半档，分层不抢眼 */
+  --text-1: #cdd9e5; /* fg.default */
+  --text-2: #909dab; /* fg.muted */
+  --text-3: #616e7b; /* fg.subtle */
+  --accent: #539bf5; /* accent.fg */
+  --pink: #986ee2; /* 点缀紫（done.fg），logo 渐变与「发」方向用 */
+  --ok: #57ab5a;
+  --warn: #c69026;
+  --danger: #e5534b;
+
+  /* 层次与深度：对话类界面需要比「表格页」更细的明度台阶：
+     画布 < 气泡 < 悬停浮层。仍走 Primer 的蓝灰基调，只把台阶拉开半档 */
+  --surface-1: #262d34; /* 对话画布：比 bg-panel 深，气泡才能浮起 */
+  --surface-2: #2f3740; /* 对方气泡 / 输入区 */
+  --surface-3: #39424c; /* 悬停、选中、浮层 */
+  --border-strong: #4d5661; /* 需要「确实看得见」的分隔（焦点、选中） */
+
+  /* 主色/点缀/危险的「可读文本」派生：色块上叠字、徽标、@提及。
+     color-mix 派生自定义主色，换主题自动换方向（暗提亮/亮压暗） */
+  --accent-text: color-mix(in srgb, var(--accent) 62%, white);
+  --pink-text: color-mix(in srgb, var(--pink) 62%, white);
+  --danger-text: color-mix(in srgb, var(--danger) 65%, white);
+
+  /* 投影只在「浮起的东西」上出现：悬浮按钮、抽屉、气泡悬停操作条 */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-2: 0 6px 20px -4px rgba(0, 0, 0, 0.4);
+  --shadow-3: 0 16px 40px -8px rgba(0, 0, 0, 0.55);
+
+  /* 暗色滚动条 */
+  --scrollbar: #30363d;
+  --scrollbar-hover: #484f58;
+}
+
+/* ---- 亮色：GitHub Primer Light，同源色号 ---- */
+html:not(.dark) {
+  color-scheme: light;
+
+  /* 层级与暗色同构：框架色最深、内容面次之、卡片白色浮起。
+     内容面用灰调不用纯白，大面积不发刺眼 */
+  --bg-frame: #e9edf1; /* 顶栏/侧栏框架 */
+  --bg-page: #f4f6f8; /* 主内容面板 */
+  --bg-panel: #ffffff; /* 卡片 */
+  --bg-raised: #f6f8fa; /* hover/输入框 */
+  --border: #d1d9e0; /* border.default：hover 点亮 */
+  --border-subtle: #e4e9ee; /* 静置描边 */
+  --text-1: #1f2328; /* fg.default */
+  --text-2: #59636e; /* fg.muted */
+  --text-3: #818b98; /* fg.subtle */
+  --accent: #0969da; /* accent.fg */
+  --pink: #8250df;
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --danger: #cf222e;
+
+  --surface-1: #eef1f5; /* 对话画布 */
+  --surface-2: #ffffff; /* 对方气泡 / 输入区 */
+  --surface-3: #e4e9ef; /* 悬停、选中、浮层 */
+  --border-strong: #c9d1d9;
+
+  --accent-text: color-mix(in srgb, var(--accent) 78%, black);
+  --pink-text: color-mix(in srgb, var(--pink) 78%, black);
+  --danger-text: color-mix(in srgb, var(--danger) 82%, black);
+
+  --shadow-1: 0 1px 2px rgba(31, 35, 40, 0.06);
+  --shadow-2: 0 6px 20px -4px rgba(31, 35, 40, 0.12);
+  --shadow-3: 0 16px 40px -8px rgba(31, 35, 40, 0.16);
+
+  --scrollbar: #d5d8de;
+  --scrollbar-hover: #c9ced6;
 }
 
 body {
@@ -52,23 +141,21 @@ body {
   background: var(--bg-page);
   color: var(--text-1);
   font-size: 13px;
-  font-family:
-    system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
 }
 
-/* 暗色滚动条 */
+/* 滚动条 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: var(--scrollbar);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #484f58;
+  background: var(--scrollbar-hover);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -78,62 +165,7 @@ body {
   font-family: var(--mono);
 }
 
-/* ---- 页头三段式：标题 + 描述 + 右侧操作 ---- */
-.page-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  margin-bottom: 20px;
-}
-.page-head h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
-}
-.page-head .desc {
-  color: var(--text-3);
-  font-size: 12px;
-}
-
-/* ---- 指标卡（仪表盘）：数字用主色强调，hover 微抬 ---- */
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.stat-card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  padding: 16px;
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-.stat-card:hover {
-  border-color: var(--border);
-  transform: translateY(-1px);
-}
-.stat-label {
-  color: var(--text-3);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  margin-bottom: 8px;
-}
-.stat-value {
-  font-family: var(--mono);
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--accent);
-}
-.stat-sub {
-  color: var(--text-3);
-  font-size: 11px;
-  margin-top: 8px;
-}
-
-/* 卡片入场浮起（路由切入时重放） */
+/* 卡片入场浮起（路由切入时重放；Panel 引用） */
 @keyframes rise {
   from {
     opacity: 0;
@@ -141,25 +173,12 @@ body {
   }
 }
 
-.stat-card {
-  animation: rise 0.35s cubic-bezier(0.25, 0.8, 0.35, 1) backwards;
-}
-
-.stat-card:nth-child(2) {
-  animation-delay: 0.06s;
-}
-.stat-card:nth-child(3) {
-  animation-delay: 0.12s;
-}
-.stat-card:nth-child(4) {
-  animation-delay: 0.18s;
-}
-
 .panel {
   animation: rise 0.35s cubic-bezier(0.25, 0.8, 0.35, 1) 0.1s backwards;
 }
 
-/* ---- 面板通用：1px 细描边分层，hover 边框点亮 ---- */
+/* ---- 面板通用：1px 细描边分层，hover 边框点亮 ----
+   结构化封装在 components/Panel.vue，这里只留视觉基底 */
 .panel {
   background: var(--bg-panel);
   border: 1px solid var(--border-subtle);
@@ -168,18 +187,12 @@ body {
   transition: border-color 0.15s ease;
 }
 .panel:hover {
-  border-color: #3d454f;
-}
-.panel-title {
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 12px;
+  border-color: var(--border);
 }
 
-/* ---- Element Plus 深度定制：控件与暗色面板同一套语言 ---- */
+/* ---- Element Plus 深度定制：控件与面板同一套语言 ---- */
 
-/* 输入系：暗底 + 细描边，focus 点亮主色 */
+/* 输入系：细描边，focus 点亮主色 */
 .el-input__wrapper,
 .el-textarea__inner {
   background-color: var(--bg-raised);
@@ -258,20 +271,39 @@ body {
   --el-card-bg-color: var(--bg-panel);
 }
 
-/* 弹层唯一一处阴影 */
+/* 弹层唯一一处阴影（令牌随主题换轻重） */
 .el-popper.is-dark,
 .el-message,
 .el-notification {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-2);
 }
 .el-popper.is-light {
   border: 1px solid var(--border-subtle);
 }
 
-/* 页面切换淡入 */
-.fade-enter-active {
-  transition: opacity 0.12s ease;
+/* ---- 主题切换过渡 ----
+   .theming 由 ext/prefs.ts 在切换瞬间挂上（约 400ms 后摘除），让颜色
+   属性做单次插值；平时不挂，hover 等交互动画的自身 transition 不受影响。
+   用 !important 压住 Element 组件自带的过渡定义，窗口期内统一节奏 */
+html.theming,
+html.theming *,
+html.theming *::before,
+html.theming *::after {
+  transition:
+    color 0.3s ease,
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    fill 0.3s ease,
+    stroke 0.3s ease,
+    box-shadow 0.3s ease !important;
 }
-.fade-enter-from {
-  opacity: 0;
+
+/* 减动效偏好：切换直接生效，不播动画 */
+@media (prefers-reduced-motion: reduce) {
+  html.theming,
+  html.theming *,
+  html.theming *::before,
+  html.theming *::after {
+    transition: none !important;
+  }
 }

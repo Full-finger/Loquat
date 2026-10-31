@@ -26,12 +26,21 @@ service Adapter {
 }
 
 message InjectEventRequest {
-  string text = 1;   // 消息文本
-  bool at_bot = 2;   // 是否模拟 at 机器人（群聊模式有效）
+  string text = 1;   // 消息文本（无 segments 时的兑底，构造单个 text 段）
+  bool at_bot = 2;   // 是否模拟 at 机器人（群聊模式有效，插在最前）
   string mode = 3;   // private | group
+  // 完整段列表（protojson Segment 形态）：比 text 富的注入用（图片、回复引用等）。
+  // 非空时优先于 text；mentions_bot 由适配器扫 at 段判定
+  repeated Segment segments = 4;
+  // 会话标识：沙箱按会话隔离记忆（核心与插件按 (mode, chat_id) 存历史），
+  // 留空则用适配器的缺省会话。WebUI 的「新建会话」靠它拿到独立 chat。
+  string chat_id = 5;
 }
 
-message InjectEventResponse {}
+message InjectEventResponse {
+  // 注入消息的平台 ID：前端把它绑到本地气泡，后续引用回复用
+  string message_id = 1;
+}
 
 message StreamEventsRequest {}
 

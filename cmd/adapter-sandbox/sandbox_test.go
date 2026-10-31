@@ -98,6 +98,9 @@ func TestInjectRejectsBadInput(t *testing.T) {
 	}{
 		{"空文本", pluginapi.InjectEventRequest{Text: "", Mode: "private"}},
 		{"未知 mode", pluginapi.InjectEventRequest{Text: "hi", Mode: "channel"}},
+		// chat_id 会拼进会话文件名，路径穿越必须挡住
+		{"chat_id 带斜杠", pluginapi.InjectEventRequest{Text: "hi", Mode: "private", ChatId: "../x"}},
+		{"chat_id 带空格", pluginapi.InjectEventRequest{Text: "hi", Mode: "private", ChatId: "a b"}},
 	}
 	// 索引访问取 req：proto 消息内嵌 sync.Mutex，range 拷贝会被 go vet 拦
 	for i := range cases {
@@ -112,11 +115,97 @@ func TestInjectRejectsBadInput(t *testing.T) {
 	}
 }
 
+// TestInjectChatID 会话隔离：chat_id 原样成为 ChatRef 的会话标识，
+// 缺省（空）时回落到固定会话，老前端与手工 curl 不受影响。
+func TestInjectChatID(t *testing.T) {
+	s := newSandbox(&fakeLogger{})
+	if _, err := s.InjectEvent(context.Background(), &pluginapi.InjectEventRequest{
+		Text: "hi", Mode: "private", ChatId: "10000.a1b2c3",
+	}); err != nil {
+		t.Fatalf("注入失败: %v", err)
+	}
+	if got := (<-s.events).GetMessage().GetChat().GetPrivateId(); got != "10000.a1b2c3" {
+		t.Fatalf("私聊 chat 不符: %s", got)
+	}
+
+	if _, err := s.InjectEvent(context.Background(), &pluginapi.InjectEventRequest{
+		Text: "hi", Mode: "group", ChatId: "dev-group.d4e5f6",
+	}); err != nil {
+		t.Fatalf("注入失败: %v", err)
+	}
+	if got := (<-s.events).GetMessage().GetChat().GetGroupId(); got != "dev-group.d4e5f6" {
+		t.Fatalf("群聊 chat 不符: %s", got)
+	}
+
+	// 不传 chat_id：沿用缺省会话
+	if _, err := s.InjectEvent(context.Background(), &pluginapi.InjectEventRequest{
+		Text: "hi", Mode: "private",
+	}); err != nil {
+		t.Fatalf("注入失败: %v", err)
+	}
+	if got := (<-s.events).GetMessage().GetChat().GetPrivateId(); got != userID {
+		t.Fatalf("缺省 chat 不符: %s", got)
+	}
+}
+
+// TestInjectSegments 富注入：segments 优先于 text，段类型原样透传，
+// mentions_bot 由 at 段扫描（不再只看 atBot 开关），应答回消息 ID。
+func TestInjectSegments(t *testing.T) {
+	s := newSandbox(&fakeLogger{})
+	resp, err := s.InjectEvent(context.Background(), &pluginapi.InjectEventRequest{
+		Mode: "private",
+		Segments: []*pluginapi.Segment{
+			{Body: &pluginapi.Segment_Reply{Reply: &pluginapi.ReplySeg{MessageId: "7"}}},
+			{Body: &pluginapi.Segment_Image{Image: &pluginapi.MediaSeg{Source: &pluginapi.MediaSeg_Url{Url: "https://x/y.png"}}}},
+			{Body: &pluginapi.Segment_Text{Text: &pluginapi.TextSeg{Text: "看这张"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("注入失败: %v", err)
+	}
+	if resp.GetMessageId() == "" {
+		fatal := "应答应带消息 ID"
+		t.Fatal(fatal)
+	}
+
+	env := <-s.events
+	msg := env.GetMessage()
+	if msg.GetMentionsBot() {
+		t.Fatal("无 at 段不应 mentions_bot")
+	}
+	segs := msg.GetSegments()
+	if len(segs) != 3 {
+		t.Fatalf("段数不符: %+v", segs)
+	}
+	if segs[0].GetReply().GetMessageId() != "7" {
+		t.Fatalf("reply 段不符: %+v", segs[0])
+	}
+	if segs[1].GetImage().GetUrl() != "https://x/y.png" {
+		t.Fatalf("image 段不符: %+v", segs[1])
+	}
+	if segs[2].GetText().GetText() != "看这张" {
+		t.Fatalf("text 段不符: %+v", segs[2])
+	}
+
+	// 段里自带 at（不经 atBot 开关）同样置 mentions_bot
+	if _, err := s.InjectEvent(context.Background(), &pluginapi.InjectEventRequest{
+		Mode: "group",
+		Segments: []*pluginapi.Segment{
+			{Body: &pluginapi.Segment_At{At: &pluginapi.AtSeg{Target: botID}}},
+		},
+	}); err != nil {
+		t.Fatalf("注入失败: %v", err)
+	}
+	if env = <-s.events; !env.GetMessage().GetMentionsBot() {
+		t.Fatal("段扫描应发现 at 机器人")
+	}
+}
+
 func TestSendMessageAcknowledges(t *testing.T) {
 	// 回复展示在 WebUI 消息流（宿主 publish_reply），适配器只确认
 	s := newSandbox(&fakeLogger{})
 	resp, err := s.SendMessage(context.Background(), &pluginapi.SendMessageRequest{
-		Chat:     sandboxChat("group"),
+		Chat:     sandboxChat("group", ""),
 		Segments: textSegs("回复"),
 	})
 	if err != nil {
@@ -132,11 +221,24 @@ func TestSendMessageAcknowledges(t *testing.T) {
 	}
 }
 
-func TestSendActionAlwaysOk(t *testing.T) {
+func TestSendAction(t *testing.T) {
 	s := newSandbox(&fakeLogger{})
+	// 平台动作 stub：一律成功（开发期少噪音，失败分支靠 napcat 测）
 	resp, err := s.SendAction(context.Background(), &pluginapi.SendActionRequest{Action: "delete_msg"})
 	if err != nil || resp.GetStatus() != "ok" {
 		t.Fatalf("动作 stub 应回成功: %v %v", err, resp.GetStatus())
+	}
+	// sandbox.echo：原样返回 params，验证链路连通
+	resp, err = s.SendAction(context.Background(), &pluginapi.SendActionRequest{
+		Action: "sandbox.echo", Params: []byte(`{"k":1}`),
+	})
+	if err != nil || string(resp.GetData()) != `{"k":1}` {
+		t.Fatalf("echo 应原样返回 params: %v %+v", err, resp)
+	}
+	// sandbox.status：返回沙盒状态 JSON
+	resp, err = s.SendAction(context.Background(), &pluginapi.SendActionRequest{Action: "sandbox.status"})
+	if err != nil || resp.GetStatus() != "ok" || !strings.Contains(string(resp.GetData()), "events_buffered") {
+		t.Fatalf("status 应返回状态 JSON: %v %+v", err, resp)
 	}
 }
 
