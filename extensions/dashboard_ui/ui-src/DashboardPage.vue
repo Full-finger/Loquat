@@ -79,6 +79,21 @@ function fmtMem(bytes?: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`
 }
 
+// 延迟毫秒格式化：短耗时保小数，长耗时折算秒
+function fmtMs(v?: number): string {
+  if (v == null) return '—'
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}s`
+  if (v >= 10) return `${Math.round(v)}ms`
+  return v >= 1 ? `${v.toFixed(1)}ms` : `${v.toFixed(2)}ms`
+}
+
+// 分阶段延迟展示顺序（对齐 stats.rs 的三个记录点）
+const LATENCY_STAGES: { key: 'parse' | 'chain' | 'send'; label: string }[] = [
+  { key: 'parse', label: '解析' },
+  { key: 'chain', label: '插件链' },
+  { key: 'send', label: '发送' },
+]
+
 // 型号里的注册商标符号去掉，对齐 fastfetch 的干净排版
 function cleanBrand(s: string): string {
   return s.replace(/\((?:R|TM|C)\)|®|™/gi, '').replace(/\s+/g, ' ').trim()
@@ -184,6 +199,21 @@ onUnmounted(() => {
           </div>
           <span class="mono pipe-num">{{ backlog }}/{{ QUEUE_CAP }}</span>
           <span class="mono pipe-done">{{ status.workers_done?.[i] ?? 0 }} done</span>
+        </div>
+        <div class="pipe-meta mono">
+          <span>主队列 {{ status.main_backlog ?? 0 }} 待处理</span>
+          <span :class="{ 'drop-hot': (status.worker_dropped ?? 0) > 0 }">
+            worker 丢弃 {{ status.worker_dropped ?? 0 }}
+          </span>
+        </div>
+        <div class="lat">
+          <div v-for="s in LATENCY_STAGES" :key="s.key" class="lat-row mono">
+            <span class="lat-label">{{ s.label }}</span>
+            <span>p50 {{ fmtMs(status.latency?.[s.key]?.p50) }}</span>
+            <span>p95 {{ fmtMs(status.latency?.[s.key]?.p95) }}</span>
+            <span>p99 {{ fmtMs(status.latency?.[s.key]?.p99) }}</span>
+            <span class="lat-n">{{ status.latency?.[s.key]?.n ?? 0 }} 样本</span>
+          </div>
         </div>
       </section>
 
@@ -382,6 +412,46 @@ onUnmounted(() => {
   font-size: 12px;
   width: 72px;
   text-align: right;
+}
+
+/* 主队列占用 + worker 丢弃，与积压条同列对齐 */
+.pipe-meta {
+  display: flex;
+  justify-content: space-between;
+  margin: 10px 0 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-subtle);
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.drop-hot {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+/* 分阶段延迟：标签 + 三个分位一列，右对齐样本数 */
+.lat {
+  display: grid;
+  gap: 6px;
+}
+
+.lat-row {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.lat-label {
+  color: var(--text-3);
+  width: 44px;
+}
+
+.lat-n {
+  margin-left: auto;
+  color: var(--text-3);
 }
 
 /* ---- 资源占用 ---- */

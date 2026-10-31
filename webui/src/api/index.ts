@@ -6,6 +6,14 @@
 // API 的契约文档，一处声明。
 // 接口契约对齐 src/console.rs 的控制台命令。
 
+/** 单阶段延迟分位（ms），n 为样本数 */
+export interface StageLatency {
+  p50?: number
+  p95?: number
+  p99?: number
+  n: number
+}
+
 export interface Status {
   core: string
   /** dll.status() 的原始 JSON：started / adapters（含探测到的 cpu、mem）/ events_dropped */
@@ -20,6 +28,12 @@ export interface Status {
   workers?: number[]
   /** 各 worker 累计处理完成数 */
   workers_done?: number[]
+  /** 主循环待处理事件数（无界队列的占用观测，见 stats.rs） */
+  main_backlog?: number
+  /** worker 队列满被丢的消息数 */
+  worker_dropped?: number
+  /** 分阶段延迟（ms）：parse 解析信封 / chain 插件责任链 / send 出站发送 */
+  latency?: Partial<Record<'parse' | 'chain' | 'send', StageLatency>>
   /** 积压中的会话（正在处理或排队） */
   active_chats?: string[]
   /** WebUI 已运行秒数 */

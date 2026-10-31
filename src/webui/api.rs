@@ -117,6 +117,10 @@ async fn api_status(
             "workers": stats::worker_backlogs(),
             "workers_done": stats::worker_done(),
             "active_chats": stats::active_chats(),
+            // 可观测性最小集（26102701 建议 8）：队列占用 / worker 丢弃 / 分阶段延迟
+            "main_backlog": stats::main_backlog(),
+            "worker_dropped": stats::worker_dropped(),
+            "latency": stats::latency_report(),
             "uptime_sec": super::uptime_sec(),
             "sys": super::proc::host(),
             "business": state.business.info(),

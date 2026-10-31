@@ -42,6 +42,20 @@ pub fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
                     println!("核心丢弃事件: {d}");
                 }
             }
+            // 宿主侧：worker 丢弃 + 分阶段延迟（建议 8）
+            let dropped = stats::worker_dropped();
+            if dropped > 0 {
+                println!("worker 丢弃消息: {dropped}（队列满）");
+            }
+            let lat = stats::latency_report();
+            let stage = |name: &str| {
+                let s = &lat[name];
+                format!(
+                    "{name} p50 {}ms / p99 {}ms (n={})",
+                    s["p50"], s["p99"], s["n"]
+                )
+            };
+            println!("延迟: {} | {} | {}", stage("parse"), stage("chain"), stage("send"));
         }
         "reload napcat" => {
             let rc = dll.reload_plugin("napcat");

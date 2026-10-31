@@ -47,7 +47,11 @@ use stats::{WORKER_COUNT, WORKER_QUEUE_CAP};
 extern "C" fn on_event(data: *const c_char, len: i32) {
     let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, len as usize) };
     if let Some(tx) = EVENT_TX.get() {
-        let _ = tx.send(HostMsg::Event(bytes.to_vec()));
+        // 主队列占用观测：无界队列看不到长度，出入各记一笔（发送失败回退）
+        stats::main_enqueue();
+        if tx.send(HostMsg::Event(bytes.to_vec())).is_err() {
+            stats::main_dequeue();
+        }
     }
 }
 
@@ -64,13 +68,16 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
         segments: &incoming.segments,
         platform: &incoming.platform,
     };
+    let chain_started = std::time::Instant::now();
     let replies = match business.handle(&ctx) {
         Ok(r) => r,
         Err(e) => {
             log_error!("业务处理出错: {e}");
+            stats::record_chain(chain_started.elapsed());
             return;
         }
     };
+    stats::record_chain(chain_started.elapsed());
 
     // 回复走统一发送：纯文本包成 text 段，平台翻译在适配器
     let (chat_kind, chat_id) = match &incoming.chat {
@@ -79,8 +86,10 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
     };
     for reply in replies {
         let segments = serde_json::json!([{ "text": { "text": reply } }]).to_string();
+        let send_started = std::time::Instant::now();
         match dll.send_message(&incoming.platform, chat_kind, chat_id, &segments, 15_000) {
             Ok(resp) => {
+                stats::record_send(send_started.elapsed());
                 // Go 侧约定：失败也返回 Ok，错误装在 {"error": ...} 里。
                 // 解出来走失败分支，成功统计与消息流才不被污染（26102701#5）
                 if ffi_resp_failed(&resp) {
@@ -91,7 +100,10 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
                 webui::publish_reply(&incoming.platform, chat_kind, chat_id, &reply);
                 log_info!("已回复: {} resp={resp}", console::brief(&reply, 60));
             }
-            Err(e) => log_error!("发送失败: {e}"),
+            Err(e) => {
+                stats::record_send(send_started.elapsed());
+                log_error!("发送失败: {e}")
+            }
         }
     }
 }
@@ -189,10 +201,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     for msg in rx {
         match msg {
             HostMsg::Event(payload) => {
+                stats::main_dequeue();
                 stats::bump_event();
+                let parse_started = std::time::Instant::now();
                 let Some(incoming) = parse_incoming(&payload) else {
+                    stats::record_parse(parse_started.elapsed());
                     continue;
                 };
+                stats::record_parse(parse_started.elapsed());
                 log_info!(
                     "消息: [{} {}] {}",
                     incoming.chat.message_type(),
@@ -216,12 +232,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 match workers[idx].try_send(incoming) {
                     Ok(()) => stats::worker_enqueue(idx, &chat_id),
                     Err(mpsc::TrySendError::Full(dropped)) => {
+                        stats::bump_worker_dropped();
                         log_error!(
                             "worker {idx} 队列已满，丢弃消息（chat={}）",
                             dropped.chat.id()
                         );
                     }
                     Err(mpsc::TrySendError::Disconnected(_)) => {
+                        stats::bump_worker_dropped();
                         log_error!("worker {idx} 已停止，丢弃消息");
                     }
                 }
