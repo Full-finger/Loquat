@@ -263,3 +263,26 @@ fn take_c_string(ptr: *mut c_char, free: &FreeFn) -> String {
     }
     out
 }
+
+/// 应答是否为 Go 侧包装的错误（{"error": ...}）。非 JSON 视为成功——
+/// 成功应答是 protojson（messageId），解析不出 error 字段就别拦。
+/// （从 main.rs 迁入：worker 不再直接发送，唯一消费者是 outbound。）
+pub(crate) fn resp_failed(resp: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(resp)
+        .ok()
+        .is_some_and(|v| v.get("error").is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffi_error_envelope_is_detected() {
+        assert!(resp_failed(
+            r#"{"error":"发送被 NapCat 拒绝: retcode=1200"}"#
+        ));
+        assert!(!resp_failed(r#"{"messageId":"123"}"#));
+        assert!(!resp_failed("not json"), "非 JSON 不拦");
+    }
+}

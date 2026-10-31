@@ -8,6 +8,7 @@ mod dedupe;
 mod event;
 mod ffi;
 mod log;
+mod outbound;
 mod pluginload;
 mod providers;
 mod pybridge;
@@ -31,9 +32,12 @@ use ffi::CoreDll;
 
 const EXTENSIONS_DIR: &str = "extensions";
 
-static EVENT_TX: OnceLock<mpsc::Sender<HostMsg>> = OnceLock::new();
+static EVENT_TX: OnceLock<mpsc::SyncSender<HostMsg>> = OnceLock::new();
 
 // 宿主主循环的三类输入：Go 核心的事件、控制台命令、退出信号。
+// 有界队列（评审建议 3）：满时 Go 侧 send 阻塞形成反压，事件改由
+// 核心队列承载并计数（events_dropped），不再是无界内存隐患。
+const MAIN_QUEUE_CAP: usize = 256;
 enum HostMsg {
     Event(Vec<u8>),
     Command(String),
@@ -47,12 +51,13 @@ enum HostMsg {
 // 管线统计在 src/stats.rs。
 use stats::{WORKER_COUNT, WORKER_QUEUE_CAP};
 
-// Go 核心的事件回调：只拷贝字节进通道就返回，别在回调里干重活。
+// Go 核心的事件回调：拷贝字节进通道就返回；队列满则阻塞——这正是
+// 反压（建议 3），Go 核心的 pump 暂停拉取，事件在其队列排队并计数。
 // 禁止 unwrap/expect——panic 跨 C 边界会直接炸宿主进程（见 R3 规则）。
 extern "C" fn on_event(data: *const c_char, len: i32) {
     let bytes = unsafe { std::slice::from_raw_parts(data as *const u8, len as usize) };
     if let Some(tx) = EVENT_TX.get() {
-        // 主队列占用观测：无界队列看不到长度，出入各记一笔（发送失败回退）
+        // 主队列占用观测：出入各记一笔
         stats::main_enqueue();
         if tx.send(HostMsg::Event(bytes.to_vec())).is_err() {
             stats::main_dequeue();
@@ -60,8 +65,9 @@ extern "C" fn on_event(data: *const c_char, len: i32) {
     }
 }
 
-// worker 内：跑责任链并直接发送（CoreDll 是 Send+Sync，Go 侧导出并发安全）。
-fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
+// worker 内：只跑责任链并产出回复（发送交出站队列，评审建议 2），
+// 15s 发送超时不再占住 worker。
+fn handle_message(incoming: Incoming, _dll: &CoreDll, business: &Business) {
     let ctx = business::MsgCtx {
         text: &incoming.text,
         chat: incoming.chat.clone(),
@@ -84,41 +90,30 @@ fn handle_message(incoming: Incoming, dll: &CoreDll, business: &Business) {
     };
     stats::record_chain(chain_started.elapsed());
 
-    // 回复走统一发送：纯文本包成 text 段，平台翻译在适配器
-    let (chat_kind, chat_id) = match &incoming.chat {
-        Chat::Private { id } => ("private", id.as_str()),
-        Chat::Group { id } => ("group", id.as_str()),
-    };
+    // 回复交出站队列：限流、重试、统计都在 sender 池（建议 2）
     for reply in replies {
-        let segments = serde_json::json!([{ "text": { "text": reply } }]).to_string();
-        let send_started = std::time::Instant::now();
-        match dll.send_message(&incoming.platform, chat_kind, chat_id, &segments, 15_000) {
-            Ok(resp) => {
-                stats::record_send(send_started.elapsed());
-                // Go 侧约定：失败也返回 Ok，错误装在 {"error": ...} 里。
-                // 解出来走失败分支，成功统计与消息流才不被污染（26102701#5）
-                if ffi_resp_failed(&resp) {
-                    log_error!("发送失败: {}", console::brief(&resp, 200));
-                    continue;
-                }
-                stats::bump_reply();
-                webui::publish_reply(&incoming.platform, chat_kind, chat_id, &reply);
-                log_info!("已回复: {} resp={resp}", console::brief(&reply, 60));
-            }
-            Err(e) => {
-                stats::record_send(send_started.elapsed());
-                log_error!("发送失败: {e}")
-            }
-        }
+        outbound::enqueue(&incoming.platform, &incoming.chat, reply);
     }
 }
 
-// 应答是否为 Go 侧包装的错误（{"error": ...}）。非 JSON 视为成功——
-// 成功应答是 protojson（messageId），解析不出 error 字段就别拦。
-fn ffi_resp_failed(resp: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(resp)
-        .ok()
-        .is_some_and(|v| v.get("error").is_some())
+/// worker 队列满的降级回复（建议 3）：只对私聊说一句，群聊不回
+/// （刷屏 + 风控风险）。直接同步发送、不重试不入队——它本身就是
+/// 队列满时的产物，再入队只会跟着一起丢。
+fn busy_reply(dll: &CoreDll, incoming: &Incoming) {
+    if !matches!(incoming.chat, Chat::Private { .. }) {
+        return;
+    }
+    let text = "消息有点多，刚才那条没接住，稍后再试～";
+    let segments = serde_json::json!([{ "text": { "text": text } }]).to_string();
+    if let Err(e) = dll.send_message(
+        &incoming.platform,
+        "private",
+        incoming.chat.id(),
+        &segments,
+        5_000,
+    ) {
+        log_error!("降级回复发送失败: {e}");
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -129,7 +124,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     log::pump_from_handle(dll.log_pipe());
     log_info!("core.dll 已加载");
 
-    let (tx, rx) = mpsc::channel::<HostMsg>();
+    let (tx, rx) = mpsc::sync_channel::<HostMsg>(MAIN_QUEUE_CAP);
     EVENT_TX.set(tx.clone()).expect("事件通道只能初始化一次");
 
     // 先起 Go 核心，再初始化 Python 与 stdin 线程：
@@ -156,6 +151,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // WebUI：REST + 静态页 + 消息流 WS，独立线程，起不来只记日志。
     // 内置页面导航在前端 tabs.ts；插件页面（TABS/ui.js）由 /api/extensions/ui 聚合。
     webui::spawn(Arc::clone(&dll), Arc::clone(&business));
+
+    // 出站 sender 池先于 worker 起：回复一产出就有去处（评审建议 2）
+    outbound::spawn_senders(Arc::clone(&dll));
 
     // worker 池：见顶部常量注释。catch_unwind 兜一条消息的 panic 只损失
     // 一次迭代——线程死亡会让该 chat 后续消息静默失去去处。
@@ -254,6 +252,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             "worker {idx} 队列已满，丢弃消息（chat={}）",
                             dropped.chat.id()
                         );
+                        busy_reply(&dll, &dropped); // 私聊降级回复（建议 3）
                     }
                     Err(mpsc::TrySendError::Disconnected(_)) => {
                         stats::bump_worker_dropped();
@@ -297,11 +296,11 @@ mod tests {
 
     #[test]
     fn ffi_error_envelope_is_detected() {
-        assert!(ffi_resp_failed(
+        assert!(ffi::resp_failed(
             r#"{"error":"发送被 NapCat 拒绝: retcode=1200"}"#
         ));
-        assert!(!ffi_resp_failed(r#"{"messageId":"123"}"#));
-        assert!(!ffi_resp_failed("not json"), "非 JSON 不拦");
+        assert!(!ffi::resp_failed(r#"{"messageId":"123"}"#));
+        assert!(!ffi::resp_failed("not json"), "非 JSON 不拦");
     }
 
     #[test]
@@ -337,7 +336,7 @@ mod tests {
             }
         }
         let dll = unsafe { CoreDll::load("bin/core.dll").expect("加载 dll") };
-        let (tx, rx) = mpsc::channel::<HostMsg>();
+        let (tx, rx) = mpsc::sync_channel::<HostMsg>(MAIN_QUEUE_CAP);
         EVENT_TX.set(tx).expect("EVENT_TX 只能初始化一次");
         std::thread::spawn(move || for _ in rx {});
 

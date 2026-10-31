@@ -48,6 +48,11 @@ pub fn run_command(cmd: &str, dll: &CoreDll, business: &Business) -> bool {
             if dropped > 0 {
                 println!("worker 丢弃消息: {dropped}（队列满）");
             }
+            let out_drop = crate::outbound::dropped();
+            let out_retry = crate::outbound::retries();
+            if out_drop > 0 || out_retry > 0 {
+                println!("出站队列: 丢弃 {out_drop} · 重试 {out_retry}");
+            }
             let lat = stats::latency_report();
             let stage = |name: &str| {
                 let s = &lat[name];

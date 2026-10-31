@@ -34,6 +34,8 @@ export interface Status {
   worker_dropped?: number
   /** 分阶段延迟（ms）：parse 解析信封 / chain 插件责任链 / send 出站发送 */
   latency?: Partial<Record<'parse' | 'chain' | 'send', StageLatency>>
+  /** 出站队列（建议 2）：丢弃与重试计数 */
+  outbound?: { dropped?: number; retries?: number }
   /** 积压中的会话（正在处理或排队） */
   active_chats?: string[]
   /** WebUI 已运行秒数 */

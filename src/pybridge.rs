@@ -56,8 +56,13 @@ fn send_action(
         Some(p) => p,
         None => current_platform().unwrap_or_else(|| "napcat".to_string()),
     };
-    // FFI 等平台应答最长 timeout_ms，期间放掉 GIL，其他 worker 的 Python 不停摆
+    // FFI 等平台应答最长 timeout_ms，期间放掉 GIL，其他 worker 的 Python 不停摆。
+    // 发送类动作（send_*_msg）共享出站限流闸（评审建议 2）：旁路受控，
+    // 同步应答语义保留；throttle 会睡眠，必须留在 detach 内。
     py.detach(|| {
+        if action.starts_with("send_") {
+            crate::outbound::throttle(&resolved);
+        }
         dll.send_action(&resolved, &action, &params, timeout_ms as i32)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     })
@@ -99,7 +104,10 @@ pub fn attach_plugin_env(module: &Bound<'_, PyModule>, config_yaml: &str) -> PyR
     // provider 层（config/providers.yaml 的激活项快照）：声明了即可，
     // 未声明（旧插件/测试插件） globals().get("providers") 拿到 None
     let providers_json = crate::providers::resolved_json();
-    let providers = module.py().import("json")?.call_method1("loads", (providers_json,))?;
+    let providers = module
+        .py()
+        .import("json")?
+        .call_method1("loads", (providers_json,))?;
     module.setattr("providers", providers)?;
 
     let bridge = PyModule::new(module.py(), "loquat_core_bridge")?;

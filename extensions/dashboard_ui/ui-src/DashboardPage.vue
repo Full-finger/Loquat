@@ -205,6 +205,15 @@ onUnmounted(() => {
           <span :class="{ 'drop-hot': (status.worker_dropped ?? 0) > 0 }">
             worker 丢弃 {{ status.worker_dropped ?? 0 }}
           </span>
+          <span
+            :class="{
+                'drop-hot':
+                  (status.outbound?.dropped ?? 0) > 0,
+              }"
+          >
+            出站丢弃 {{ status.outbound?.dropped ?? 0 }} · 重试
+            {{ status.outbound?.retries ?? 0 }}
+          </span>
         </div>
         <div class="lat">
           <div v-for="s in LATENCY_STAGES" :key="s.key" class="lat-row mono">

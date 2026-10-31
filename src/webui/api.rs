@@ -133,6 +133,12 @@ async fn api_status(State(state): State<Arc<WebState>>, headers: HeaderMap) -> R
             "worker_dropped": stats::worker_dropped(),
             "duplicates": stats::duplicates(),
             "latency": stats::latency_report(),
+            // 出站队列（建议 2）：丢弃与重试计数；队列深度由 worker/sender
+            // 的消费能力兜底，不做实时观测
+            "outbound": {
+                "dropped": crate::outbound::dropped(),
+                "retries": crate::outbound::retries(),
+            },
             "uptime_sec": super::uptime_sec(),
             "sys": super::proc::host(),
             "business": state.business.info(),
