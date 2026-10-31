@@ -231,17 +231,29 @@ fn asset_upload_and_path_guard() {
 
     let stored = business.save_plugin_asset("p", "logo.png", b"png").unwrap();
     assert_eq!(stored, "logo.png");
-    let again = business.save_plugin_asset("p", "logo.png", b"png2").unwrap();
+    let again = business
+        .save_plugin_asset("p", "logo.png", b"png2")
+        .unwrap();
     assert_eq!(again, "logo-1.png");
 
     assert!(business.plugin_asset_path("p", "assets/logo.png").is_some());
-    assert!(business.plugin_asset_path("p", "assets/../plugin.py").is_none());
-    assert!(business.plugin_asset_path("p", "../../Cargo.toml").is_none());
-    assert!(business.plugin_asset_path("../p", "assets/logo.png").is_none());
+    assert!(business
+        .plugin_asset_path("p", "assets/../plugin.py")
+        .is_none());
+    assert!(business
+        .plugin_asset_path("p", "../../Cargo.toml")
+        .is_none());
+    assert!(business
+        .plugin_asset_path("../p", "assets/logo.png")
+        .is_none());
     assert!(business.save_plugin_asset("p", "../evil", b"x").is_err());
     assert!(business.save_plugin_asset("p", ".hidden", b"x").is_err());
 
-    business.delete_plugin_asset("p", "assets/logo-1.png").unwrap();
-    assert!(business.plugin_asset_path("p", "assets/logo-1.png").is_none());
+    business
+        .delete_plugin_asset("p", "assets/logo-1.png")
+        .unwrap();
+    assert!(business
+        .plugin_asset_path("p", "assets/logo-1.png")
+        .is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }

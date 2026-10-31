@@ -28,7 +28,9 @@ pub(super) fn write_file(dir: &Path, name: &str, content: &str) {
 pub(super) fn ctx(text: &'static str) -> MsgCtx {
     MsgCtx {
         text,
-        chat: Chat::Private { id: "1".to_string() },
+        chat: Chat::Private {
+            id: "1".to_string(),
+        },
         sender_id: "1",
         self_id: "100",
         message_id: "",
@@ -50,7 +52,9 @@ fn ctx_fields_reach_plugin() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let c = MsgCtx {
         text: "hi",
-        chat: Chat::Group { id: "42".to_string() },
+        chat: Chat::Group {
+            id: "42".to_string(),
+        },
         sender_id: "7",
         self_id: "100",
         message_id: "12345",
@@ -103,12 +107,63 @@ fn chain_routes_by_priority_and_survives_removal() {
         vec!["高优先级".to_string()]
     );
 
-    // 删掉高优先级插件后，同步应落到兜底
+    // 删掉高优先级插件后，同步应落到兜底（扫描有 500ms 节流，等窗口过）
     std::fs::remove_dir_all(dir.join("aa_high")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
     assert_eq!(
         business.handle(&ctx("x")).unwrap(),
         vec!["兜底".to_string()]
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn plugin_api_version_gate() {
+    let dir = plugin_dir("apiver");
+    // 未知版本明确拒载（进失败退避），不静默尝试
+    let fut = dir.join("future");
+    std::fs::create_dir_all(&fut).unwrap();
+    std::fs::write(
+        fut.join(ENTRY_FILE),
+        "# loquat-plugin v9\ndef handle(ctx):\n    return ['no']\n",
+    )
+    .unwrap();
+    // 存量写法（签名不带版本 = v1）照常加载
+    write_plugin(&dir, "plain", "def handle(ctx):\n    return ['plain']\n");
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    assert_eq!(
+        business.handle(&ctx("x")).unwrap(),
+        vec!["plain".to_string()]
+    );
+
+    // 显式 v1 也能加载（放过扫描节流后再验）
+    let v1 = dir.join("explicit");
+    std::fs::create_dir_all(&v1).unwrap();
+    std::fs::write(
+        v1.join(ENTRY_FILE),
+        "# loquat-plugin v1\ndef handle(ctx):\n    return ['v1']\n",
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["v1".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn failed_plugin_backs_off_then_recovers() {
+    let dir = plugin_dir("backoff");
+    write_plugin(&dir, "bad", "def handle(ctx):\n    return [语法错误\n");
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    // 加载失败只跳过自身，不拖垮整条链
+    assert!(business.handle(&ctx("x")).unwrap().is_empty());
+
+    // 修好语法：退避期内（首次 1s）不重试编译
+    write_plugin(&dir, "bad", "def handle(ctx):\n    return ['ok']\n");
+    assert!(business.handle(&ctx("x")).unwrap().is_empty());
+
+    // 过退避期：恢复加载
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    assert_eq!(business.handle(&ctx("x")).unwrap(), vec!["ok".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -214,7 +269,11 @@ fn ui_tabs_require_enabled_plugin_and_ui_js() {
     );
     write_file(&dir.join("demo"), "ui.js", "// demo page");
     // 声明了 TABS 但没有 ui.js：导航无处可去
-    write_plugin(&dir, "noscript", "TABS = [{'id': 'x', 'title': '无脚本'}]\ndef handle(ctx):\n    return []\n");
+    write_plugin(
+        &dir,
+        "noscript",
+        "TABS = [{'id': 'x', 'title': '无脚本'}]\ndef handle(ctx):\n    return []\n",
+    );
     // 有 ui.js 但被 config 停用
     write_plugin(&dir, "off", "def handle(ctx):\n    return []\n");
     write_file(&dir.join("off"), "config.yaml", "enabled: false\n");
@@ -276,8 +335,7 @@ fn handle_does_not_hold_lock_across_plugin_chain() {
     );
     let business = std::sync::Arc::new(Business::load(dir.to_str().unwrap()).unwrap());
     let b2 = business.clone();
-    let chain =
-        std::thread::spawn(move || b2.handle(&ctx("k")).unwrap());
+    let chain = std::thread::spawn(move || b2.handle(&ctx("k")).unwrap());
     // 等链路进入插件 sleep
     std::thread::sleep(std::time::Duration::from_millis(400));
     let start = std::time::Instant::now();
@@ -318,4 +376,3 @@ fn poisoned_lock_recovers_instead_of_bricking() {
     assert!(rows[0].1);
     let _ = std::fs::remove_dir_all(&dir);
 }
-

@@ -27,7 +27,9 @@ fn write_file(dir: &Path, name: &str, content: &str) {
 fn ctx_in(chat_id: i64, text: &'static str) -> MsgCtx<'static> {
     MsgCtx {
         text,
-        chat: Chat::Private { id: chat_id.to_string() },
+        chat: Chat::Private {
+            id: chat_id.to_string(),
+        },
         sender_id: "1",
         self_id: "100",
         message_id: "",
@@ -45,8 +47,6 @@ mod chat_ids {
     pub const UNKNOWN: i64 = 103;
     pub const MAX_TURNS: i64 = 104;
     pub const PERSIST: i64 = 105;
-    pub const IMAGES: i64 = 106;
-    pub const IMAGES_OFF: i64 = 107;
 }
 
 // 布置临时插件目录：拷真 _lib（log/config/agent）+ 测试插件。
@@ -132,7 +132,9 @@ fn agent_strips_cq_and_prefixes_group_sender() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let group_ctx = MsgCtx {
         text: "hi",
-        chat: Chat::Group { id: "9".to_string() },
+        chat: Chat::Group {
+            id: "9".to_string(),
+        },
         sender_id: "7",
         self_id: "100",
         message_id: "",
@@ -310,7 +312,10 @@ fn agent_sessions_persist_to_disk_and_reload() {
     assert!(raw.contains("m1"), "落盘内容应含用户消息，实际: {raw}");
 
     // 模拟重启：内存清空，磁盘保留；回填后历史回来
-    assert_eq!(business.handle(&c("WIPE")).unwrap(), vec!["wiped".to_string()]);
+    assert_eq!(
+        business.handle(&c("WIPE")).unwrap(),
+        vec!["wiped".to_string()]
+    );
     let (loaded, skipped) = crate::pybridge::load_sessions();
     assert_eq!((loaded, skipped), (1, 0));
     // 回填后的历史 [u:m1, a:R1]，再发 m2 → 3 条 → fake_chat 返回 R3
@@ -321,76 +326,6 @@ fn agent_sessions_persist_to_disk_and_reload() {
     sys_sessions_clear();
     let (loaded, skipped) = crate::pybridge::load_sessions();
     assert_eq!((loaded, skipped), (1, 1), "坏文件应计数跳过");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn agent_images_multimodal_or_placeholder() {
-    crate::pybridge::ensure_state_module();
-    let dir = agent_test_dir("agent_images");
-    crate::pybridge::set_persist_dir(&dir.join("sess").to_string_lossy());
-    // spy 插件：cfg 由文本切换（VISION=识图开），fake_chat 回传收到的历史
-    write_plugin(
-        &dir,
-        "spy",
-        concat!(
-            "import json\n",
-            "import loquat_agent\n",
-            "\n",
-            "class FakeResp:\n",
-            "    def __init__(self, text):\n",
-            "        self.text = text\n",
-            "        self.tool_calls = []\n",
-            "\n",
-            "def fake_chat(cfg, history, tools):\n",
-            "    return FakeResp(json.dumps(history, ensure_ascii=False))\n",
-            "\n",
-            "def handle(ctx):\n",
-            "    text = loquat_agent.clean_text(ctx)\n",
-            "    cfg = {'vision': True} if text == 'VISION' else {}\n",
-            "    reply = loquat_agent.respond(ctx, text=text, cfg=cfg, chat_fn=fake_chat)\n",
-            "    return reply or []\n",
-        ),
-    );
-    let business = Business::load(dir.to_str().unwrap()).unwrap();
-    let imgs = vec![
-        "https://qq.com/a.jpg".to_string(),
-        "https://qq.com/b.png".to_string(),
-    ];
-    fn msg_ctx<'a>(chat_id: i64, text: &'static str, images: &'a [String]) -> MsgCtx<'a> {
-        MsgCtx {
-            text,
-            chat: Chat::Private { id: chat_id.to_string() },
-            sender_id: "1",
-            self_id: "100",
-            message_id: "",
-            mentions_bot: false,
-            images,
-            segments: &[],
-            platform: "napcat",
-        }
-    }
-
-    // vision 开启：content 是多模态 parts（text + image_url）
-    let replies = business
-        .handle(&msg_ctx(chat_ids::IMAGES, "VISION", &imgs))
-        .unwrap();
-    assert!(replies[0].contains("\"image_url\""), "实际: {replies:?}");
-    assert!(replies[0].contains("https://qq.com/a.jpg"), "实际: {replies:?}");
-    assert!(replies[0].contains("\"type\": \"text\""), "实际: {replies:?}");
-
-    // vision 关闭：同图降级为 [图片] 占位文本，URL 不进模型
-    let replies = business
-        .handle(&msg_ctx(chat_ids::IMAGES_OFF, "hi", &imgs))
-        .unwrap();
-    assert!(replies[0].contains("[图片]"), "实际: {replies:?}");
-    assert!(!replies[0].contains("image_url"), "实际: {replies:?}");
-
-    // 无文本无图片：不进模型，无回复
-    let replies = business
-        .handle(&msg_ctx(chat_ids::IMAGES_OFF + 1, "", &[]))
-        .unwrap();
-    assert!(replies.is_empty(), "实际: {replies:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

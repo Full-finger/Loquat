@@ -29,6 +29,7 @@
 //!
 //! 路由语义：按 (PRIORITY, 目录名) 排序逐个调用，第一个返回非空的插件接管。
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -53,6 +54,21 @@ pub(crate) const CONFIG_FILE: &str = "config.yaml";
 /// WebUI 扩展页脚本（约定入口，存在即视为插件声明了页面）
 pub(crate) const UI_FILE: &str = "ui.js";
 const DISABLE_MARKER: &str = ".disabled";
+
+/// 热路径节流：距上次目录扫描不足此时长则直接用快照（评审建议 1：
+/// 全量扫描实测 2.3 ms/次，是吞吐上限的来源）。管理操作不受限。
+const SYNC_INTERVAL_MS: u64 = 500;
+/// 加载失败插件的退避：首次 1 s，翻倍到 60 s 封顶（建议 1：
+/// 不再每条消息重试编译）。
+const BACKOFF_INIT_MS: u64 = 1_000;
+const BACKOFF_MAX_MS: u64 = 60_000;
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// 传给插件 handle(ctx) 的消息上下文。
 /// 字段来自统一信封（event.rs 解析），跨平台通用；
@@ -107,6 +123,10 @@ pub struct Business {
     lib_mtime: AtomicU64,
     /// 已提示过"可安装"的未安装插件，跳过后续扫描的重复加载检测
     installable: Mutex<Vec<String>>,
+    /// 上次目录扫描的毫秒时间戳（热路径节流）
+    last_sync: AtomicU64,
+    /// 加载失败插件 → 退避到期的毫秒时间戳（到期前不再重试编译）
+    failed: Mutex<HashMap<String, u64>>,
 }
 
 impl Business {
@@ -117,16 +137,58 @@ impl Business {
             reloads: AtomicU64::new(0),
             lib_mtime: AtomicU64::new(0),
             installable: Mutex::new(Vec::new()),
+            last_sync: AtomicU64::new(0),
+            failed: Mutex::new(HashMap::new()),
         };
         business.sync()?;
         Ok(business)
     }
 
+    /// 热路径节流：距上次扫描不足间隔则直接用快照。CAS 抢占保证并发
+    /// worker 只放一个进扫描，其余走旧快照（下一条消息自然重试）。
+    fn sync_due(&self) -> bool {
+        let now = now_ms();
+        let last = self.last_sync.load(Ordering::Relaxed);
+        now >= last.saturating_add(SYNC_INTERVAL_MS)
+            && self
+                .last_sync
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+    }
+
+    /// 插件退避未到期：true = 跳过本次加载尝试。
+    pub(super) fn in_backoff(&self, name: &str, now: u64) -> bool {
+        self.failed
+            .lock()
+            .unwrap_or_else(recover_poison)
+            .get(name)
+            .is_some_and(|&until| now < until)
+    }
+
+    /// 记录加载失败：退避时长翻倍（1s→2s→…→60s 封顶）。
+    pub(super) fn note_failed(&self, name: &str, now: u64) {
+        let mut m = self.failed.lock().unwrap_or_else(recover_poison);
+        let backoff = m.get(name).map_or(BACKOFF_INIT_MS, |&until| {
+            (until.saturating_sub(now) * 2).min(BACKOFF_MAX_MS)
+        });
+        m.insert(name.to_string(), now + backoff);
+    }
+
+    /// 清除退避记录：加载成功、install 完成时调用。
+    pub(super) fn clear_failed(&self, name: &str) {
+        self.failed
+            .lock()
+            .unwrap_or_else(recover_poison)
+            .remove(name);
+    }
+
     /// 责任链路由：按优先级逐个调用，第一个返回非空的插件接管。
-    /// 每条消息前惰性同步一次插件目录（扫描开销可忽略）。
+    /// 目录同步按 SYNC_INTERVAL_MS 节流，其余消息直接用快照。
     pub fn handle(&self, ctx: &MsgCtx) -> Result<Vec<String>, Box<dyn Error>> {
-        if let Err(e) = self.sync() {
-            log_error!("插件目录扫描失败（沿用已加载插件）: {e}");
+        if self.sync_due() {
+            if let Err(e) = self.sync() {
+                log_error!("插件目录扫描失败（沿用已加载插件）: {e}");
+            }
         }
         // 锁内只做快照，链路放锁外跑：Py<PyModule> 是强引用，即使中途热重载
         // 换掉模块，快照仍持有旧模块存活；LLM 等长等待不再堵其他线程
@@ -273,6 +335,9 @@ mod tests;
 
 #[cfg(test)]
 mod tests_agent;
+
+#[cfg(test)]
+mod tests_agent_images;
 
 #[cfg(test)]
 mod tests_config;

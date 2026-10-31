@@ -40,8 +40,13 @@ type ReloadPluginFn = unsafe extern "C" fn(name: *const c_char) -> i32;
 type StatusFn = unsafe extern "C" fn() -> *mut c_char;
 type SystemStatusFn = unsafe extern "C" fn() -> *mut c_char;
 type LogPipeFn = unsafe extern "C" fn() -> usize;
+type AbiVersionFn = unsafe extern "C" fn() -> i32;
 type FreeFn = unsafe extern "C" fn(ptr: *mut c_char);
 type StopFn = unsafe extern "C" fn();
+
+/// 宿主侧的 FFI 契约版本，与 Go 侧 LoquatAbiVersion 对应。
+/// 破坏性变更（protojson 字段名、函数签名）时两侧同步递增。
+const ABI_VERSION: i32 = 1;
 
 static CORE_DLL: OnceLock<Arc<CoreDll>> = OnceLock::new();
 
@@ -101,6 +106,21 @@ impl CoreDll {
         let log_pipe = *lib.get::<LogPipeFn>(b"LoquatLogPipe")?;
         let free = *lib.get::<FreeFn>(b"LoquatFree")?;
         let stop = *lib.get::<StopFn>(b"LoquatStop")?;
+        // ABI 握手：符号缺失（旧版 core.dll）降级为警告，版本错配才是硬错误
+        match lib.get::<AbiVersionFn>(b"LoquatAbiVersion") {
+            Ok(f) => {
+                let core_ver = unsafe { (*f)() };
+                if core_ver != ABI_VERSION {
+                    return Err(format!(
+                        "FFI 契约版本不匹配: core.dll = {core_ver}，宿主要求 {ABI_VERSION}（重新 just build 两侧）"
+                    )
+                    .into());
+                }
+            }
+            Err(_) => {
+                eprintln!("[warn] core.dll 无 LoquatAbiVersion 导出（旧版产物），跳过 ABI 握手");
+            }
+        }
         Ok(Self {
             lib,
             start,
@@ -193,7 +213,13 @@ impl CoreDll {
         let m = CString::new(mode)?;
         let c = CString::new(chat_id)?;
         let ptr = unsafe {
-            (self.inject_event)(pl.as_ptr(), t.as_ptr(), at_bot as i32, m.as_ptr(), c.as_ptr())
+            (self.inject_event)(
+                pl.as_ptr(),
+                t.as_ptr(),
+                at_bot as i32,
+                m.as_ptr(),
+                c.as_ptr(),
+            )
         };
         Ok(take_c_string(ptr, &self.free))
     }

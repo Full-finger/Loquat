@@ -7,7 +7,8 @@ use crate::{pybridge, stats};
 
 // 控制台命令的应答是 REPL 输出，不是日志：裸文本走 stdout，不带时间戳。
 // 异步事件（消息/回复）与运行日志才走 stderr 的统一日志格式。
-pub fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
+// 返回 true 表示请求退出（exit/quit），主循环走优雅退出路径。
+pub fn run_command(cmd: &str, dll: &CoreDll, business: &Business) -> bool {
     match cmd {
         "" => {}
         "status" => println!(
@@ -96,12 +97,12 @@ pub fn run_command(cmd: &str, dll: &CoreDll, business: &Business) {
             "命令: status | agents | plugins | install <插件名> | enable/disable <插件名> | reload napcat | exit"
         ),
         "exit" | "quit" => {
-            dll.stop();
-            println!("已退出");
-            std::process::exit(0);
+            println!("排空在途消息后退出…");
+            return true;
         }
         other => println!("未知命令: {other}（help 查看命令）"),
     }
+    false
 }
 
 // 日志预览用：图片码等长内容只留开头，避免刷屏。

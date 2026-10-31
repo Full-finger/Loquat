@@ -21,8 +21,7 @@ pub const WORKER_QUEUE_CAP: usize = 64;
 
 static EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
 static REPLY_COUNT: AtomicU64 = AtomicU64::new(0);
-static WORKER_BACKLOG: [AtomicUsize; WORKER_COUNT] =
-    [const { AtomicUsize::new(0) }; WORKER_COUNT];
+static WORKER_BACKLOG: [AtomicUsize; WORKER_COUNT] = [const { AtomicUsize::new(0) }; WORKER_COUNT];
 static WORKER_DONE: [AtomicU64; WORKER_COUNT] = [const { AtomicU64::new(0) }; WORKER_COUNT];
 static CHAT_STATS: OnceLock<Mutex<HashMap<String, ChatStat>>> = OnceLock::new();
 
@@ -52,7 +51,10 @@ pub fn worker_enqueue(idx: usize, chat_id: &str) {
     WORKER_BACKLOG[idx].fetch_add(1, Ordering::Relaxed);
     let map = CHAT_STATS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut m) = map.lock() {
-        let st = m.entry(chat_id.to_string()).or_insert(ChatStat { backlog: 0, total: 0 });
+        let st = m.entry(chat_id.to_string()).or_insert(ChatStat {
+            backlog: 0,
+            total: 0,
+        });
         st.backlog += 1;
         st.total += 1;
     }
@@ -72,11 +74,17 @@ pub fn worker_settle(idx: usize, chat_id: &str) {
 }
 
 pub fn worker_backlogs() -> Vec<usize> {
-    WORKER_BACKLOG.iter().map(|c| c.load(Ordering::Relaxed)).collect()
+    WORKER_BACKLOG
+        .iter()
+        .map(|c| c.load(Ordering::Relaxed))
+        .collect()
 }
 
 pub fn worker_done() -> Vec<u64> {
-    WORKER_DONE.iter().map(|c| c.load(Ordering::Relaxed)).collect()
+    WORKER_DONE
+        .iter()
+        .map(|c| c.load(Ordering::Relaxed))
+        .collect()
 }
 
 // 积压中的会话（正在处理或排队），agents 命令展示用。
@@ -85,7 +93,11 @@ pub fn active_chats() -> Vec<String> {
         return Vec::new();
     };
     match map.lock() {
-        Ok(m) => m.iter().filter(|(_, st)| st.backlog > 0).map(|(id, _)| id.clone()).collect(),
+        Ok(m) => m
+            .iter()
+            .filter(|(_, st)| st.backlog > 0)
+            .map(|(id, _)| id.clone())
+            .collect(),
         Err(_) => Vec::new(),
     }
 }
@@ -111,12 +123,23 @@ pub fn main_backlog() -> usize {
 /// worker 队列满被丢的消息数（worker 层丢弃；adapter/core 层在 Go 侧）。
 static WORKER_DROPPED: AtomicU64 = AtomicU64::new(0);
 
+/// 去重命中的重复消息数（重连重放/上游重试）。
+static DUPLICATES: AtomicU64 = AtomicU64::new(0);
+
 pub fn bump_worker_dropped() {
     WORKER_DROPPED.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn worker_dropped() -> u64 {
     WORKER_DROPPED.load(Ordering::Relaxed)
+}
+
+pub fn bump_duplicate() {
+    DUPLICATES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn duplicates() -> u64 {
+    DUPLICATES.load(Ordering::Relaxed)
 }
 
 /// 分阶段延迟：环形缓冲记最近 N 次耗时（微秒），读时排序取分位。
@@ -129,9 +152,15 @@ pub struct Latency {
 }
 
 // 三个阶段各一个实例：parse 解析信封 / chain 插件责任链 / send 出站发送。
-static PARSE: Latency = Latency { ring: Mutex::new(VecDeque::new()) };
-static CHAIN: Latency = Latency { ring: Mutex::new(VecDeque::new()) };
-static SEND: Latency = Latency { ring: Mutex::new(VecDeque::new()) };
+static PARSE: Latency = Latency {
+    ring: Mutex::new(VecDeque::new()),
+};
+static CHAIN: Latency = Latency {
+    ring: Mutex::new(VecDeque::new()),
+};
+static SEND: Latency = Latency {
+    ring: Mutex::new(VecDeque::new()),
+};
 
 impl Latency {
     fn record(&self, us: u64) {
@@ -188,7 +217,9 @@ mod tests {
 
     #[test]
     fn latency_percentiles_and_ring_wrap() {
-        let l = Latency { ring: Mutex::new(VecDeque::new()) };
+        let l = Latency {
+            ring: Mutex::new(VecDeque::new()),
+        };
         // 空报告：n=0，分位为 null
         let rep = l.report();
         assert_eq!(rep["n"], 0);

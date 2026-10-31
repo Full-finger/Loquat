@@ -17,27 +17,28 @@ use crate::sharedlib;
 
 // SCHEMA（python 对象）→ JSON 文本：经 json.dumps 中转，避开逐类型 IntoPyObject
 fn schema_to_json(loaded: &LoadedPlugin) -> String {
-    Python::attach(|py| {
-        match loaded.module.bind(py).getattr("SCHEMA") {
-            Ok(schema) => {
-                let json_mod = match py.import("json") {
-                    Ok(m) => m,
-                    Err(_) => return "[]".to_string(),
-                };
-                match json_mod.call_method1("dumps", (schema,)) {
-                    Ok(s) => s.extract::<String>().unwrap_or_else(|_| "[]".into()),
-                    Err(_) => "[]".to_string(),
-                }
+    Python::attach(|py| match loaded.module.bind(py).getattr("SCHEMA") {
+        Ok(schema) => {
+            let json_mod = match py.import("json") {
+                Ok(m) => m,
+                Err(_) => return "[]".to_string(),
+            };
+            match json_mod.call_method1("dumps", (schema,)) {
+                Ok(s) => s.extract::<String>().unwrap_or_else(|_| "[]".into()),
+                Err(_) => "[]".to_string(),
             }
-            Err(_) => "[]".to_string(),
         }
+        Err(_) => "[]".to_string(),
     })
 }
 
 // python 对象 → JSON 文本
 fn py_obj_to_json(obj: &Bound<'_, PyAny>) -> String {
     let py = obj.py();
-    match py.import("json").and_then(|j| j.call_method1("dumps", (obj,))) {
+    match py
+        .import("json")
+        .and_then(|j| j.call_method1("dumps", (obj,)))
+    {
         Ok(s) => s.extract::<String>().unwrap_or_else(|_| "[]".into()),
         Err(_) => "[]".to_string(),
     }
@@ -147,10 +148,13 @@ impl Business {
             }
         }
         let installed = cfg_path.is_file();
-        let enabled = values.get("enabled").and_then(|b| b.as_bool()).unwrap_or(true);
+        let enabled = values
+            .get("enabled")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(true);
         values.remove("enabled"); // 宿主保留键，表单不显示
-        // secret 打码：明文不出后端。前端拿空串 + secret_keys（已配置
-        // 清单）；留空保持 / null 清除的合并语义在保存侧。
+                                  // secret 打码：明文不出后端。前端拿空串 + secret_keys（已配置
+                                  // 清单）；留空保持 / null 清除的合并语义在保存侧。
         let mut secret_keys: Vec<String> = Vec::new();
         for k in secret_fields(&schema) {
             match values.get(&k) {
@@ -188,21 +192,33 @@ impl Business {
             .ok()
             .and_then(|t| serde_yamlish(&t).ok())
             .unwrap_or(serde_json::Value::Null);
-        let had_enabled = existing.get("enabled").and_then(|b| b.as_bool()).unwrap_or(true);
+        let had_enabled = existing
+            .get("enabled")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(true);
         let mut py_values = values;
         if !py_values.is_object() {
             return Err("配置载荷必须是对象".into());
         }
         py_values["enabled"] = serde_json::Value::Bool(had_enabled);
         // secret 字段的合并需要 SCHEMA 键清单，先转一份 JSON
-        let schema_json: serde_json::Value = Python::attach(|py| -> Result<serde_json::Value, String> {
-            let schema = loaded.0.bind(py).getattr("SCHEMA").map_err(|e| e.to_string())?;
-            serde_json::from_str(&py_obj_to_json(&schema))
-                .map_err(|e| format!("SCHEMA 转换失败: {e}"))
-        })?;
+        let schema_json: serde_json::Value =
+            Python::attach(|py| -> Result<serde_json::Value, String> {
+                let schema = loaded
+                    .0
+                    .bind(py)
+                    .getattr("SCHEMA")
+                    .map_err(|e| e.to_string())?;
+                serde_json::from_str(&py_obj_to_json(&schema))
+                    .map_err(|e| format!("SCHEMA 转换失败: {e}"))
+            })?;
         merge_secrets(&mut py_values, &schema_json, &existing);
         let yaml_text = Python::attach(|py| -> Result<String, String> {
-            let schema = loaded.0.bind(py).getattr("SCHEMA").map_err(|e| e.to_string())?;
+            let schema = loaded
+                .0
+                .bind(py)
+                .getattr("SCHEMA")
+                .map_err(|e| e.to_string())?;
             let cfglib = py
                 .import("loquat_cfglib")
                 .map_err(|e| format!("cfglib 未注册: {e}"))?;
@@ -250,7 +266,8 @@ impl Business {
             .lock()
             .unwrap_or_else(recover_poison)
             .retain(|n| n != name);
-        // 立即加载，让 plugins/enable 马上可见可用，不等下一条消息触发扫描
+        self.clear_failed(name); // install 已生成 config.yaml，重试不该被退避挡住
+                                 // 立即加载，让 plugins/enable 马上可见可用，不等下一条消息触发扫描
         let _ = self.sync();
         Ok(format!(
             "{name} 安装成功（config.yaml 已生成，当前未启用），运行 enable {name} 启用"
@@ -279,7 +296,9 @@ impl Business {
             }) else {
                 continue;
             };
-            let Some(entries) = declared.as_array() else { continue };
+            let Some(entries) = declared.as_array() else {
+                continue;
+            };
             for entry in entries {
                 let (Some(id), Some(title)) = (
                     entry.get("id").and_then(|x| x.as_str()),
@@ -322,7 +341,9 @@ impl Business {
 
 // tab id / 插件名进 URL 与自定义元素名（loquat-page-<插件>-<tab>），收紧字符集
 pub(super) fn valid_ext_id(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 // ui.js 的 mtime 毫秒（前端缓存指纹）；文件缺失返回 None
@@ -372,4 +393,3 @@ fn merge_secrets(
         values[&k] = merged;
     }
 }
-

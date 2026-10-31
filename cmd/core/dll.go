@@ -48,6 +48,14 @@ var (
 	logPipeWrite *os.File
 )
 
+// FFI 契约版本：宿主启动时比对，错配时报明确错误而非崩溃或静默空值
+// （评审建议 9）。改 protojson 字段名、函数签名等破坏性变更时递增。
+//
+//export LoquatAbiVersion
+func LoquatAbiVersion() C.int {
+	return 1
+}
+
 //export LoquatLogPipe
 func LoquatLogPipe() C.uintptr_t {
 	logPipeOnce.Do(func() {

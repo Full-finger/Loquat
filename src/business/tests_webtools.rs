@@ -120,7 +120,9 @@ fn webtools_parses_ddg_and_extracts_text() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let ctx = |t: &'static str| MsgCtx {
         text: t,
-        chat: Chat::Private { id: "901".to_string() },
+        chat: Chat::Private {
+            id: "901".to_string(),
+        },
         sender_id: "1",
         self_id: "100",
         message_id: "",
@@ -145,7 +147,10 @@ fn webtools_parses_ddg_and_extracts_text() {
     assert_eq!(replies.len(), 1);
     let out = &replies[0];
     assert!(out.contains("长摘要甲"), "summary 应优先: {out}");
-    assert!(out.contains("只有短摘要"), "无 summary 应退化 snippet: {out}");
+    assert!(
+        out.contains("只有短摘要"),
+        "无 summary 应退化 snippet: {out}"
+    );
     assert!(out.contains("https://a.example/1"), "实际: {out}");
 
     // api_base 规整：带不带 /v1 都收敛到 …/v1
@@ -171,7 +176,13 @@ fn webtools_parses_ddg_and_extracts_text() {
     let out = &replies[0];
     assert!(out.contains("\"errs\": 10"), "10 个内网 URL 应全拒: {out}");
     assert!(out.contains("\"public_ok\": true"), "公网 IP 应放行: {out}");
-    assert!(out.contains("\"redir\": \"reject\""), "内网重定向应拒绝: {out}");
-    assert!(out.contains("\"guard\": true"), "守卫应挂在 redirect handler 上: {out}");
+    assert!(
+        out.contains("\"redir\": \"reject\""),
+        "内网重定向应拒绝: {out}"
+    );
+    assert!(
+        out.contains("\"guard\": true"),
+        "守卫应挂在 redirect handler 上: {out}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

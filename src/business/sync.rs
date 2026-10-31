@@ -84,14 +84,23 @@ impl Business {
             let marker_now = marker.exists();
 
             let Some(idx) = plugins.iter().position(|p| p.dir_name == name) else {
+                // 加载失败的插件在退避期内不再重试（建议 1：避免每轮扫描重编译）
+                let now = super::now_ms();
+                if self.in_backoff(&name, now) {
+                    continue;
+                }
                 // 未安装插件：提示一次后跳过加载，直到 install 或手动放好 config.yaml
                 if self.gated_as_installable(&name) {
                     continue;
                 }
                 match pluginload::load_module(&path) {
                     // 可安装：模块只为探测 SCHEMA 而加载，用完即弃
-                    Ok((_, _, _, true)) => self.note_installable(&name),
+                    Ok((_, _, _, true)) => {
+                        self.clear_failed(&name);
+                        self.note_installable(&name);
+                    }
                     Ok((module, priority, config_enabled, _)) => {
+                        self.clear_failed(&name);
                         let enabled = config_enabled && !marker_now;
                         log_info!(
                             "插件已加载: {name}（优先级 {priority}，{}）",
@@ -107,7 +116,10 @@ impl Business {
                             mtime,
                         });
                     }
-                    Err(e) => log_error!("插件 {name} 加载失败，已跳过: {e}"),
+                    Err(e) => {
+                        self.note_failed(&name, now);
+                        log_error!("插件 {name} 加载失败，已跳过（退避后重试）: {e}");
+                    }
                 }
                 continue;
             };

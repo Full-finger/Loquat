@@ -14,15 +14,15 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 
 use super::api_plugins::{
-    api_adapters, api_adapters_apply, api_disable, api_enable, api_install, api_plugin_asset_delete,
-    api_plugin_asset_upload, api_plugin_asset_view, api_plugin_assets, api_plugin_config,
-    api_plugin_config_save, api_plugins, api_providers, api_providers_save,
+    api_adapters, api_adapters_apply, api_disable, api_enable, api_install,
+    api_plugin_asset_delete, api_plugin_asset_upload, api_plugin_asset_view, api_plugin_assets,
+    api_plugin_config, api_plugin_config_save, api_plugins, api_providers, api_providers_save,
 };
 use super::api_sandbox::{
     api_sandbox_history, api_sandbox_media, api_sandbox_send, api_sandbox_session_create,
     api_sandbox_session_delete, api_sandbox_session_rename, api_sandbox_sessions,
 };
-use super::{authorized, unauthorized, STREAM_TX, WebState};
+use super::{authorized, unauthorized, WebState, STREAM_TX};
 use crate::stats;
 
 /// spawn_blocking 任务 panic 时兜底，不让请求静默挂死。
@@ -38,7 +38,9 @@ pub(super) fn join_lost() -> Response {
 /// 慢请求（LLM 等待、平台超时）不再冻结 WS 推流与其余 API。
 macro_rules! blocking {
     ($state:expr, $body:expr) => {
-        tokio::task::spawn_blocking(move || $body).await.unwrap_or_else(|_| join_lost())
+        tokio::task::spawn_blocking(move || $body)
+            .await
+            .unwrap_or_else(|_| join_lost())
     };
 }
 pub(crate) use blocking;
@@ -62,15 +64,24 @@ pub fn routes() -> Router<Arc<WebState>> {
         .route("/api/sandbox/media/{name}", get(api_sandbox_media))
         .route("/api/adapters", get(api_adapters))
         .route("/api/adapters/apply", post(api_adapters_apply))
-        .route("/api/providers", get(api_providers).post(api_providers_save))
-        .route("/api/plugins/{name}/config", get(api_plugin_config).put(api_plugin_config_save))
+        .route(
+            "/api/providers",
+            get(api_providers).post(api_providers_save),
+        )
+        .route(
+            "/api/plugins/{name}/config",
+            get(api_plugin_config).put(api_plugin_config_save),
+        )
         .route(
             "/api/plugins/{name}/assets",
             get(api_plugin_assets)
                 .post(api_plugin_asset_upload)
                 .delete(api_plugin_asset_delete),
         )
-        .route("/api/plugins/{name}/assets/view", get(api_plugin_asset_view))
+        .route(
+            "/api/plugins/{name}/assets/view",
+            get(api_plugin_asset_view),
+        )
         .route("/api/plugins", get(api_plugins))
         .route("/api/plugins/{name}/enable", post(api_enable))
         .route("/api/plugins/{name}/disable", post(api_disable))
@@ -81,10 +92,7 @@ pub fn routes() -> Router<Arc<WebState>> {
         .route("/ext/{name}/ui.js", get(ext_ui_js))
 }
 
-async fn api_status(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-) -> Response {
+async fn api_status(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
     if !authorized(&state, &headers) {
         return unauthorized();
     }
@@ -96,7 +104,10 @@ async fn api_status(
         let alive = core
             .get("adapters")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().any(|x| x.get("alive").and_then(|b| b.as_bool()).unwrap_or(false)))
+            .map(|a| {
+                a.iter()
+                    .any(|x| x.get("alive").and_then(|b| b.as_bool()).unwrap_or(false))
+            })
             .unwrap_or(false);
         // 适配器子进程占用：按 pid 探测 CPU/内存，进程已退出的留空
         if let Some(arr) = core.get_mut("adapters").and_then(|v| v.as_array_mut()) {
@@ -120,6 +131,7 @@ async fn api_status(
             // 可观测性最小集（26102701 建议 8）：队列占用 / worker 丢弃 / 分阶段延迟
             "main_backlog": stats::main_backlog(),
             "worker_dropped": stats::worker_dropped(),
+            "duplicates": stats::duplicates(),
             "latency": stats::latency_report(),
             "uptime_sec": super::uptime_sec(),
             "sys": super::proc::host(),
@@ -132,10 +144,7 @@ async fn api_status(
 /// 插件贡献的导航 tab（WebUI 扩展机制）：聚合已启用插件的 TABS 声明。
 /// 内置页面的导航在前端 tabs.ts 声明（组件本来就在前端），不经过宿主。
 /// 虽只是导航元数据，也与其他端点统一鉴权（避免「免 token 探针」）。
-async fn api_extensions_ui(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-) -> Response {
+async fn api_extensions_ui(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
     if !authorized(&state, &headers) {
         return unauthorized();
     }
@@ -177,10 +186,7 @@ async fn ext_ui_js(
     }
 }
 
-async fn api_reload_napcat(
-    State(state): State<Arc<WebState>>,
-    headers: HeaderMap,
-) -> Response {
+async fn api_reload_napcat(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
     if !authorized(&state, &headers) {
         return unauthorized();
     }
@@ -223,7 +229,8 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            if let Ok(v) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
             {
                 out.push(v);
                 i += 3;

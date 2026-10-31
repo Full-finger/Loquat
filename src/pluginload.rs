@@ -45,6 +45,15 @@ pub type Loaded = (Py<PyModule>, i64, bool, bool);
 /// enabled 声明与是否可安装。
 pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("读插件失败 {path:?}: {e}"))?;
+    // 插件 API 版本：签名行可带 v<N>，缺省视为 v1（兼容存量插件）。
+    // 未知版本明确拒载（进失败退避），不静默尝试（评审建议 9）。
+    let first_line = source.lines().next().unwrap_or("").trim_start();
+    if let Some(rest) = first_line.strip_prefix(SIGNATURE) {
+        let ver = rest.trim();
+        if !ver.is_empty() && ver != "v1" {
+            return Err(format!("插件 API 版本不支持: {ver}（宿主支持 v1）").into());
+        }
+    }
     let config_path = path.parent().unwrap_or(Path::new(".")).join(CONFIG_FILE);
     // 没有配置文件 = 空配置，不算错误
     let config_yaml = match std::fs::read_to_string(&config_path) {

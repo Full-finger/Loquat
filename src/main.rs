@@ -4,6 +4,7 @@
 
 mod business;
 mod console;
+mod dedupe;
 mod event;
 mod ffi;
 mod log;
@@ -19,22 +20,26 @@ use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::c_char;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use business::Business;
-use event::{Chat, Incoming, parse_incoming};
+use event::{parse_incoming, Chat, Incoming};
 use ffi::CoreDll;
 
 const EXTENSIONS_DIR: &str = "extensions";
 
 static EVENT_TX: OnceLock<mpsc::Sender<HostMsg>> = OnceLock::new();
 
-// 宿主主循环的两类输入：Go 核心的事件、控制台命令。
+// 宿主主循环的三类输入：Go 核心的事件、控制台命令、退出信号。
 enum HostMsg {
     Event(Vec<u8>),
     Command(String),
+    /// Ctrl+C / console exit：主循环排空 worker 后正常退出（评审建议 9：
+    /// 不再 process::exit 硬退，正在处理的会话历史可能丢最后一次写入）
+    Shutdown,
 }
 
 // worker 池：事件处理挪出主循环，慢回复（LLM 最长 60s）不再阻塞
@@ -154,12 +159,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // worker 池：见顶部常量注释。catch_unwind 兜一条消息的 panic 只损失
     // 一次迭代——线程死亡会让该 chat 后续消息静默失去去处。
-    let workers: Vec<mpsc::SyncSender<Incoming>> = (0..WORKER_COUNT)
+    // workers 与线程句柄成对收集：句柄在退出时 join，排空在途消息
+    let (workers, worker_handles): (Vec<mpsc::SyncSender<Incoming>>, Vec<_>) = (0..WORKER_COUNT)
         .map(|idx| {
             let (tx, rx) = mpsc::sync_channel::<Incoming>(WORKER_QUEUE_CAP);
             let worker_dll = Arc::clone(&dll);
             let worker_business = Arc::clone(&business);
-            std::thread::spawn(move || {
+            let h = std::thread::spawn(move || {
                 for incoming in rx {
                     let chat_id = incoming.chat.id().to_string();
                     // panic 载荷必须留痕：静默吞掉会让会话砖化且查不到原因（26102701#8）
@@ -173,20 +179,26 @@ fn main() -> Result<(), Box<dyn Error>> {
                     stats::worker_settle(idx, &chat_id);
                 }
             });
-            tx
+            (tx, h)
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .into_iter()
+        .unzip();
 
-    // Ctrl+C / 关闭窗口：先停核心（连带杀掉适配器子进程）再退出。
-    // 必须在 CPython 初始化之后注册：SetConsoleCtrlHandler 按注册逆序调用，
-    // 后注册的先执行——让我们的处理器排到 CPython 前面，否则它会把 Ctrl+C
-    // 吞成 KeyboardInterrupt 或返回“已处理”截断调用链，导致退出失效。
-    let dll_for_signal = Arc::clone(&dll);
+    // Ctrl+C：第一次触发主循环排空退出，第二次直接强退（用户不耐烦时
+    // 的保底）。必须在 CPython 初始化之后注册：SetConsoleCtrlHandler 按
+    // 注册逆序调用，后注册的先执行——让我们的处理器排到 CPython 前面，
+    // 否则它会把 Ctrl+C 吞成 KeyboardInterrupt 或返回"已处理"截断调用链，
+    // 导致退出失效。
+    let shutdown_tx = tx.clone();
+    let shutdown_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag_for_signal = Arc::clone(&shutdown_flag);
     ctrlc::set_handler(move || {
-        log_info!("收到 Ctrl+C，停止核心与适配器");
-        dll_for_signal.stop();
-        log_info!("已退出");
-        std::process::exit(0);
+        if flag_for_signal.swap(true, Ordering::SeqCst) {
+            std::process::exit(0);
+        }
+        log_info!("收到 Ctrl+C，排空在途消息后退出（再按一次强制退出）");
+        let _ = shutdown_tx.send(HostMsg::Shutdown);
     })
     .expect("设置 Ctrl+C 处理器失败");
 
@@ -209,6 +221,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 };
                 stats::record_parse(parse_started.elapsed());
+                // 消息去重：重连重放/上游重试会重复投递，LLM 场景即重复计费
+                if dedupe::duplicate(&incoming.platform, &incoming.message_id) {
+                    stats::bump_duplicate();
+                    continue;
+                }
                 log_info!(
                     "消息: [{} {}] {}",
                     incoming.chat.message_type(),
@@ -244,9 +261,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-            HostMsg::Command(cmd) => console::run_command(&cmd, &dll, &business),
+            HostMsg::Command(cmd) => {
+                if console::run_command(&cmd, &dll, &business) {
+                    break;
+                }
+            }
+            HostMsg::Shutdown => break,
         }
     }
+
+    // 优雅退出（评审建议 9）：关 worker 队列入口，等在途消息处理完
+    // （会话落盘在 handle 内完成），再停核心（连带杀适配器子进程）
+    drop(workers);
+    for h in worker_handles {
+        let _ = h.join();
+    }
+    log_info!("在途消息已排空，停止核心与适配器");
+    dll.stop();
     Ok(())
 }
 
@@ -266,14 +297,19 @@ mod tests {
 
     #[test]
     fn ffi_error_envelope_is_detected() {
-        assert!(ffi_resp_failed(r#"{"error":"发送被 NapCat 拒绝: retcode=1200"}"#));
+        assert!(ffi_resp_failed(
+            r#"{"error":"发送被 NapCat 拒绝: retcode=1200"}"#
+        ));
         assert!(!ffi_resp_failed(r#"{"messageId":"123"}"#));
         assert!(!ffi_resp_failed("not json"), "非 JSON 不拦");
     }
 
     #[test]
     fn panic_text_handles_common_payloads() {
-        assert_eq!(panic_text(&(Box::new("boom") as Box<dyn Any + Send>)), "boom");
+        assert_eq!(
+            panic_text(&(Box::new("boom") as Box<dyn Any + Send>)),
+            "boom"
+        );
         assert_eq!(
             panic_text(&(Box::new(String::from("code 7")) as Box<dyn Any + Send>)),
             "code 7"
@@ -328,4 +364,3 @@ mod tests {
         panic!("{what} 超时，最后状态: {last}");
     }
 }
-
