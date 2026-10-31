@@ -50,6 +50,8 @@ venv/
 # 插件配置是运行时状态（个人 token、启停声明），不入库：
 # 有 SCHEMA 的插件缺失它会被提示 install，按 SCHEMA 生成
 extensions/*/config.yaml
+# 启停标记同理是运行时状态（enable/disable 写入/删除）
+extensions/*/.disabled
 
 # 编辑器 / 系统
 .DS_Store
