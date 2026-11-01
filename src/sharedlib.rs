@@ -16,10 +16,11 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
 /// 库清单：(相对路径, 注册名)。按依赖序：log 最先（其余库顶层 import 它），
-/// agent/webtools 依赖 log；loquat_state 锚点由 pybridge::ensure_state_module 在
+/// seg 无依赖；agent/webtools 依赖 log；loquat_state 锚点由 pybridge::ensure_state_module 在
 /// 进程启动时注册，agent.py 顶层从 sys.modules 取。
-const LIBS: [(&str, &str); 5] = [
+const LIBS: [(&str, &str); 6] = [
     ("_lib/log.py", "loquat_log"),
+    ("_lib/seg.py", "loquat_seg"),
     ("_lib/config.py", "loquat_cfglib"),
     ("_lib/agent.py", "loquat_agent"),
     ("_lib/llm.py", "loquat_llm"),

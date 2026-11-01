@@ -90,9 +90,10 @@ fn handle_message(incoming: Incoming, _dll: &CoreDll, business: &Business) {
     };
     stats::record_chain(chain_started.elapsed());
 
-    // 回复交出站队列：限流、重试、统计都在 sender 池（建议 2）
-    for reply in replies {
-        outbound::enqueue(&incoming.platform, &incoming.chat, reply);
+    // 回复交出站队列：限流、重试、统计都在 sender 池（建议 2）；
+    // 每条 Message 一次发送，段列表原样下发（建议 5）
+    for msg in replies {
+        outbound::enqueue(&incoming.platform, &incoming.chat, msg);
     }
 }
 

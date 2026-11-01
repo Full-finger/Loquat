@@ -4,11 +4,15 @@
 //!
 //! 插件约定（extensions/<名>/ 目录，自包含）：
 //!   plugin.py               入口：首行必须是签名 `# loquat-plugin`（宿主
-//!                           识别插件的依据，无签名目录忽略）；必须实现
-//!                           handle(ctx) -> list[str]
+//!                           识别插件的依据，无签名目录忽略），可带 API 版本
+//!                           `# loquat-plugin v2`（缺省 v1）；必须实现 handle(ctx)
 //!                           （ctx: dict，含 text/chat/segments/
-//!                           user_id/self_id/message_id/is_at_bot/images；
-//!                           返回空列表 = 不归我管，路由链继续）；
+//!                           user_id/self_id/message_id/is_at_bot/images）
+//!                           v1 返回 list[str]，每个字符串一条消息；
+//!                           v2 返回 str | list[段] | None，list 为**一条**消息的
+//!                           扁平段列表（protojson 形态，与 ctx["segments"] 同构，
+//!                           构造器见 loquat_seg），可声明 API = 2 与签名交叉校验；
+//!                           返回空（[] / None / ""）= 不归我管，路由链继续；
 //!                           可声明 PRIORITY = <int>（越小越先，缺省 100）
 //!   config.yaml             可选：插件配置（运行时状态，不入库）。声明了
 //!                           SCHEMA 却缺失 = 未安装：不加载，控制台
@@ -45,9 +49,15 @@ use crate::pybridge;
 
 mod assets_api;
 mod config_api;
+mod reply;
 mod sync;
 
 pub(crate) use config_api::serde_yamlish;
+
+/// 一条出站消息：扁平段列表（protojson 形态，与入站 ctx["segments"] 同构，
+/// 如 [{"text":{"text":"看这个"}}, {"image":{"url":"https://…"}}]）。
+/// 出站原样序列化进 SendMessageRequest.segments（评审建议 5）。
+pub type Message = Vec<serde_json::Value>;
 
 const ENTRY_FILE: &str = "plugin.py";
 pub(crate) const CONFIG_FILE: &str = "config.yaml";
@@ -97,6 +107,8 @@ struct LoadedPlugin {
     marker_disabled: bool, // .disabled 标记（控制台启停）
     module: Py<PyModule>,
     mtime: SystemTime,
+    /// 插件 API 版本（签名行解析），决定 handle 返回值怎么解释
+    api_version: u8,
 }
 
 impl LoadedPlugin {
@@ -184,7 +196,7 @@ impl Business {
 
     /// 责任链路由：按优先级逐个调用，第一个返回非空的插件接管。
     /// 目录同步按 SYNC_INTERVAL_MS 节流，其余消息直接用快照。
-    pub fn handle(&self, ctx: &MsgCtx) -> Result<Vec<String>, Box<dyn Error>> {
+    pub fn handle(&self, ctx: &MsgCtx) -> Result<Vec<Message>, Box<dyn Error>> {
         if self.sync_due() {
             if let Err(e) = self.sync() {
                 log_error!("插件目录扫描失败（沿用已加载插件）: {e}");
@@ -192,16 +204,16 @@ impl Business {
         }
         // 锁内只做快照，链路放锁外跑：Py<PyModule> 是强引用，即使中途热重载
         // 换掉模块，快照仍持有旧模块存活；LLM 等长等待不再堵其他线程
-        let chain: Vec<(Py<PyModule>, String)> = Python::attach(|py| {
+        let chain: Vec<(Py<PyModule>, String, u8)> = Python::attach(|py| {
             let plugins = self.plugins.read().unwrap_or_else(recover_poison);
             plugins
                 .iter()
                 .filter(|p| p.enabled())
-                .map(|p| (p.module.clone_ref(py), p.dir_name.clone()))
+                .map(|p| (p.module.clone_ref(py), p.dir_name.clone(), p.api_version))
                 .collect()
         });
-        for (module, name) in &chain {
-            match Self::call(module, ctx) {
+        for (module, name, api_version) in &chain {
+            match Self::call(module, ctx, *api_version) {
                 Ok(replies) if !replies.is_empty() => return Ok(replies),
                 Ok(_) => continue,
                 Err(e) => log_error!("插件 {name} 处理出错: {e}"),
@@ -210,7 +222,11 @@ impl Business {
         Ok(Vec::new())
     }
 
-    fn call(module: &Py<PyModule>, ctx: &MsgCtx) -> Result<Vec<String>, Box<dyn Error>> {
+    fn call(
+        module: &Py<PyModule>,
+        ctx: &MsgCtx,
+        api_version: u8,
+    ) -> Result<Vec<Message>, Box<dyn Error>> {
         // 登记"哪里来"：插件经能力桥发逃生舱动作时按此路由平台
         pybridge::set_current_platform(ctx.platform);
         let result = Python::attach(|py| {
@@ -229,11 +245,21 @@ impl Business {
             let segments = json_mod.call_method1("loads", (segments_json,))?;
             dict.set_item("segments", segments)?;
             dict.set_item("platform", ctx.platform)?;
-            let replies = module.bind(py).call_method1("handle", (dict,))?;
-            Ok(replies.extract()?)
+            let ret = module.bind(py).call_method1("handle", (dict,))?;
+            reply::from_python(py, &ret, api_version)
         });
         pybridge::clear_current_platform();
         result
+    }
+
+    /// 测试便利：回复投影为文本（v1 字符串经 text 段往返恒等）。
+    #[cfg(test)]
+    pub(super) fn handle_text(&self, ctx: &MsgCtx) -> Result<Vec<String>, Box<dyn Error>> {
+        Ok(self
+            .handle(ctx)?
+            .iter()
+            .map(|m| crate::event::derive_text(m))
+            .collect())
     }
 
     /// 运行时启停插件：写/删 .disabled 标记并同步内存。持久化，重启依然生效。
@@ -344,3 +370,6 @@ mod tests_config;
 
 #[cfg(test)]
 mod tests_webtools;
+
+#[cfg(test)]
+mod tests_reply;

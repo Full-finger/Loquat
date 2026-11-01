@@ -21,6 +21,11 @@ const DEFAULT_PRIORITY: i64 = 100;
 /// plugin.py 首行签名：宿主识别插件的依据。
 pub(crate) const SIGNATURE: &str = "# loquat-plugin";
 
+/// 宿主支持的插件 API 版本（评审建议 5）：
+///   v1  handle 返回 list[str]，每个字符串一条消息（存量）
+///   v2  handle 可返回 str / list[段] / None，段为 protojson 形态与入站同构
+pub(crate) const SUPPORTED_API: [u8; 2] = [1, 2];
+
 /// 文件修改时间；失败（不存在等）由调用方处理。
 pub(crate) fn file_mtime(path: &Path) -> Result<SystemTime, std::io::Error> {
     std::fs::metadata(path)?.modified()
@@ -38,22 +43,52 @@ pub(crate) fn has_signature(entry_py: &Path) -> bool {
 }
 
 /// load_module 的产物：模块、优先级、config.enabled 声明、是否可安装
-/// （声明了 SCHEMA 且 config.yaml 缺失；此时模块不应生效，等 install 命令）。
-pub type Loaded = (Py<PyModule>, i64, bool, bool);
+/// （声明了 SCHEMA 且 config.yaml 缺失；此时模块不应生效，等 install 命令）、
+/// 插件 API 版本（决定 handle 返回值怎么解释）。
+pub struct Loaded {
+    pub module: Py<PyModule>,
+    pub priority: i64,
+    pub config_enabled: bool,
+    pub installable: bool,
+    pub api_version: u8,
+}
+
+/// 签名行的 API 版本：`# loquat-plugin` = v1（存量），`# loquat-plugin v<N>` 显式。
+/// 不支持的版本明确拒载（进失败退避），不静默尝试（评审建议 9）。
+/// 首行不是签名也按 v1：已加载插件不因事后抹掉签名而凭空卸载。
+pub(crate) fn parse_api_version(first_line: &str) -> Result<u8, String> {
+    let Some(rest) = first_line.trim_start().strip_prefix(SIGNATURE) else {
+        return Ok(1);
+    };
+    let ver = rest.trim();
+    if ver.is_empty() {
+        return Ok(1);
+    }
+    let supported = || {
+        SUPPORTED_API
+            .iter()
+            .map(|v| format!("v{v}"))
+            .collect::<Vec<_>>()
+            .join("/")
+    };
+    let n = ver
+        .strip_prefix('v')
+        .and_then(|s| s.parse::<u8>().ok())
+        .ok_or_else(|| format!("插件 API 版本无法识别: {ver}（宿主支持 {}）", supported()))?;
+    if !SUPPORTED_API.contains(&n) {
+        return Err(format!(
+            "插件 API 版本不支持: {ver}（宿主支持 {}）",
+            supported()
+        ));
+    }
+    Ok(n)
+}
 
 /// 加载插件入口，注入 config / core 环境。返回模块、优先级、配置内
-/// enabled 声明与是否可安装。
+/// enabled 声明、是否可安装与 API 版本。
 pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("读插件失败 {path:?}: {e}"))?;
-    // 插件 API 版本：签名行可带 v<N>，缺省视为 v1（兼容存量插件）。
-    // 未知版本明确拒载（进失败退避），不静默尝试（评审建议 9）。
-    let first_line = source.lines().next().unwrap_or("").trim_start();
-    if let Some(rest) = first_line.strip_prefix(SIGNATURE) {
-        let ver = rest.trim();
-        if !ver.is_empty() && ver != "v1" {
-            return Err(format!("插件 API 版本不支持: {ver}（宿主支持 v1）").into());
-        }
-    }
+    let api_version = parse_api_version(source.lines().next().unwrap_or(""))?;
     let config_path = path.parent().unwrap_or(Path::new(".")).join(CONFIG_FILE);
     // 没有配置文件 = 空配置，不算错误
     let config_yaml = match std::fs::read_to_string(&config_path) {
@@ -94,6 +129,18 @@ pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
         let key = name.to_string_lossy().into_owned();
         let _ = modules.call_method1("pop", (key, py.None()));
 
+        // v2 起模块可声明 API = <N>，须与签名一致（提案 §6）；缺省以签名为准。
+        // 不一致硬拒：AI 生成插件的场景下静默降级最难排查。
+        if api_version >= 2 {
+            if let Ok(declared) = module.getattr("API").and_then(|v| v.extract::<u8>()) {
+                if declared != api_version {
+                    return Err(
+                        format!("插件签名 v{api_version} 但声明 API = {declared}，拒载").into(),
+                    );
+                }
+            }
+        }
+
         // 可安装 = 声明了 SCHEMA 且 config.yaml 缺失。宿主不自动生成模板，
         // 由控制台 install 命令显式安装（生成 config.yaml + .disabled 标记）
         let installable = module.getattr("SCHEMA").is_ok() && !dir.join(CONFIG_FILE).is_file();
@@ -102,12 +149,18 @@ pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
             .getattr("PRIORITY")
             .and_then(|v| v.extract::<i64>())
             .unwrap_or(DEFAULT_PRIORITY);
-        let enabled = module
+        let config_enabled = module
             .getattr("config")
             .and_then(|c| c.get_item("enabled"))
             .and_then(|v| v.extract::<bool>())
             .unwrap_or(true);
-        Ok((module.into(), priority, enabled, installable))
+        Ok(Loaded {
+            module: module.into(),
+            priority,
+            config_enabled,
+            installable,
+            api_version,
+        })
     })
 }
 

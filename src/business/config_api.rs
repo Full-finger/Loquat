@@ -121,7 +121,7 @@ impl Business {
                     let loaded = pluginload::load_module(&dir_path.join(ENTRY_FILE))
                         .map_err(|e| format!("加载插件失败: {e}"))?;
                     Python::attach(|py| -> Result<String, String> {
-                        let schema_any = loaded.0.bind(py).getattr("SCHEMA");
+                        let schema_any = loaded.module.bind(py).getattr("SCHEMA");
                         if schema_any.is_err() {
                             return Err(format!("{name} 未声明 SCHEMA，无可编辑配置"));
                         }
@@ -181,9 +181,9 @@ impl Business {
         let cfg_path = dir_path.join(CONFIG_FILE);
         let loaded = pluginload::load_module(&dir_path.join(ENTRY_FILE))
             .map_err(|e| format!("加载插件失败: {e}"))?;
-        // 注意 loaded.3 是 installable（声明 SCHEMA 且 config.yaml 缺失），
+        // 注意 loaded.installable 只表示「声明 SCHEMA 且 config.yaml 缺失」，
         // 已安装的插件恒为 false，不能当“有无 SCHEMA”用——直接探测属性
-        let has_schema = Python::attach(|py| loaded.0.bind(py).getattr("SCHEMA").is_ok());
+        let has_schema = Python::attach(|py| loaded.module.bind(py).getattr("SCHEMA").is_ok());
         if !has_schema {
             return Err(format!("{name} 未声明 SCHEMA，无可保存配置"));
         }
@@ -205,7 +205,7 @@ impl Business {
         let schema_json: serde_json::Value =
             Python::attach(|py| -> Result<serde_json::Value, String> {
                 let schema = loaded
-                    .0
+                    .module
                     .bind(py)
                     .getattr("SCHEMA")
                     .map_err(|e| e.to_string())?;
@@ -215,7 +215,7 @@ impl Business {
         merge_secrets(&mut py_values, &schema_json, &existing);
         let yaml_text = Python::attach(|py| -> Result<String, String> {
             let schema = loaded
-                .0
+                .module
                 .bind(py)
                 .getattr("SCHEMA")
                 .map_err(|e| e.to_string())?;
@@ -251,11 +251,11 @@ impl Business {
         // 加载只为探测 SCHEMA；模块用完即弃，下轮扫描会正式加载
         let loaded =
             pluginload::load_module(&entry_py).map_err(|e| format!("加载插件失败: {e}"))?;
-        if !loaded.3 {
+        if !loaded.installable {
             return Err(format!("{name} 未声明 SCHEMA，无需安装"));
         }
         Python::attach(|py| -> Result<(), String> {
-            sharedlib::ensure_config_file(&dir_path, loaded.0.bind(py))
+            sharedlib::ensure_config_file(&dir_path, loaded.module.bind(py))
                 .map(|_| ())
                 .map_err(|e| format!("生成 config.yaml 失败: {e}"))
         })?;

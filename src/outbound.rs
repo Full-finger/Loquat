@@ -16,6 +16,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::business::Message;
 use crate::console;
 use crate::event::Chat;
 use crate::ffi;
@@ -38,7 +39,8 @@ pub(crate) struct OutboundMsg {
     platform: String,
     chat_kind: &'static str,
     chat_id: String,
-    reply: String,
+    /// 一条消息的扁平段列表（建议 5）：原样序列化进 SendMessageRequest.segments
+    segments: Message,
 }
 
 static QUEUE_TX: OnceLock<Vec<mpsc::SyncSender<OutboundMsg>>> = OnceLock::new();
@@ -69,7 +71,7 @@ fn sender_of(chat_id: &str) -> usize {
 }
 
 /// worker 产出回复后入队；满则丢弃并计数（不阻塞 worker）。
-pub(crate) fn enqueue(platform: &str, chat: &Chat, reply: String) {
+pub(crate) fn enqueue(platform: &str, chat: &Chat, segments: Message) {
     let (chat_kind, chat_id) = match chat {
         Chat::Private { id } => ("private", id.as_str()),
         Chat::Group { id } => ("group", id.as_str()),
@@ -78,7 +80,7 @@ pub(crate) fn enqueue(platform: &str, chat: &Chat, reply: String) {
         platform: platform.to_string(),
         chat_kind,
         chat_id: chat_id.to_string(),
-        reply,
+        segments,
     };
     let sent = QUEUE_TX
         .get()
@@ -144,26 +146,50 @@ fn backoff_sleep(attempt: u32) {
     ));
 }
 
+/// 日志与沙箱记账用的文本投影：有文本取文本（与入站 derive_text 同一投影），
+/// 纯媒体/纯引用消息给占位，避免图片消息在日志与沙箱里留空。
+pub(crate) fn summary_of(segments: &[serde_json::Value]) -> String {
+    let text = crate::event::derive_text(segments);
+    if !text.is_empty() {
+        return text;
+    }
+    let kind = segments
+        .iter()
+        .find_map(|s| s.as_object().and_then(|o| o.keys().next()))
+        .map(String::as_str)
+        .unwrap_or("");
+    match kind {
+        "" => "",
+        "image" => "[图片]",
+        "voice" => "[语音]",
+        "video" => "[视频]",
+        "file" => "[文件]",
+        _ => "[消息]",
+    }
+    .to_string()
+}
+
 fn send_with_retry(dll: &CoreDll, msg: OutboundMsg) {
-    let segments = serde_json::json!([{ "text": { "text": msg.reply } }]).to_string();
+    let OutboundMsg {
+        platform,
+        chat_kind,
+        chat_id,
+        segments,
+    } = msg;
+    let summary = summary_of(&segments);
+    let payload = serde_json::Value::Array(segments).to_string();
     for attempt in 0..=RETRY_MAX {
-        throttle(&msg.platform);
+        throttle(&platform);
         let started = Instant::now();
-        let result = dll.send_message(
-            &msg.platform,
-            msg.chat_kind,
-            &msg.chat_id,
-            &segments,
-            SEND_TIMEOUT_MS,
-        );
+        let result = dll.send_message(&platform, chat_kind, &chat_id, &payload, SEND_TIMEOUT_MS);
         stats::record_send(started.elapsed());
         match result {
             Ok(resp) => {
                 // Go 侧约定：失败装在 {"error": ...} 里（26102701#5）
                 if !ffi::resp_failed(&resp) {
                     stats::bump_reply();
-                    webui::publish_reply(&msg.platform, msg.chat_kind, &msg.chat_id, &msg.reply);
-                    log_info!("已回复: {} resp={resp}", console::brief(&msg.reply, 60));
+                    webui::publish_reply(&platform, chat_kind, &chat_id, &summary);
+                    log_info!("已回复: {} resp={resp}", console::brief(&summary, 60));
                     return;
                 }
                 if attempt < RETRY_MAX && resp.contains("retcode=1200") {
@@ -211,5 +237,29 @@ mod tests {
     fn sender_of_is_stable() {
         assert_eq!(sender_of("chat-a"), sender_of("chat-a"));
         assert!(sender_of("chat-a") < SENDERS);
+    }
+
+    #[test]
+    fn summary_projects_text_or_placeholder() {
+        use serde_json::json;
+        // 有文本：拼全部 text 段，忽略夹在中间的媒体
+        let mixed = [
+            json!({ "reply": { "messageId": "m1" } }),
+            json!({ "text": { "text": "看" } }),
+            json!({ "image": { "url": "https://x" } }),
+            json!({ "text": { "text": "这个" } }),
+        ];
+        assert_eq!(summary_of(&mixed), "看这个");
+        // 纯媒体：按首段类型给占位，日志与沙箱不留空
+        assert_eq!(
+            summary_of(&[json!({ "image": { "url": "https://x" } })]),
+            "[图片]"
+        );
+        assert_eq!(
+            summary_of(&[json!({ "voice": { "url": "https://x" } })]),
+            "[语音]"
+        );
+        assert_eq!(summary_of(&[json!({ "at": { "target": "1" } })]), "[消息]");
+        assert_eq!(summary_of(&[]), "");
     }
 }

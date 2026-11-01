@@ -10,7 +10,7 @@ use super::recover_poison;
 use super::Business;
 use super::LoadedPlugin;
 use super::{CONFIG_FILE, DISABLE_MARKER, ENTRY_FILE};
-use crate::pluginload::{self, file_mtime, has_signature};
+use crate::pluginload::{self, file_mtime, has_signature, Loaded};
 use crate::{log_error, log_info, pybridge, sharedlib};
 
 impl Business {
@@ -95,15 +95,23 @@ impl Business {
                 }
                 match pluginload::load_module(&path) {
                     // 可安装：模块只为探测 SCHEMA 而加载，用完即弃
-                    Ok((_, _, _, true)) => {
+                    Ok(Loaded {
+                        installable: true, ..
+                    }) => {
                         self.clear_failed(&name);
                         self.note_installable(&name);
                     }
-                    Ok((module, priority, config_enabled, _)) => {
+                    Ok(Loaded {
+                        module,
+                        priority,
+                        config_enabled,
+                        api_version,
+                        ..
+                    }) => {
                         self.clear_failed(&name);
                         let enabled = config_enabled && !marker_now;
                         log_info!(
-                            "插件已加载: {name}（优先级 {priority}，{}）",
+                            "插件已加载: {name}（优先级 {priority}，API v{api_version}，{}）",
                             if enabled { "启用" } else { "禁用" }
                         );
                         plugins.push(LoadedPlugin {
@@ -114,6 +122,7 @@ impl Business {
                             marker_disabled: marker_now,
                             module,
                             mtime,
+                            api_version,
                         });
                     }
                     Err(e) => {
@@ -136,7 +145,13 @@ impl Business {
             }
             if config_changed {
                 match pluginload::load_module(&path) {
-                    Ok((module, priority, config_enabled, installable)) => {
+                    Ok(Loaded {
+                        module,
+                        priority,
+                        config_enabled,
+                        installable,
+                        api_version,
+                    }) => {
                         if installable {
                             // config.yaml 被删：回到未安装，卸载等 install
                             plugins.remove(idx);
@@ -148,6 +163,7 @@ impl Business {
                         existing.priority = priority;
                         existing.config_enabled = config_enabled;
                         existing.mtime = mtime;
+                        existing.api_version = api_version;
                         self.reloads.fetch_add(1, Ordering::Relaxed);
                         pybridge::collect_garbage();
                         log_info!(

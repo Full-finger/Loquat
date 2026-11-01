@@ -21,7 +21,7 @@ fn config_yaml_is_injected_and_gates_enabled() {
     .unwrap();
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     assert_eq!(
-        business.handle(&ctx("x")).unwrap(),
+        business.handle_text(&ctx("x")).unwrap(),
         vec!["你好呀".to_string()]
     );
 
@@ -32,7 +32,7 @@ fn config_yaml_is_injected_and_gates_enabled() {
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1500));
-    assert!(business.handle(&ctx("x")).unwrap().is_empty());
+    assert!(business.handle_text(&ctx("x")).unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -55,7 +55,7 @@ fn install_generates_config_and_gates_loading() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
 
     // 未安装：不加载，消息路由不到
-    assert!(business.handle(&ctx("x")).unwrap().is_empty());
+    assert!(business.handle_text(&ctx("x")).unwrap().is_empty());
 
     // 安装：按 SCHEMA 生成 config.yaml，保持未启用
     let msg = business.install("cfgtest").unwrap();
@@ -74,10 +74,10 @@ fn install_generates_config_and_gates_loading() {
     );
 
     // 未启用：路由不到；enable 后生效
-    assert!(business.handle(&ctx("x")).unwrap().is_empty());
+    assert!(business.handle_text(&ctx("x")).unwrap().is_empty());
     assert!(business.set_enabled("cfgtest", true));
     assert_eq!(
-        business.handle(&ctx("x")).unwrap(),
+        business.handle_text(&ctx("x")).unwrap(),
         vec!["你好呀".to_string()]
     );
 
@@ -119,7 +119,7 @@ fn config_yaml_change_reloads_and_takes_effect() {
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     assert_eq!(
-        business.handle(&ctx("ping")).unwrap(),
+        business.handle_text(&ctx("ping")).unwrap(),
         vec!["pong".to_string()]
     );
 
@@ -131,7 +131,7 @@ fn config_yaml_change_reloads_and_takes_effect() {
         "enabled: true\nrules:\n  ping: pong2\n",
     );
     assert_eq!(
-        business.handle(&ctx("ping")).unwrap(),
+        business.handle_text(&ctx("ping")).unwrap(),
         vec!["pong2".to_string()]
     );
     assert_eq!(business.reloads.load(Ordering::Relaxed), 1);

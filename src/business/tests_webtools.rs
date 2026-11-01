@@ -133,7 +133,7 @@ fn webtools_parses_ddg_and_extracts_text() {
     };
 
     // DDG 解析：uddg 跳转还原成真实链接，标题/摘要按文档顺序配对
-    let replies = business.handle(&ctx("search")).unwrap();
+    let replies = business.handle_text(&ctx("search")).unwrap();
     assert_eq!(replies.len(), 1);
     let out = &replies[0];
     assert!(out.contains("https://a.example/x"), "uddg 应还原: {out}");
@@ -143,7 +143,7 @@ fn webtools_parses_ddg_and_extracts_text() {
     assert!(!out.contains("uddg"), "跳转包装不应直出: {out}");
 
     // DeepSeek 解析：摘要优先 summary（给模型的长摘要），缺失退化 snippet
-    let replies = business.handle(&ctx("ds")).unwrap();
+    let replies = business.handle_text(&ctx("ds")).unwrap();
     assert_eq!(replies.len(), 1);
     let out = &replies[0];
     assert!(out.contains("长摘要甲"), "summary 应优先: {out}");
@@ -154,14 +154,14 @@ fn webtools_parses_ddg_and_extracts_text() {
     assert!(out.contains("https://a.example/1"), "实际: {out}");
 
     // api_base 规整：带不带 /v1 都收敛到 …/v1
-    let replies = business.handle(&ctx("dsurl")).unwrap();
+    let replies = business.handle_text(&ctx("dsurl")).unwrap();
     assert_eq!(
         replies[0],
         "https://api.deepseek.com/v1|https://api.deepseek.com/v1"
     );
 
     // HTML 抽正文：script/style 剔除，块级断行，空白与空行归并
-    let replies = business.handle(&ctx("page")).unwrap();
+    let replies = business.handle_text(&ctx("page")).unwrap();
     assert_eq!(replies.len(), 1);
     let out = &replies[0];
     assert!(out.contains("第一段"), "实际: {out}");
@@ -171,7 +171,7 @@ fn webtools_parses_ddg_and_extracts_text() {
     assert!(!out.contains("\n\n"), "空行应合并: {out}");
 
     // SSRF 防线：内网/环回/保留 literal IP 全拒，公网放行，重定向守卫拒绝内网
-    let replies = business.handle(&ctx("ssrf")).unwrap();
+    let replies = business.handle_text(&ctx("ssrf")).unwrap();
     assert_eq!(replies.len(), 1);
     let out = &replies[0];
     assert!(out.contains("\"errs\": 10"), "10 个内网 URL 应全拒: {out}");

@@ -87,14 +87,23 @@ fn agent_history_survives_plugin_reload() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     let c = |t| ctx_in(chat_ids::HISTORY, t);
     // m1 → 历史 [u1]；m2 → [u1,a1,u2] → 回复后裁剪 [a1,u2,a2]
-    assert_eq!(business.handle(&c("m1")).unwrap(), vec!["H1".to_string()]);
-    assert_eq!(business.handle(&c("m2")).unwrap(), vec!["H3".to_string()]);
+    assert_eq!(
+        business.handle_text(&c("m1")).unwrap(),
+        vec!["H1".to_string()]
+    );
+    assert_eq!(
+        business.handle_text(&c("m2")).unwrap(),
+        vec!["H3".to_string()]
+    );
 
     // 重载插件：模块级状态全换，历史必须从 loquat_state 锚点回来。
     // 若锚点失效，m3 只会看到 [u3]，返回 H1 而非 H4
     std::thread::sleep(std::time::Duration::from_millis(1500));
     write_plugin(&dir, "p", code);
-    assert_eq!(business.handle(&c("m3")).unwrap(), vec!["H4".to_string()]);
+    assert_eq!(
+        business.handle_text(&c("m3")).unwrap(),
+        vec!["H4".to_string()]
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -144,7 +153,7 @@ fn agent_strips_cq_and_prefixes_group_sender() {
         platform: "napcat",
     };
     assert_eq!(
-        business.handle(&group_ctx).unwrap(),
+        business.handle_text(&group_ctx).unwrap(),
         vec![r#"[{"role": "user", "content": "<7> hi"}]"#.to_string()]
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -187,7 +196,9 @@ fn agent_tool_loop_executes_and_passes_schema() {
         ),
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    let replies = business.handle(&ctx_in(chat_ids::TOOLS, "1+1=?")).unwrap();
+    let replies = business
+        .handle_text(&ctx_in(chat_ids::TOOLS, "1+1=?"))
+        .unwrap();
     assert_eq!(replies.len(), 1);
     // 工具执行结果（2+3=5）被回填并在第二轮被模型消费
     assert!(replies[0].contains("answer=5"), "实际: {replies:?}");
@@ -228,7 +239,9 @@ fn agent_unknown_tool_error_feeds_back_to_model() {
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     // dispatch 对未知工具回填错误文本，模型第二轮看到并转述
-    let replies = business.handle(&ctx_in(chat_ids::UNKNOWN, "hi")).unwrap();
+    let replies = business
+        .handle_text(&ctx_in(chat_ids::UNKNOWN, "hi"))
+        .unwrap();
     assert_eq!(replies, vec!["saw=错误：未知工具 'nope'".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -263,7 +276,9 @@ fn agent_tool_loop_caps_at_max_turns() {
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     // 模型永远只发 tool_call：max_turns 用尽强制收尾，本轮无文本回复
     assert_eq!(
-        business.handle(&ctx_in(chat_ids::MAX_TURNS, "hi")).unwrap(),
+        business
+            .handle_text(&ctx_in(chat_ids::MAX_TURNS, "hi"))
+            .unwrap(),
         vec!["EMPTY".to_string()]
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -304,7 +319,10 @@ fn agent_sessions_persist_to_disk_and_reload() {
     let c = |t| ctx_in(chat_ids::PERSIST, t);
 
     // 第一轮：历史进内存，同时落盘
-    assert_eq!(business.handle(&c("m1")).unwrap(), vec!["R1".to_string()]);
+    assert_eq!(
+        business.handle_text(&c("m1")).unwrap(),
+        vec!["R1".to_string()]
+    );
     let file = sess_dir.join(format!("private_{}.json", chat_ids::PERSIST));
     assert!(file.exists(), "落盘文件应存在");
     let raw = std::fs::read_to_string(&file).unwrap();
@@ -313,13 +331,16 @@ fn agent_sessions_persist_to_disk_and_reload() {
 
     // 模拟重启：内存清空，磁盘保留；回填后历史回来
     assert_eq!(
-        business.handle(&c("WIPE")).unwrap(),
+        business.handle_text(&c("WIPE")).unwrap(),
         vec!["wiped".to_string()]
     );
     let (loaded, skipped) = crate::pybridge::load_sessions();
     assert_eq!((loaded, skipped), (1, 0));
     // 回填后的历史 [u:m1, a:R1]，再发 m2 → 3 条 → fake_chat 返回 R3
-    assert_eq!(business.handle(&c("m2")).unwrap(), vec!["R3".to_string()]);
+    assert_eq!(
+        business.handle_text(&c("m2")).unwrap(),
+        vec!["R3".to_string()]
+    );
 
     // 损坏文件跳过：写一个坏的进去，重建后只恢复好的
     std::fs::write(sess_dir.join("group_999.json"), "not json").unwrap();

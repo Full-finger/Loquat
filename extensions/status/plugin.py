@@ -1,11 +1,11 @@
-# loquat-plugin
+# loquat-plugin v2
 # extensions/status/plugin.py：服务器状态插件。
 # 数据来自能力桥 core.system_status()（Go 核心 gopsutil 采集），
-# 用 Pillow 渲染为状态卡片 PNG，以 CQ 图片码回给 NapCat 显示。
+# 用 Pillow 渲染为状态卡片 PNG，以 image 段回给适配器显示（插件 API v2，
+# 段列表直接下发，不再拼 CQ 码）。
 # NapCat 在 WSL 里，所以图片走 /mnt/c/... 的 WSL 路径引用。
 # 配置走 SCHEMA 声明 + loquat_cfglib 校验（库见 extensions/_lib/config.py）。
 
-import base64
 import gc
 import io
 import json
@@ -13,8 +13,10 @@ from pathlib import Path
 
 import loquat_cfglib
 import loquat_log
+import loquat_seg as seg
 from PIL import Image, ImageDraw, ImageFont
 
+API = 2
 PRIORITY = 10  # 状态查询优先于日常问答
 
 # extensions/status/plugin.py -> 仓库根在三级之上
@@ -44,28 +46,27 @@ def _font(size: int):
     return ImageFont.load_default()
 
 
-def handle(ctx: dict) -> list[str]:
+def handle(ctx: dict):
     t = (ctx.get("text") or "").strip()
     if t.startswith("/"):
         t = t.lstrip("/").strip()
     keywords = loquat_cfglib.resolve(SCHEMA, config)["keywords"]  # noqa: F821
     if t not in keywords:
-        return []
+        return None
     d = json.loads(core.system_status())  # noqa: F821 —— core 由宿主运行时注入
     if "error" in d:
-        return [f"状态采集失败：{d['error']}"]
-    return [_image_cq(_render(d))]
+        return f"状态采集失败：{d['error']}"
+    return [_image_seg(_render(d))]
 
 
-def _image_cq(png: bytes) -> str:
+def _image_seg(png: bytes) -> dict:
     """优先把 PNG 落到 data/status.png，以 WSL 路径引用；
-    写文件失败时兜底为 base64 内联。"""
+    写文件失败时兜底为内联 base64（适配器翻成 base64:// 来源）。"""
     try:
-        return f"[CQ:image,file=file://{_to_wsl(_write_snapshot(png))}]"
+        return seg.image(url=f"file://{_to_wsl(_write_snapshot(png))}")
     except OSError as e:
-        loquat_log.warn("status", f"写入快照失败，回退 base64: {e}")
-        b64 = base64.b64encode(png).decode()
-        return f"[CQ:image,file=base64://{b64}]"
+        loquat_log.warn("status", f"写入快照失败，回退内联: {e}")
+        return seg.image(inline=png)
 
 
 def _write_snapshot(png: bytes) -> Path:

@@ -87,7 +87,9 @@ fn agent_images_multimodal_or_placeholder() {
     }
 
     // vision 开启：content 是多模态 parts（text + image_url）
-    let replies = business.handle(&msg_ctx(IMAGES, "VISION", &imgs)).unwrap();
+    let replies = business
+        .handle_text(&msg_ctx(IMAGES, "VISION", &imgs))
+        .unwrap();
     assert!(replies[0].contains("\"image_url\""), "实际: {replies:?}");
     assert!(
         replies[0].contains("https://qq.com/a.jpg"),
@@ -99,12 +101,16 @@ fn agent_images_multimodal_or_placeholder() {
     );
 
     // vision 关闭：同图降级为 [图片] 占位文本，URL 不进模型
-    let replies = business.handle(&msg_ctx(IMAGES_OFF, "hi", &imgs)).unwrap();
+    let replies = business
+        .handle_text(&msg_ctx(IMAGES_OFF, "hi", &imgs))
+        .unwrap();
     assert!(replies[0].contains("[图片]"), "实际: {replies:?}");
     assert!(!replies[0].contains("image_url"), "实际: {replies:?}");
 
     // 无文本无图片：不进模型，无回复
-    let replies = business.handle(&msg_ctx(IMAGES_OFF + 1, "", &[])).unwrap();
+    let replies = business
+        .handle_text(&msg_ctx(IMAGES_OFF + 1, "", &[]))
+        .unwrap();
     assert!(replies.is_empty(), "实际: {replies:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -152,8 +152,9 @@ fn field_str(v: &serde_json::Value, path: &[&str]) -> String {
     String::new()
 }
 
-// 派生文本：拼全部 text 段
-fn derive_text(segments: &[serde_json::Value]) -> String {
+// 派生文本：拼全部 text 段。出站侧（outbound::summary_of）复用同一投影，
+// 收发同构，日志/沙箱记账看到的文本与适配器实际发的一致。
+pub(crate) fn derive_text(segments: &[serde_json::Value]) -> String {
     let mut out = String::new();
     for seg in segments {
         if let Some(t) = seg
