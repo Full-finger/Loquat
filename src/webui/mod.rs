@@ -40,10 +40,7 @@ static STARTED: OnceLock<std::time::Instant> = OnceLock::new();
 
 /// WebUI 已运行秒数（未启动返回 0）。
 pub fn uptime_sec() -> u64 {
-    STARTED
-        .get()
-        .map(|t| t.elapsed().as_secs())
-        .unwrap_or(0)
+    STARTED.get().map(|t| t.elapsed().as_secs()).unwrap_or(0)
 }
 
 // WebUI 扩展机制（插件页面）：导航 tab 由 /api/extensions/ui 聚合插件
@@ -91,11 +88,14 @@ async fn serve(
     let (port, token) = (cfg.port, cfg.token);
     // 沙箱记录：追加写 + 超限压缩，参数来自 config/webui.yaml 的 sandbox 段
     sandbox_store::init(cfg.sandbox_keep, cfg.sandbox_max_sessions);
-    let state = Arc::new(WebState { dll, business, token });
+    let state = Arc::new(WebState {
+        dll,
+        business,
+        token,
+    });
 
     // SPA：未命中的路径回 index.html（/dashboard 等前端路由直接访问）
-    let assets = ServeDir::new("webui/dist")
-        .fallback(ServeFile::new("webui/dist/index.html"));
+    let assets = ServeDir::new("webui/dist").fallback(ServeFile::new("webui/dist/index.html"));
 
     let app = api::routes()
         .fallback_service(assets)
@@ -131,7 +131,10 @@ async fn same_site_guard(request: Request, next: Next) -> Response {
         .map(|origin| origin_is_same_site(origin, request.headers()))
         .unwrap_or(true); // 无 Origin = 非浏览器客户端（curl/WS 工具），交由 token 鉴权
     if !host_ok || !origin_ok {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "cross-site" })))
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "cross-site" })),
+        )
             .into_response();
     }
     next.run(request).await
@@ -204,7 +207,10 @@ fn read_config() -> WebConfig {
     if let Some(p) = doc["port"].as_i64() {
         cfg.port = p as u16;
     }
-    cfg.token = doc["token"].as_str().filter(|t| !t.is_empty()).map(String::from);
+    cfg.token = doc["token"]
+        .as_str()
+        .filter(|t| !t.is_empty())
+        .map(String::from);
     let sandbox = &doc["sandbox"];
     if let Some(k) = sandbox["keep"].as_i64() {
         cfg.sandbox_keep = k.clamp(20, 5000) as usize;
@@ -243,14 +249,22 @@ fn authorized(state: &WebState, headers: &axum::http::HeaderMap) -> bool {
 }
 
 fn unauthorized() -> Response {
-    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "unauthorized" }))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": "unauthorized" })),
+    )
+        .into_response()
 }
 
 // ---- publish 的调用方（main.rs 主循环与 worker）在此拼帧，保证消息流格式单一出处 ----
 
 /// 收到消息帧（主循环 Event 分支调用）。
 pub fn publish_incoming(platform: &str, message_type: &str, chat_id: &str, text: &str) {
-    let where_ = if message_type == "group" { "群" } else { "好友" };
+    let where_ = if message_type == "group" {
+        "群"
+    } else {
+        "好友"
+    };
     publish(
         serde_json::json!({
             "dir": "in",
@@ -267,7 +281,11 @@ pub fn publish_incoming(platform: &str, message_type: &str, chat_id: &str, text:
 
 /// 回复帧（worker 发送成功后调用）。
 pub fn publish_reply(platform: &str, message_type: &str, chat_id: &str, text: &str) {
-    let where_ = if message_type == "group" { "群" } else { "好友" };
+    let where_ = if message_type == "group" {
+        "群"
+    } else {
+        "好友"
+    };
     // 沙箱回复顺手记账：这是唯一能拿到回复文本的地方（适配器不落库）
     if platform == "sandbox" {
         sandbox_store::record_out(chat_id, message_type, text);
@@ -322,6 +340,9 @@ mod tests {
         // 回环但端口不同：本机其他服务发起的跨端口请求，同样拒
         assert!(!origin_is_same_site("http://127.0.0.1:9999", &h));
         // Host 缺端口时无从比对，拒绝（fail closed）
-        assert!(!origin_is_same_site("http://127.0.0.1:7900", &hostmap("127.0.0.1")));
+        assert!(!origin_is_same_site(
+            "http://127.0.0.1:7900",
+            &hostmap("127.0.0.1")
+        ));
     }
 }

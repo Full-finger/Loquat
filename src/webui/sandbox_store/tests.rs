@@ -50,7 +50,8 @@ fn create_is_isolated_and_auto_names() {
 fn appends_and_reads_back_in_order() {
     let (mut s, dir) = tmp_store("read");
     let c = s.create("group").unwrap();
-    s.record_in(&c.chat_id, "1", &json!([{ "text": { "text": "第一句" } }])).unwrap();
+    s.record_in(&c.chat_id, "1", &json!([{ "text": { "text": "第一句" } }]))
+        .unwrap();
     s.record_out(&c.chat_id, "group", "收到").unwrap();
     let h = s.history(&c.chat_id, 10);
     assert_eq!(h.len(), 2);
@@ -67,8 +68,12 @@ fn trims_to_keep_when_growing() {
     let c = s.create("private").unwrap();
     // keep=5，写 11 条会触发压缩（count > 10），只留最近 5 条
     for i in 0..11 {
-        s.record_in(&c.chat_id, &i.to_string(), &json!([{ "text": { "text": format!("m{i}") } }]))
-            .unwrap();
+        s.record_in(
+            &c.chat_id,
+            &i.to_string(),
+            &json!([{ "text": { "text": format!("m{i}") } }]),
+        )
+        .unwrap();
     }
     let h = s.history(&c.chat_id, 100);
     assert_eq!(h.len(), 5, "压缩后应只剩 keep 条");
@@ -81,7 +86,8 @@ fn trims_to_keep_when_growing() {
 fn rename_and_remove_clean_both_files() {
     let (mut s, dir) = tmp_store("rename");
     let c = s.create("private").unwrap();
-    s.record_in(&c.chat_id, "1", &json!([{ "text": { "text": "x" } }])).unwrap();
+    s.record_in(&c.chat_id, "1", &json!([{ "text": { "text": "x" } }]))
+        .unwrap();
     // 造一个机器人上下文文件，删除时应一并清掉
     let agent = dir.join("sessions");
     fs::create_dir_all(&agent).unwrap();
@@ -92,7 +98,10 @@ fn rename_and_remove_clean_both_files() {
 
     s.remove(&c.chat_id).unwrap();
     assert!(s.get(&c.chat_id).is_none());
-    assert!(!dir.join("sandbox").join(format!("{}.jsonl", c.chat_id)).exists());
+    assert!(!dir
+        .join("sandbox")
+        .join(format!("{}.jsonl", c.chat_id))
+        .exists());
     assert!(!agent.join(format!("private_{}.json", c.chat_id)).exists());
     let _ = fs::remove_dir_all(dir);
 }

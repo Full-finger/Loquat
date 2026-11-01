@@ -2,7 +2,6 @@
 
 use super::*;
 
-
 use crate::business::serde_yamlish;
 
 #[test]
@@ -22,16 +21,22 @@ fn normalize_validates_active_and_fills_defaults() {
     assert_eq!(p["temperature"], 0.8, "缺省字段应回填");
     assert_eq!(p["vision"], false);
 
-    assert!(normalize(&serde_json::json!({
-        "llm": { "active": "ghost", "providers": { "deepseek": {} } },
-        "search": { "active": "deepseek", "providers": { "deepseek": {} } },
-    }))
-    .is_err(), "active 指向不存在的 provider 应拒绝");
-    assert!(normalize(&serde_json::json!({
-        "llm": { "active": "deepseek", "providers": {} },
-        "search": { "active": "deepseek", "providers": { "deepseek": {} } },
-    }))
-    .is_err(), "空 providers 应拒绝");
+    assert!(
+        normalize(&serde_json::json!({
+            "llm": { "active": "ghost", "providers": { "deepseek": {} } },
+            "search": { "active": "deepseek", "providers": { "deepseek": {} } },
+        }))
+        .is_err(),
+        "active 指向不存在的 provider 应拒绝"
+    );
+    assert!(
+        normalize(&serde_json::json!({
+            "llm": { "active": "deepseek", "providers": {} },
+            "search": { "active": "deepseek", "providers": { "deepseek": {} } },
+        }))
+        .is_err(),
+        "空 providers 应拒绝"
+    );
 
     let round = serde_yamlish(&render(&n)).unwrap();
     assert_eq!(round["llm"]["active"], "ollama", "render 应可回读");
@@ -70,8 +75,11 @@ fn key_semantics_keep_clear_mask() {
     assert_eq!(dp["api_key"], "");
     assert_eq!(dp["has_api_key"], true);
     assert_eq!(resolved_of(&old).contains("sk-secret"), true);
-    assert_eq!(resolved_of(&view_of(old.clone())).contains("sk-secret"), false,
-        "打码视图不能再喂回解析层");
+    assert_eq!(
+        resolved_of(&view_of(old.clone())).contains("sk-secret"),
+        false,
+        "打码视图不能再喂回解析层"
+    );
 }
 
 use std::path::PathBuf;

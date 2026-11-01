@@ -116,9 +116,11 @@ fn migrate(chat_cfg: &Path) -> serde_json::Value {
     };
 
     // llm：任一接入字段非空即视为配置过，整体收编到 "deepseek" 命名项
-    let has_llm = ["api_base", "api_key", "model"]
-        .iter()
-        .any(|&k| old.get(k).and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty()));
+    let has_llm = ["api_base", "api_key", "model"].iter().any(|&k| {
+        old.get(k)
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty())
+    });
     if has_llm {
         let mut p = llm_defaults();
         if let serde_json::Value::Object(m) = &mut p {
@@ -133,7 +135,10 @@ fn migrate(chat_cfg: &Path) -> serde_json::Value {
         out["llm"]["providers"]["deepseek"] = p;
     }
     // search：激活项沿旧 search_provider；key 只对 bocha 类有意义，原样带上
-    let sp = old.get("search_provider").and_then(|v| v.as_str()).unwrap_or("deepseek");
+    let sp = old
+        .get("search_provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("deepseek");
     if matches!(sp, "deepseek" | "duckduckgo" | "bocha") {
         out["search"]["active"] = serde_json::json!(sp);
     }
@@ -188,7 +193,10 @@ fn render(v: &serde_json::Value) -> String {
     ] {
         s.push_str(&format!("{section}:\n"));
         let active = v[section]["active"].as_str().unwrap_or("");
-        s.push_str(&format!("  active: {}\n", json_scalar(&serde_json::json!(active))));
+        s.push_str(&format!(
+            "  active: {}\n",
+            json_scalar(&serde_json::json!(active))
+        ));
         s.push_str("  providers:\n");
         if let Some(map) = v[section]["providers"].as_object() {
             for (name, p) in map {
@@ -211,7 +219,9 @@ fn render(v: &serde_json::Value) -> String {
 fn normalize(body: &serde_json::Value) -> Result<serde_json::Value, String> {
     let mut out = defaults();
     for (section, is_llm) in [("llm", true), ("search", false)] {
-        let sec = body.get(section).ok_or_else(|| format!("缺少 {section} 段"))?;
+        let sec = body
+            .get(section)
+            .ok_or_else(|| format!("缺少 {section} 段"))?;
         let map = sec
             .get("providers")
             .and_then(|p| p.as_object())
@@ -234,7 +244,11 @@ fn normalize(body: &serde_json::Value) -> Result<serde_json::Value, String> {
             if name.is_empty() {
                 return Err(format!("{section} 有空的 provider 名"));
             }
-            let mut entry = if is_llm { llm_defaults() } else { serde_json::json!({"api_key": ""}) };
+            let mut entry = if is_llm {
+                llm_defaults()
+            } else {
+                serde_json::json!({"api_key": ""})
+            };
             if let Some(em) = entry.as_object_mut() {
                 for k in em.keys().cloned().collect::<Vec<_>>() {
                     if let Some(v) = p.get(&k) {
@@ -259,7 +273,9 @@ fn prepare(body: &serde_json::Value, old: &serde_json::Value) -> Result<serde_js
             continue;
         };
         for (name, p) in map.iter_mut() {
-            let Some(pm) = p.as_object_mut() else { continue };
+            let Some(pm) = p.as_object_mut() else {
+                continue;
+            };
             match pm.get("api_key") {
                 Some(serde_json::Value::Null) => {
                     pm.insert("api_key".into(), serde_json::json!(""));
@@ -314,7 +330,10 @@ fn view_of(v: serde_json::Value) -> serde_json::Value {
     for section in ["llm", "search"] {
         if let Some(map) = out[section]["providers"].as_object_mut() {
             for p in map.values_mut() {
-                let has = p.get("api_key").and_then(|k| k.as_str()).is_some_and(|k| !k.is_empty());
+                let has = p
+                    .get("api_key")
+                    .and_then(|k| k.as_str())
+                    .is_some_and(|k| !k.is_empty());
                 if let Some(pm) = p.as_object_mut() {
                     pm.insert("has_api_key".into(), serde_json::json!(has));
                     pm.insert("api_key".into(), serde_json::json!(""));

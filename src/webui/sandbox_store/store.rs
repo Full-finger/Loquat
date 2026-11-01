@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::log_error;
 
 use super::util::{
-    clamp_name, hash_hex, b64_decode, media_ext, now_ms, read_lines, short_id, split_data_url,
+    b64_decode, clamp_name, hash_hex, media_ext, now_ms, read_lines, short_id, split_data_url,
     text_of,
 };
 use super::{Session, DEFAULT_GROUP, DEFAULT_PRIVATE, INDEX_FILE, PLACEHOLDER, RECORD_VERSION};
@@ -54,7 +54,9 @@ impl Store {
 
     /// 机器人上下文文件（插件侧维护），删会话时一并清掉
     fn agent_path(&self, s: &Session) -> PathBuf {
-        self.base.join("sessions").join(format!("{}_{}.json", s.mode, s.chat_id))
+        self.base
+            .join("sessions")
+            .join(format!("{}_{}.json", s.mode, s.chat_id))
     }
 
     fn load(&mut self) -> Result<(), String> {
@@ -66,7 +68,8 @@ impl Store {
                 return self.save();
             }
         };
-        let v: Value = serde_json::from_str(&text).map_err(|e| format!("index.json 解析失败: {e}"))?;
+        let v: Value =
+            serde_json::from_str(&text).map_err(|e| format!("index.json 解析失败: {e}"))?;
         self.sessions = v
             .get("sessions")
             .and_then(Value::as_array)
@@ -126,7 +129,11 @@ impl Store {
         if mode != "private" && mode != "group" {
             return Err(format!("未知 mode {mode}"));
         }
-        let base = if mode == "group" { DEFAULT_GROUP } else { DEFAULT_PRIVATE };
+        let base = if mode == "group" {
+            DEFAULT_GROUP
+        } else {
+            DEFAULT_PRIVATE
+        };
         // 同毫秒重复创建也要拿到不同 id：时间戳 + 自增序号
         let mut attempt = 0;
         let chat_id = loop {
@@ -183,7 +190,12 @@ impl Store {
 
     /// 追加一条「我发的」消息：段结构与平台消息 ID 都留着，
     /// 图片的 dataURL 落盘换成引用，避免把 base64 塞进 JSONL。
-    pub fn record_in(&mut self, chat_id: &str, msg_id: &str, segments: &Value) -> Result<Session, String> {
+    pub fn record_in(
+        &mut self,
+        chat_id: &str,
+        msg_id: &str,
+        segments: &Value,
+    ) -> Result<Session, String> {
         let mut stored = segments.clone();
         self.persist_media(&mut stored);
         self.append(
@@ -226,7 +238,12 @@ impl Store {
         self.sessions.push(Session {
             chat_id: chat_id.to_string(),
             mode: mode.to_string(),
-            name: if mode == "group" { "默认群聊" } else { "默认私聊" }.to_string(),
+            name: if mode == "group" {
+                "默认群聊"
+            } else {
+                "默认私聊"
+            }
+            .to_string(),
             created: now,
             updated: now,
             count: 0,

@@ -24,9 +24,7 @@ pub fn pump_from_handle(raw: usize) {
     if raw == 0 {
         return;
     }
-    let file = ManuallyDrop::new(unsafe {
-        File::from_raw_handle(raw as RawHandle)
-    });
+    let file = ManuallyDrop::new(unsafe { File::from_raw_handle(raw as RawHandle) });
     std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(&*file);
         let mut line = String::new();

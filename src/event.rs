@@ -156,7 +156,11 @@ fn field_str(v: &serde_json::Value, path: &[&str]) -> String {
 fn derive_text(segments: &[serde_json::Value]) -> String {
     let mut out = String::new();
     for seg in segments {
-        if let Some(t) = seg.get("text").and_then(|t| t.get("text")).and_then(|t| t.as_str()) {
+        if let Some(t) = seg
+            .get("text")
+            .and_then(|t| t.get("text"))
+            .and_then(|t| t.as_str())
+        {
             out.push_str(t);
         }
     }
@@ -167,15 +171,14 @@ fn derive_text(segments: &[serde_json::Value]) -> String {
 fn derive_images(segments: &[serde_json::Value]) -> Vec<String> {
     let mut urls: Vec<String> = Vec::new();
     for seg in segments {
-        let Some(img) = seg.get("image") else { continue };
-        let url = img
-            .get("url")
-            .and_then(|u| u.as_str())
-            .or_else(|| {
-                img.get("fileId")
-                    .and_then(|f| f.as_str())
-                    .filter(|f| f.starts_with("http"))
-            });
+        let Some(img) = seg.get("image") else {
+            continue;
+        };
+        let url = img.get("url").and_then(|u| u.as_str()).or_else(|| {
+            img.get("fileId")
+                .and_then(|f| f.as_str())
+                .filter(|f| f.starts_with("http"))
+        });
         if let Some(u) = url {
             if u.starts_with("http") && !urls.iter().any(|x| x == u) {
                 urls.push(u.to_string());

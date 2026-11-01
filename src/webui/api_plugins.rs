@@ -13,14 +13,16 @@ use super::api::{asset_content_type, blocking, join_lost, query_param, token_que
 use super::{authorized, unauthorized, WebState};
 
 /// 适配器配置 + 运行状态。
-pub(super) async fn api_adapters(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_adapters(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&state, &headers) {
         return unauthorized();
     }
     blocking!(state, {
         let raw = state.dll.adapters_config();
-        let v: serde_json::Value =
-            serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
         Json(v).into_response()
     })
 }
@@ -34,21 +36,28 @@ pub(super) async fn api_adapters_apply(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, match state.dll.apply_adapters_config(&body.to_string()) {
-        Ok(s) => {
-            let v: serde_json::Value = serde_json::from_str(&s).unwrap_or(serde_json::Value::Null);
-            Json(v).into_response()
+    blocking!(
+        state,
+        match state.dll.apply_adapters_config(&body.to_string()) {
+            Ok(s) => {
+                let v: serde_json::Value =
+                    serde_json::from_str(&s).unwrap_or(serde_json::Value::Null);
+                Json(v).into_response()
+            }
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response(),
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    })
+    )
 }
 
 /// 服务配置（provider 层）：api_key 打码，has_api_key 标记是否已配置。
-pub(super) async fn api_providers(State(state): State<Arc<WebState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_providers(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&state, &headers) {
         return unauthorized();
     }
@@ -64,14 +73,21 @@ pub(super) async fn api_providers_save(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, match crate::providers::save(&body) {
-        Ok(()) => {
-            state.business.refresh_providers();
-            Json(serde_json::json!({ "ok": true, "msg": "已保存，服务配置热生效" }))
-                .into_response()
+    blocking!(
+        state,
+        match crate::providers::save(&body) {
+            Ok(()) => {
+                state.business.refresh_providers();
+                Json(serde_json::json!({ "ok": true, "msg": "已保存，服务配置热生效" }))
+                    .into_response()
+            }
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e }))
+            )
+                .into_response(),
         }
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
+    )
 }
 
 /// 插件配置读取（SCHEMA + 当前值）。
@@ -83,10 +99,17 @@ pub(super) async fn api_plugin_config(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, match state.business.plugin_config(&name) {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
+    blocking!(
+        state,
+        match state.business.plugin_config(&name) {
+            Ok(v) => Json(v).into_response(),
+            Err(e) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": e }))
+            )
+                .into_response(),
+        }
+    )
 }
 
 /// 插件配置保存（cfglib 校验渲染，热重载即时生效）。
@@ -99,10 +122,18 @@ pub(super) async fn api_plugin_config_save(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, match state.business.save_plugin_config(&name, body) {
-        Ok(()) => Json(serde_json::json!({ "ok": true, "msg": "已保存并热重载" })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
+    blocking!(
+        state,
+        match state.business.save_plugin_config(&name, body) {
+            Ok(()) =>
+                Json(serde_json::json!({ "ok": true, "msg": "已保存并热重载" })).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e }))
+            )
+                .into_response(),
+        }
+    )
 }
 
 /// 插件资源清单（asset 配置字段的候选文件）。
@@ -114,10 +145,17 @@ pub(super) async fn api_plugin_assets(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, match state.business.list_plugin_assets(&name) {
-        Ok(v) => Json(serde_json::json!({ "assets": v })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
+    blocking!(
+        state,
+        match state.business.list_plugin_assets(&name) {
+            Ok(v) => Json(serde_json::json!({ "assets": v })).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e }))
+            )
+                .into_response(),
+        }
+    )
 }
 
 /// 上传资源：body 即文件原始字节，文件名走 ?name=（免 multipart 依赖）。
@@ -132,10 +170,17 @@ pub(super) async fn api_plugin_asset_upload(
         return unauthorized();
     }
     let filename = query_param(query.as_deref(), "name").unwrap_or_default();
-    blocking!(state, match state.business.save_plugin_asset(&name, &filename, &body) {
-        Ok(stored) => Json(serde_json::json!({ "name": stored })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
+    blocking!(
+        state,
+        match state.business.save_plugin_asset(&name, &filename, &body) {
+            Ok(stored) => Json(serde_json::json!({ "name": stored })).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e }))
+            )
+                .into_response(),
+        }
+    )
 }
 
 /// 资源预览/下载：<img> 带不了 Authorization 头，token 查询参数兜底
@@ -180,10 +225,17 @@ pub(super) async fn api_plugin_asset_delete(
         return unauthorized();
     }
     let rel = query_param(query.as_deref(), "path").unwrap_or_default();
-    blocking!(state, match state.business.delete_plugin_asset(&name, &rel) {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
+    blocking!(
+        state,
+        match state.business.delete_plugin_asset(&name, &rel) {
+            Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e }))
+            )
+                .into_response(),
+        }
+    )
 }
 
 pub(super) async fn api_plugins(
@@ -221,11 +273,22 @@ pub(super) async fn api_enable(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, if state.business.set_enabled(&name, true) {
-        (StatusCode::OK, Json(serde_json::json!({ "msg": format!("{name} 已启用") }))).into_response()
-    } else {
-        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "插件不存在" }))).into_response()
-    })
+    blocking!(
+        state,
+        if state.business.set_enabled(&name, true) {
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "msg": format!("{name} 已启用") })),
+            )
+                .into_response()
+        } else {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "插件不存在" })),
+            )
+                .into_response()
+        }
+    )
 }
 
 pub(super) async fn api_disable(
@@ -236,15 +299,24 @@ pub(super) async fn api_disable(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, if state.business.set_enabled(&name, false) {
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({ "msg": format!("{name} 已禁用（重启后回到文件内声明）") })),
-        )
-            .into_response()
-    } else {
-        (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "插件不存在" }))).into_response()
-    })
+    blocking!(
+        state,
+        if state.business.set_enabled(&name, false) {
+            (
+                StatusCode::OK,
+                Json(
+                    serde_json::json!({ "msg": format!("{name} 已禁用（重启后回到文件内声明）") }),
+                ),
+            )
+                .into_response()
+        } else {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "插件不存在" })),
+            )
+                .into_response()
+        }
+    )
 }
 
 pub(super) async fn api_install(
@@ -255,9 +327,15 @@ pub(super) async fn api_install(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    blocking!(state, match state.business.install(&name) {
-        Ok(msg) => (StatusCode::OK, Json(serde_json::json!({ "msg": msg }))).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
-    })
+    blocking!(
+        state,
+        match state.business.install(&name) {
+            Ok(msg) => (StatusCode::OK, Json(serde_json::json!({ "msg": msg }))).into_response(),
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e }))
+            )
+                .into_response(),
+        }
+    )
 }
-

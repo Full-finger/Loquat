@@ -16,7 +16,9 @@ pub(super) fn short_id(attempt: u64) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    let mixed = nano_mix(nanos) ^ (std::process::id() as u64).rotate_left(17) ^ attempt.wrapping_mul(0x9E37);
+    let mixed = nano_mix(nanos)
+        ^ (std::process::id() as u64).rotate_left(17)
+        ^ attempt.wrapping_mul(0x9E37);
     format!("{:06x}", mixed & 0xFF_FFFF)
 }
 
@@ -42,14 +44,22 @@ pub(super) fn text_of(segments: &Value) -> &str {
     segments
         .as_array()
         .and_then(|arr| {
-            arr.iter().find_map(|s| s.get("text").and_then(|t| t.get("text")).and_then(Value::as_str))
+            arr.iter().find_map(|s| {
+                s.get("text")
+                    .and_then(|t| t.get("text"))
+                    .and_then(Value::as_str)
+            })
         })
         .unwrap_or("")
 }
 
 pub(super) fn read_lines(path: &Path) -> Result<Vec<String>, std::io::Error> {
     let text = std::fs::read_to_string(path)?;
-    Ok(text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect())
+    Ok(text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(String::from)
+        .collect())
 }
 
 pub(super) fn split_data_url(url: &str) -> Option<(String, &str)> {

@@ -24,14 +24,29 @@ pub(super) async fn api_sandbox_send(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    let segments = body.get("segments").cloned().unwrap_or(serde_json::json!([]));
-    let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("private").to_string();
+    let segments = body
+        .get("segments")
+        .cloned()
+        .unwrap_or(serde_json::json!([]));
+    let mode = body
+        .get("mode")
+        .and_then(|m| m.as_str())
+        .unwrap_or("private")
+        .to_string();
     let at_bot = body.get("atBot").and_then(|b| b.as_bool()).unwrap_or(false);
     if !segments.is_array() || segments.as_array().is_some_and(|a| a.is_empty()) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "segments 为空" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "segments 为空" })),
+        )
+            .into_response();
     }
     if mode != "private" && mode != "group" {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "mode 仅支持 private/group" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "mode 仅支持 private/group" })),
+        )
+            .into_response();
     }
     // 会话：空 = 缺省会话（兼容老前端）；给了就必须是登记过的，避免写出野文件
     let chat_id = body
@@ -74,13 +89,21 @@ pub(super) async fn api_sandbox_send(
     };
     // 记账用实际会话：空 session 时按 mode 落缺省会话
     let recorded_chat = if chat_id.is_empty() {
-        if mode == "group" { sandbox_store::DEFAULT_GROUP } else { sandbox_store::DEFAULT_PRIVATE }
+        if mode == "group" {
+            sandbox_store::DEFAULT_GROUP
+        } else {
+            sandbox_store::DEFAULT_PRIVATE
+        }
     } else {
         chat_id.as_str()
     };
     let msg_id = serde_json::from_str::<serde_json::Value>(&raw)
         .ok()
-        .and_then(|v| v.get("messageId").and_then(|m| m.as_str()).map(String::from))
+        .and_then(|v| {
+            v.get("messageId")
+                .and_then(|m| m.as_str())
+                .map(String::from)
+        })
         .unwrap_or_default();
     // 有登记才记；缺省会话在种子数据里，正常情况下都在
     if sandbox_store::exists(recorded_chat) {
@@ -109,10 +132,17 @@ pub(super) async fn api_sandbox_session_create(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    let mode = body.get("mode").and_then(|m| m.as_str()).unwrap_or("private");
+    let mode = body
+        .get("mode")
+        .and_then(|m| m.as_str())
+        .unwrap_or("private");
     match sandbox_store::create(mode) {
         Ok(s) => Json(serde_json::json!({ "session": s })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
     }
 }
 
@@ -129,7 +159,11 @@ pub(super) async fn api_sandbox_session_rename(
     let name = body.get("name").and_then(|n| n.as_str()).unwrap_or("");
     match sandbox_store::rename(&chat_id, name) {
         Ok(s) => Json(serde_json::json!({ "session": s })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
     }
 }
 
@@ -144,7 +178,11 @@ pub(super) async fn api_sandbox_session_delete(
     }
     match sandbox_store::remove(&chat_id) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": e }))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
     }
 }
 
@@ -159,7 +197,10 @@ pub(super) async fn api_sandbox_history(
     }
     let chat_id = query_param(query.as_deref(), "session").unwrap_or_default();
     if chat_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "缺少 session" })))
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "缺少 session" })),
+        )
             .into_response();
     }
     let limit = query_param(query.as_deref(), "limit")
