@@ -5,17 +5,23 @@
 //! 插件约定（extensions/<名>/ 目录，自包含）：
 //!   plugin.py               入口：首行必须是签名 `# loquat-plugin`（宿主
 //!                           识别插件的依据，无签名目录忽略），可带 API 版本
-//!                           `# loquat-plugin v2`（缺省 v1）；必须实现 handle(ctx)
-//!                           （ctx: dict，含 text/chat/segments/
-//!                           user_id/self_id/message_id/is_at_bot/images/
-//!                           deadline_ms——本条消息的剩余预算毫秒数，LLM 类插件
-//!                           据此收敛轮数；到期宿主注入 TimeoutError 中断，插件
-//!                           不要用 except Exception 吞掉它）
-//!                           v1 返回 list[str]，每个字符串一条消息；
-//!                           v2 返回 str | list[段] | None，list 为**一条**消息的
-//!                           扁平段列表（protojson 形态，与 ctx["segments"] 同构，
+//!                           `# loquat-plugin v2`（缺省 v1）。钩子（全部可选，
+//!                           按优先级执行；v1 的 handle 由宿主垫片为 on_message）：
+//!                           on_observe(ctx)        每条消息全部执行，返回值忽略
+//!                                                  （历史、审计、埋点，抢答不丢）
+//!                           on_message(ctx)        路由：首个非 None/空 接管
+//!                           before_send(ctx, segs) 对胜者每条消息逐级 fold：
+//!                                                  None 不改 / list 替换 / 空表丢弃
+//!                           on_unload()            热重载、移除前清理；disable 不触发
+//!                           ctx: dict，含 text/chat/segments/user_id/self_id/
+//!                           message_id/is_at_bot/images/deadline_ms——剩余预算
+//!                           毫秒数，LLM 类插件据此收敛轮数；到期宿主注入
+//!                           TimeoutError 中断，不要用 except Exception 吞掉它
+//!                           路由返回：v1 list[str] 每个字符串一条消息；v2
+//!                           str | list[段] | None，list 为**一条**消息的扁平段
+//!                           列表（protojson 形态，与 ctx["segments"] 同构，
 //!                           构造器见 loquat_seg），可声明 API = 2 与签名交叉校验；
-//!                           返回空（[] / None / ""）= 不归我管，路由链继续；
+//!                           空（[] / None / ""）= 不归我管，链继续；
 //!                           可声明 PRIORITY = <int>（越小越先，缺省 100）
 //!   config.yaml             可选：插件配置（运行时状态，不入库）。声明了
 //!                           SCHEMA 却缺失 = 未安装：不加载，控制台
@@ -34,7 +40,9 @@
 //!   .disabled               运行时启停标记（enable/disable 与 install 写入/删除）
 //!   全局 core                宿主注入的能力桥（pybridge 注入），重载后自动重挂
 //!
-//! 路由语义：按 (PRIORITY, 目录名) 排序逐个调用，第一个返回非空的插件接管。
+//! 管线语义（评审建议 6，三阶段）：按 (PRIORITY, 目录名) 排序，
+//! ① on_observe 全部执行 → ② on_message 首个非空接管 → ③ before_send 逐级 fold 胜者。
+//! 实现见 chain.rs。
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -117,6 +125,8 @@ struct LoadedPlugin {
     mtime: SystemTime,
     /// 插件 API 版本（签名行解析），决定 handle 返回值怎么解释
     api_version: u8,
+    /// 钩子（on_message/on_observe/before_send/on_unload，v1 handle 垫片为路由入口）
+    hooks: crate::pluginload::Hooks,
 }
 
 impl LoadedPlugin {
@@ -131,6 +141,32 @@ impl LoadedPlugin {
 fn recover_poison<T>(poisoned: PoisonError<T>) -> T {
     log_warn!("业务锁中毒，已恢复继续（曾有 panic 持锁）");
     poisoned.into_inner()
+}
+
+/// on_unload 的固定短预算：清理钩子不该做重活，卡住就注入打断。
+const ON_UNLOAD_BUDGET: Duration = Duration::from_secs(2);
+
+/// 旧模块丢弃前调用 on_unload（热重载、目录/配置被删导致的移除）。
+/// disable 有意不触发：没有配对的 init 钩子，清掉的线程/句柄无人负责重建，
+/// 半套生命周期比不清理更危险（提案 §4.2 在此偏离）。
+/// 在 sync 的写锁内被调：套看门狗 Guard，插件写坏 on_unload 不会拖死整条链。
+pub(super) fn fire_on_unload(hooks: &crate::pluginload::Hooks, name: &str) {
+    let Some(hook) = &hooks.on_unload else {
+        return;
+    };
+    Python::attach(|py| {
+        let Ok(tid) = crate::watchdog::current_py_thread(py) else {
+            return;
+        };
+        let result = {
+            let _guard = crate::watchdog::guard(tid, name, ON_UNLOAD_BUDGET);
+            hook.bind(py).call0()
+        };
+        crate::watchdog::clear_pending(py, tid);
+        if let Err(e) = result {
+            log_error!("插件 {name} on_unload 出错: {e}");
+        }
+    });
 }
 
 pub struct Business {
@@ -284,16 +320,18 @@ impl Business {
         rows
     }
 
+    /// 链路概况（控制台 plugins 命令）：插件名带钩子标签，即当前生效的钩子表
+    /// （提案验收 #5：不透明，但可枚举）。
     pub fn info(&self) -> String {
         let plugins = self.plugins.read().unwrap_or_else(recover_poison);
         let names: Vec<String> = plugins
             .iter()
             .map(|p| {
-                if p.enabled() {
-                    p.dir_name.clone()
-                } else {
-                    format!("{}[禁用]", p.dir_name)
+                let mut name = format!("{}{}", p.dir_name, p.hooks.tag());
+                if !p.enabled() {
+                    name.push_str("[禁用]");
                 }
+                name
             })
             .collect();
         format!(
@@ -329,3 +367,6 @@ mod tests_budget;
 
 #[cfg(test)]
 mod tests_llm;
+
+#[cfg(test)]
+mod tests_hooks;

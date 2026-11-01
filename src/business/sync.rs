@@ -76,8 +76,14 @@ impl Business {
         }
         wanted.sort_by(|a, b| a.1.cmp(&b.1));
 
-        // 磁盘上已删除的插件，同步移除
-        plugins.retain(|p| wanted.iter().any(|(path, _, _)| path == &p.path));
+        // 磁盘上已删除的插件，同步移除：旧模块先走 on_unload（建议 6）
+        let (kept, removed): (Vec<_>, Vec<_>) = plugins
+            .drain(..)
+            .partition(|p| wanted.iter().any(|(path, _, _)| path == &p.path));
+        *plugins = kept;
+        for p in removed {
+            super::fire_on_unload(&p.hooks, &p.dir_name);
+        }
 
         for (path, name, mtime) in wanted {
             let marker = self.dir.join(&name).join(DISABLE_MARKER);
@@ -106,13 +112,15 @@ impl Business {
                         priority,
                         config_enabled,
                         api_version,
+                        hooks,
                         ..
                     }) => {
                         self.clear_failed(&name);
                         let enabled = config_enabled && !marker_now;
                         log_info!(
-                            "插件已加载: {name}（优先级 {priority}，API v{api_version}，{}）",
-                            if enabled { "启用" } else { "禁用" }
+                            "插件已加载: {name}（优先级 {priority}，API v{api_version}，{}）{}",
+                            if enabled { "启用" } else { "禁用" },
+                            hooks.tag()
                         );
                         plugins.push(LoadedPlugin {
                             dir_name: name,
@@ -123,6 +131,7 @@ impl Business {
                             module,
                             mtime,
                             api_version,
+                            hooks,
                         });
                     }
                     Err(e) => {
@@ -151,19 +160,24 @@ impl Business {
                         config_enabled,
                         installable,
                         api_version,
+                        hooks,
                     }) => {
                         if installable {
                             // config.yaml 被删：回到未安装，卸载等 install
+                            super::fire_on_unload(&plugins[idx].hooks, &name);
                             plugins.remove(idx);
                             self.note_installable(&name);
                             continue;
                         }
                         let existing = &mut plugins[idx];
+                        // 旧模块先清理，再被新模块替换
+                        super::fire_on_unload(&existing.hooks, &name);
                         existing.module = module;
                         existing.priority = priority;
                         existing.config_enabled = config_enabled;
                         existing.mtime = mtime;
                         existing.api_version = api_version;
+                        existing.hooks = hooks;
                         self.reloads.fetch_add(1, Ordering::Relaxed);
                         // 新模块重新获得被调用的机会（建议 4 的卡死退避到此为止）
                         crate::watchdog::clear_stuck(&name);

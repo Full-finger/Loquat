@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
 use crate::business::CONFIG_FILE;
-use crate::pybridge;
+use crate::{log_info, pybridge};
 
 const DEFAULT_PRIORITY: i64 = 100;
 
@@ -42,15 +42,51 @@ pub(crate) fn has_signature(entry_py: &Path) -> bool {
     }
 }
 
+/// 插件声明的钩子（提案 §4.2，评审建议 6）。全部可选，加载时解析一次，
+/// 热重载随 Loaded 整体替换。
+///   entry        路由入口：on_message，缺省垫片到 v1 的 handle；两者皆无 = 不参与路由
+///                （纯观察 / 纯 UI 插件合法）
+///   on_observe   每条消息全部执行，返回值忽略（历史、审计、埋点）
+///   before_send  对胜者的每条消息逐级 fold：None 不改，list 替换，空列表丢弃
+///   on_unload    热重载 / 移除前清理（线程、句柄、缓存）；disable 不触发
+pub struct Hooks {
+    pub entry: Option<Py<PyAny>>,
+    pub on_observe: Option<Py<PyAny>>,
+    pub before_send: Option<Py<PyAny>>,
+    pub on_unload: Option<Py<PyAny>>,
+}
+
+impl Hooks {
+    /// 控制台 plugins 命令的钩子标签，如 `[观察+消息+变换]`；无钩子为空串。
+    pub fn tag(&self) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        if self.on_observe.is_some() {
+            parts.push("观察");
+        }
+        if self.entry.is_some() {
+            parts.push("消息");
+        }
+        if self.before_send.is_some() {
+            parts.push("变换");
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("[{}]", parts.join("+"))
+        }
+    }
+}
+
 /// load_module 的产物：模块、优先级、config.enabled 声明、是否可安装
 /// （声明了 SCHEMA 且 config.yaml 缺失；此时模块不应生效，等 install 命令）、
-/// 插件 API 版本（决定 handle 返回值怎么解释）。
+/// 插件 API 版本（决定 handle 返回值怎么解释）与钩子。
 pub struct Loaded {
     pub module: Py<PyModule>,
     pub priority: i64,
     pub config_enabled: bool,
     pub installable: bool,
     pub api_version: u8,
+    pub hooks: Hooks,
 }
 
 /// 签名行的 API 版本：`# loquat-plugin` = v1（存量），`# loquat-plugin v<N>` 显式。
@@ -145,6 +181,30 @@ pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
         // 由控制台 install 命令显式安装（生成 config.yaml + .disabled 标记）
         let installable = module.getattr("SCHEMA").is_ok() && !dir.join(CONFIG_FILE).is_file();
 
+        // 钩子解析：声明了 on_message 用它；缺省垫片到 v1 的 handle（v1 静默，v2 提示）；
+        // 两者皆无 = 不参与路由（纯观察 / 纯 UI 插件，不再每条消息报 AttributeError）
+        let take = |name: &str| module.getattr(name).ok().map(Bound::unbind);
+        let mut hooks = Hooks {
+            entry: take("on_message"),
+            on_observe: take("on_observe"),
+            before_send: take("before_send"),
+            on_unload: take("on_unload"),
+        };
+        if hooks.entry.is_none() {
+            match take("handle") {
+                Some(h) => {
+                    if api_version >= 2 {
+                        log_info!(
+                            "插件 {dir_name}（v{api_version}）仍用 handle，建议改为 on_message"
+                        );
+                    }
+                    hooks.entry = Some(h);
+                }
+                None if hooks.on_observe.is_some() || hooks.before_send.is_some() => {}
+                None => log_info!("插件 {dir_name} 无路由入口（纯 UI / 静默插件）"),
+            }
+        }
+
         let priority = module
             .getattr("PRIORITY")
             .and_then(|v| v.extract::<i64>())
@@ -160,6 +220,7 @@ pub fn load_module(path: &Path) -> Result<Loaded, Box<dyn Error>> {
             config_enabled,
             installable,
             api_version,
+            hooks,
         })
     })
 }
