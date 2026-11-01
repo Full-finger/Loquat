@@ -7,7 +7,10 @@
 //!                           识别插件的依据，无签名目录忽略），可带 API 版本
 //!                           `# loquat-plugin v2`（缺省 v1）；必须实现 handle(ctx)
 //!                           （ctx: dict，含 text/chat/segments/
-//!                           user_id/self_id/message_id/is_at_bot/images）
+//!                           user_id/self_id/message_id/is_at_bot/images/
+//!                           deadline_ms——本条消息的剩余预算毫秒数，LLM 类插件
+//!                           据此收敛轮数；到期宿主注入 TimeoutError 中断，插件
+//!                           不要用 except Exception 吞掉它）
 //!                           v1 返回 list[str]，每个字符串一条消息；
 //!                           v2 返回 str | list[段] | None，list 为**一条**消息的
 //!                           扁平段列表（protojson 形态，与 ctx["segments"] 同构，
@@ -38,16 +41,16 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError, RwLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::{log_error, log_info, log_warn};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::PyModule;
 
 use crate::event::Chat;
-use crate::pybridge;
 
 mod assets_api;
+mod chain;
 mod config_api;
 mod reply;
 mod sync;
@@ -72,6 +75,9 @@ const SYNC_INTERVAL_MS: u64 = 500;
 /// 不再每条消息重试编译）。
 const BACKOFF_INIT_MS: u64 = 1_000;
 const BACKOFF_MAX_MS: u64 = 60_000;
+/// 单条消息的插件链总预算（建议 4）：各插件串行消耗，到期由看门狗注入
+/// TimeoutError；ctx["deadline_ms"] 给插件的是剩余量。
+const PLUGIN_BUDGET_MS: u64 = 30_000;
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -97,6 +103,8 @@ pub struct MsgCtx<'a> {
     /// 结构化消息段（protojson 形态，如 {"text":{"text":"早"}}）
     pub segments: &'a [serde_json::Value],
     pub platform: &'a str,
+    /// 进入插件链的时刻：执行预算从这里起算（建议 4）
+    pub started: Instant,
 }
 
 struct LoadedPlugin {
@@ -139,6 +147,8 @@ pub struct Business {
     last_sync: AtomicU64,
     /// 加载失败插件 → 退避到期的毫秒时间戳（到期前不再重试编译）
     failed: Mutex<HashMap<String, u64>>,
+    /// 单条消息的插件链总预算（缺省 PLUGIN_BUDGET_MS，测试可调小）
+    budget: Duration,
 }
 
 impl Business {
@@ -151,9 +161,17 @@ impl Business {
             installable: Mutex::new(Vec::new()),
             last_sync: AtomicU64::new(0),
             failed: Mutex::new(HashMap::new()),
+            budget: Duration::from_millis(PLUGIN_BUDGET_MS),
         };
         business.sync()?;
         Ok(business)
+    }
+
+    /// 改执行预算（测试用：把 30s 压到几百毫秒让超时路径可测）。
+    #[cfg(test)]
+    pub(super) fn with_budget(mut self, budget: Duration) -> Self {
+        self.budget = budget;
+        self
     }
 
     /// 热路径节流：距上次扫描不足间隔则直接用快照。CAS 抢占保证并发
@@ -192,74 +210,6 @@ impl Business {
             .lock()
             .unwrap_or_else(recover_poison)
             .remove(name);
-    }
-
-    /// 责任链路由：按优先级逐个调用，第一个返回非空的插件接管。
-    /// 目录同步按 SYNC_INTERVAL_MS 节流，其余消息直接用快照。
-    pub fn handle(&self, ctx: &MsgCtx) -> Result<Vec<Message>, Box<dyn Error>> {
-        if self.sync_due() {
-            if let Err(e) = self.sync() {
-                log_error!("插件目录扫描失败（沿用已加载插件）: {e}");
-            }
-        }
-        // 锁内只做快照，链路放锁外跑：Py<PyModule> 是强引用，即使中途热重载
-        // 换掉模块，快照仍持有旧模块存活；LLM 等长等待不再堵其他线程
-        let chain: Vec<(Py<PyModule>, String, u8)> = Python::attach(|py| {
-            let plugins = self.plugins.read().unwrap_or_else(recover_poison);
-            plugins
-                .iter()
-                .filter(|p| p.enabled())
-                .map(|p| (p.module.clone_ref(py), p.dir_name.clone(), p.api_version))
-                .collect()
-        });
-        for (module, name, api_version) in &chain {
-            match Self::call(module, ctx, *api_version) {
-                Ok(replies) if !replies.is_empty() => return Ok(replies),
-                Ok(_) => continue,
-                Err(e) => log_error!("插件 {name} 处理出错: {e}"),
-            }
-        }
-        Ok(Vec::new())
-    }
-
-    fn call(
-        module: &Py<PyModule>,
-        ctx: &MsgCtx,
-        api_version: u8,
-    ) -> Result<Vec<Message>, Box<dyn Error>> {
-        // 登记"哪里来"：插件经能力桥发逃生舱动作时按此路由平台
-        pybridge::set_current_platform(ctx.platform);
-        let result = Python::attach(|py| {
-            let dict = PyDict::new(py);
-            dict.set_item("text", ctx.text)?;
-            dict.set_item("message_type", ctx.chat.message_type())?;
-            dict.set_item("chat_id", ctx.chat.id())?;
-            dict.set_item("user_id", ctx.sender_id)?;
-            dict.set_item("self_id", ctx.self_id)?;
-            dict.set_item("message_id", ctx.message_id)?;
-            dict.set_item("is_at_bot", ctx.mentions_bot)?;
-            dict.set_item("images", ctx.images.to_vec())?;
-            // serde_json::Value 无 IntoPyObject，走 json 字符串中转（同 pybridge 的 config 注入）
-            let segments_json = serde_json::to_string(ctx.segments)?;
-            let json_mod = py.import("json")?;
-            let segments = json_mod.call_method1("loads", (segments_json,))?;
-            dict.set_item("segments", segments)?;
-            dict.set_item("platform", ctx.platform)?;
-            let ret = module.bind(py).call_method1("handle", (dict,))?;
-            reply::from_python(py, &ret, api_version)
-        });
-        pybridge::clear_current_platform();
-        result
-    }
-
-    /// 测试便利：回复投影为文本（v1 字符串经 text 段往返恒等）。
-    #[cfg(test)]
-    pub(super) fn handle_text(&self, ctx: &MsgCtx) -> Result<Vec<String>, Box<dyn Error>> {
-        Ok(self
-            .handle(ctx)?
-            .iter()
-            .map(|m| crate::event::derive_text(m))
-            .collect())
     }
 
     /// 运行时启停插件：写/删 .disabled 标记并同步内存。持久化，重启依然生效。
@@ -373,3 +323,9 @@ mod tests_webtools;
 
 #[cfg(test)]
 mod tests_reply;
+
+#[cfg(test)]
+mod tests_budget;
+
+#[cfg(test)]
+mod tests_llm;

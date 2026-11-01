@@ -142,6 +142,30 @@ pub fn duplicates() -> u64 {
     DUPLICATES.load(Ordering::Relaxed)
 }
 
+// ---- 插件执行预算（建议 4）----
+
+/// 插件调用超时次数：看门狗注入 TimeoutError 并中断成功的次数。
+/// 预算耗尽跳过后续插件是它的后果，不单独计（否则一次超时记两笔）。
+static PLUGIN_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+/// 被标记 stuck（超时注入无效、疑似卡在 C 调用）的插件次数。
+static PLUGIN_STUCK: AtomicU64 = AtomicU64::new(0);
+
+pub fn bump_plugin_timeout() {
+    PLUGIN_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn plugin_timeouts() -> u64 {
+    PLUGIN_TIMEOUTS.load(Ordering::Relaxed)
+}
+
+pub fn bump_plugin_stuck() {
+    PLUGIN_STUCK.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn plugin_stuck() -> u64 {
+    PLUGIN_STUCK.load(Ordering::Relaxed)
+}
+
 /// 分阶段延迟：环形缓冲记最近 N 次耗时（微秒），读时排序取分位。
 /// 锁内是一次 push/pop，worker 间争用可忽略；不上直方图库，
 /// 256 样本对诊断足够（评审：只加最小集，不要 OpenTelemetry）。
@@ -202,12 +226,36 @@ pub fn record_send(d: std::time::Duration) {
     SEND.record(d.as_micros() as u64);
 }
 
-/// 三阶段延迟报告（ms），进 /api/status。
+/// 各插件 handle 耗时，按插件名分桶（建议 8 的 handler p50/p99；建议 4 的
+/// 超时预算靠它定）。桶数 = 插件数，热重载同名复用。
+static PLUGIN_LATENCY: OnceLock<Mutex<HashMap<String, Latency>>> = OnceLock::new();
+
+pub fn record_plugin(name: &str, d: std::time::Duration) {
+    let map = PLUGIN_LATENCY.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut m) = map.lock() else {
+        return;
+    };
+    m.entry(name.to_string())
+        .or_insert_with(|| Latency {
+            ring: Mutex::new(VecDeque::new()),
+        })
+        .record(d.as_micros() as u64);
+}
+
+/// 延迟报告（ms），进 /api/status：三阶段 + 各插件 + 超时/卡死计数。
 pub fn latency_report() -> serde_json::Value {
+    let plugins: serde_json::Map<String, serde_json::Value> = PLUGIN_LATENCY
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.report())).collect())
+        .unwrap_or_default();
     json!({
         "parse": PARSE.report(),
         "chain": CHAIN.report(),
         "send": SEND.report(),
+        "plugins": plugins,
+        "plugin_timeouts": plugin_timeouts(),
+        "plugin_stuck": plugin_stuck(),
     })
 }
 

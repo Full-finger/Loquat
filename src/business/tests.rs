@@ -38,6 +38,7 @@ pub(super) fn ctx(text: &'static str) -> MsgCtx {
         images: &[],
         segments: &[],
         platform: "napcat",
+        started: std::time::Instant::now(),
     }
 }
 
@@ -62,9 +63,10 @@ fn ctx_fields_reach_plugin() {
         images: &[],
         segments: &[],
         platform: "napcat",
+        started: std::time::Instant::now(),
     };
     assert_eq!(
-        business.handle_text(&c).unwrap(),
+        business.texts(&c).unwrap(),
         vec!["hi|group|42|7|100|12345".to_string()]
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -75,18 +77,12 @@ fn business_hot_reload() {
     let dir = plugin_dir("hot_reload");
     write_plugin(&dir, "p", "def handle(ctx):\n    return ['v1']\n");
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert_eq!(
-        business.handle_text(&ctx("k")).unwrap(),
-        vec!["v1".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("k")).unwrap(), vec!["v1".to_string()]);
 
     // mtime 有粒度，等一会让改动可观测
     std::thread::sleep(std::time::Duration::from_millis(1500));
     write_plugin(&dir, "p", "def handle(ctx):\n    return ['v2']\n");
-    assert_eq!(
-        business.handle_text(&ctx("k")).unwrap(),
-        vec!["v2".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("k")).unwrap(), vec!["v2".to_string()]);
     assert_eq!(business.reloads.load(Ordering::Relaxed), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -109,17 +105,14 @@ fn chain_routes_by_priority_and_survives_removal() {
 
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
+        business.texts(&ctx("x")).unwrap(),
         vec!["高优先级".to_string()]
     );
 
     // 删掉高优先级插件后，同步应落到兜底（扫描有 500ms 节流，等窗口过）
     std::fs::remove_dir_all(dir.join("aa_high")).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(600));
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["兜底".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["兜底".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -138,7 +131,7 @@ fn plugin_api_version_gate() {
     write_plugin(&dir, "plain", "def handle(ctx):\n    return ['plain']\n");
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
+        business.texts(&ctx("x")).unwrap(),
         vec!["plain".to_string()]
     );
 
@@ -151,10 +144,7 @@ fn plugin_api_version_gate() {
     )
     .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(600));
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["v1".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["v1".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -164,18 +154,15 @@ fn failed_plugin_backs_off_then_recovers() {
     write_plugin(&dir, "bad", "def handle(ctx):\n    return [语法错误\n");
     let business = Business::load(dir.to_str().unwrap()).unwrap();
     // 加载失败只跳过自身，不拖垮整条链
-    assert!(business.handle_text(&ctx("x")).unwrap().is_empty());
+    assert!(business.texts(&ctx("x")).unwrap().is_empty());
 
     // 修好语法：退避期内（首次 1s）不重试编译
     write_plugin(&dir, "bad", "def handle(ctx):\n    return ['ok']\n");
-    assert!(business.handle_text(&ctx("x")).unwrap().is_empty());
+    assert!(business.texts(&ctx("x")).unwrap().is_empty());
 
     // 过退避期：恢复加载
     std::thread::sleep(std::time::Duration::from_millis(1_100));
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["ok".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["ok".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -184,18 +171,12 @@ fn plugin_can_be_disabled() {
     let dir = plugin_dir("disable");
     write_plugin(&dir, "p", "def handle(ctx):\n    return ['ok']\n");
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["ok".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["ok".to_string()]);
 
     assert!(business.set_enabled("p", false));
-    assert!(business.handle_text(&ctx("x")).unwrap().is_empty());
+    assert!(business.texts(&ctx("x")).unwrap().is_empty());
     assert!(business.set_enabled("p", true));
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["ok".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["ok".to_string()]);
     assert!(!business.set_enabled("不存在", true));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -210,18 +191,12 @@ fn plugin_imports_local_module_and_hot_reloads_it() {
         "from helper import VALUE\ndef handle(ctx):\n    return [str(VALUE + 1)]\n",
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["42".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["42".to_string()]);
 
     // 改本地模块也要触发热重载
     std::thread::sleep(std::time::Duration::from_millis(1500));
     write_file(&dir.join("p"), "helper.py", "VALUE = 10\n");
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["11".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["11".to_string()]);
     assert!(business.reloads.load(Ordering::Relaxed) >= 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -243,15 +218,9 @@ fn local_modules_isolated_between_plugins() {
         "from helper import VALUE\ndef handle(ctx):\n    return [VALUE]\n",
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["A".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["A".to_string()]);
     assert!(business.set_enabled("aa", false));
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["B".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["B".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -264,7 +233,7 @@ fn unsigned_dirs_are_ignored() {
         "def handle(ctx):\n    return ['ok']\n",
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert!(business.handle_text(&ctx("x")).unwrap().is_empty());
+    assert!(business.texts(&ctx("x")).unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -278,18 +247,12 @@ fn lib_change_forces_plugin_reload() {
         "import loquat_cfglib\ndef handle(ctx):\n    return [loquat_cfglib.TAG]\n",
     );
     let business = Business::load(dir.to_str().unwrap()).unwrap();
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["v1".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["v1".to_string()]);
 
     // 改共享库：所有插件强制重载，重新绑定 import
     std::thread::sleep(std::time::Duration::from_millis(1500));
     write_file(&dir.join("_lib"), "config.py", "TAG = 'v2'\n");
-    assert_eq!(
-        business.handle_text(&ctx("x")).unwrap(),
-        vec!["v2".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("x")).unwrap(), vec!["v2".to_string()]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -371,7 +334,7 @@ fn handle_does_not_hold_lock_across_plugin_chain() {
     );
     let business = std::sync::Arc::new(Business::load(dir.to_str().unwrap()).unwrap());
     let b2 = business.clone();
-    let chain = std::thread::spawn(move || b2.handle_text(&ctx("k")).unwrap());
+    let chain = std::thread::spawn(move || b2.texts(&ctx("k")).unwrap());
     // 等链路进入插件 sleep
     std::thread::sleep(std::time::Duration::from_millis(400));
     let start = std::time::Instant::now();
@@ -404,10 +367,7 @@ fn poisoned_lock_recovers_instead_of_bricking() {
         let _guard = business.installable.lock().unwrap();
         panic!("注入毒锁");
     }));
-    assert_eq!(
-        business.handle_text(&ctx("k")).unwrap(),
-        vec!["ok".to_string()]
-    );
+    assert_eq!(business.texts(&ctx("k")).unwrap(), vec!["ok".to_string()]);
     assert!(business.info().contains("p"));
     let rows = business.plugin_rows();
     assert_eq!(rows.len(), 1);

@@ -14,6 +14,7 @@ mod providers;
 mod pybridge;
 mod sharedlib;
 mod stats;
+mod watchdog;
 mod webui;
 
 use std::any::Any;
@@ -68,6 +69,8 @@ extern "C" fn on_event(data: *const c_char, len: i32) {
 // worker 内：只跑责任链并产出回复（发送交出站队列，评审建议 2），
 // 15s 发送超时不再占住 worker。
 fn handle_message(incoming: Incoming, _dll: &CoreDll, business: &Business) {
+    // 预算起点 = 进入链路；排队等待不计入（建议 4）
+    let chain_started = std::time::Instant::now();
     let ctx = business::MsgCtx {
         text: &incoming.text,
         chat: incoming.chat.clone(),
@@ -78,8 +81,8 @@ fn handle_message(incoming: Incoming, _dll: &CoreDll, business: &Business) {
         images: &incoming.images,
         segments: &incoming.segments,
         platform: &incoming.platform,
+        started: chain_started,
     };
-    let chain_started = std::time::Instant::now();
     let replies = match business.handle(&ctx) {
         Ok(r) => r,
         Err(e) => {

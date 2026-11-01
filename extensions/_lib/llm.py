@@ -3,9 +3,17 @@
 # chat_fn 即本模块的 chat；返回契约见 Resp。
 
 import json
+import random
+import time
+import urllib.error
 import urllib.request
 
 import loquat_log
+
+# 一次重试（评审建议 4）：只对 429/5xx/连接类错误，带 200~800ms 抖动；
+# 重试仍受本次 timeout 总量约束，剩余不足 1s 不再试。
+RETRY_JITTER = (0.2, 0.8)
+RETRY_MIN_REMAINING = 1.0
 
 
 class Resp:
@@ -51,13 +59,29 @@ def chat(cfg: dict, messages: list, tools: list | None = None) -> Resp | None:
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=cfg.get("timeout_seconds", 60)) as resp:
-            data = json.loads(resp.read())
-        return Resp(data["choices"][0]["message"])
-    except Exception as e:  # noqa: BLE001 —— 有意兜底：网络/超时/JSON/键缺失任何失败都降级为 None，不打挂机器人
-        loquat_log.error("llm", f"LLM 调用失败: {e}")
-        return None
+    timeout = cfg.get("timeout_seconds", 60)
+    started = time.monotonic()
+    for attempt in (0, 1):
+        remaining = timeout - (time.monotonic() - started)
+        try:
+            with urllib.request.urlopen(req, timeout=max(remaining, 0.1)) as resp:
+                data = json.loads(resp.read())
+            return Resp(data["choices"][0]["message"])
+        except Exception as e:  # noqa: BLE001 —— 有意兜底：网络/超时/JSON/键缺失任何失败都降级为 None，不打挂机器人
+            if attempt == 0 and _retryable(e) and remaining > RETRY_MIN_REMAINING:
+                loquat_log.warn("llm", f"LLM 调用失败，重试一次: {e}")
+                time.sleep(random.uniform(*RETRY_JITTER))
+                continue
+            loquat_log.error("llm", f"LLM 调用失败: {e}")
+            return None
+    return None
+
+
+def _retryable(e: Exception) -> bool:
+    """429 / 5xx / 连接与超时类错误值得再试一次；4xx 等语义错误重试无益。"""
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code == 429 or e.code >= 500
+    return isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError))
 
 
 def _cfg_problem(cfg: dict) -> str | None:

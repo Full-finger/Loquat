@@ -80,6 +80,7 @@ fn v2_segment_list_is_one_message_via_loquat_seg() {
         images: &[],
         segments: &[],
         platform: "napcat",
+        started: std::time::Instant::now(),
     };
     let replies = business.handle(&c).unwrap();
     assert_eq!(replies.len(), 1, "扁平段列表 = 一条消息");

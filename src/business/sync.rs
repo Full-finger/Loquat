@@ -165,6 +165,8 @@ impl Business {
                         existing.mtime = mtime;
                         existing.api_version = api_version;
                         self.reloads.fetch_add(1, Ordering::Relaxed);
+                        // 新模块重新获得被调用的机会（建议 4 的卡死退避到此为止）
+                        crate::watchdog::clear_stuck(&name);
                         pybridge::collect_garbage();
                         log_info!(
                             "插件已热重载: {name}（第 {} 次）",

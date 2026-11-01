@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 
 import loquat_log
 
@@ -94,6 +95,14 @@ def observe(ctx: dict, text: str, cfg: dict | None = None) -> None:
         _persist(key)
 
 
+
+# 预算收敛（评审建议 4）：宿主经 ctx["deadline_ms"] 给出本条消息的剩余预算。
+# 剩余不足 MIN_TURN_SECONDS 不再起新一轮；每轮 HTTP 超时压到剩余量以内，
+# LLM 等待不会越过宿主看门狗的 deadline（越过 = 被注入 TimeoutError、本轮作废）。
+MIN_TURN_SECONDS = 2.0
+BUDGET_CUT_REPLY = "（处理超时，先回复到这里）"
+
+
 def respond(
     ctx: dict,
     *,
@@ -108,6 +117,7 @@ def respond(
     text 应为 clean_text 的结果。chat_fn(cfg, messages, tools) -> Resp | None，
     契约同 llm_api.chat（system 消息由 chat_fn 拼，不入历史）。
     tools 为 @tool 声明的工具集；超过 max_turns 强制收尾并告警。
+    预算（ctx["deadline_ms"]）不足一轮即收尾：有回复给回复，没有给 BUDGET_CUT_REPLY。
     返回 [最终回复]；LLM 失败返回 None，本轮新增的消息全部回滚。
     """
     msg = _user_message(ctx, text, cfg)
@@ -119,10 +129,17 @@ def respond(
 
     registry = {t.name: t for t in tools}
     schema = [t.schema() for t in tools]
+    deadline = _deadline(ctx)
     reply = None
+    cut = False
     for _ in range(max_turns):
+        turn_cfg = _turn_cfg(cfg, deadline)
+        if turn_cfg is None:
+            loquat_log.warn("agent", "预算不足一轮，提前收尾")
+            cut = True
+            break
         stats["turns"] = stats.get("turns", 0) + 1
-        resp = chat_fn(cfg, history, schema or None)
+        resp = chat_fn(turn_cfg, history, schema or None)
         if resp is None:
             del history[start:]  # LLM 失败：本轮新增全部不留底
             return None
@@ -143,7 +160,27 @@ def respond(
             history.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
     else:
         loquat_log.warn("agent", f"工具循环超过 max_turns={max_turns}，强制收尾")
-    return [reply] if reply else []
+    if reply:
+        return [reply]
+    return [BUDGET_CUT_REPLY] if cut else []
+
+
+def _deadline(ctx: dict) -> float | None:
+    """宿主注入的剩余预算（毫秒）→ 本地单调时钟上的绝对时刻；缺省视为无预算。"""
+    ms = ctx.get("deadline_ms")
+    if not isinstance(ms, (int, float)):
+        return None
+    return time.monotonic() + ms / 1000.0
+
+
+def _turn_cfg(cfg: dict, deadline: float | None) -> dict | None:
+    """本轮用的 cfg：HTTP 超时压到剩余预算内；剩余不足一轮返回 None。"""
+    if deadline is None:
+        return cfg
+    remaining = deadline - time.monotonic()
+    if remaining < MIN_TURN_SECONDS:
+        return None
+    return {**cfg, "timeout_seconds": min(cfg.get("timeout_seconds", 60), remaining)}
 
 
 def _key(ctx: dict) -> tuple:
