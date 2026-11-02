@@ -1,6 +1,6 @@
 # 提案：插件扩展面（替代"自动编织"设想）
 
-状态：部分实施——§4.1 数据契约（str | 段列表）与 §6 版本门已落地（评审建议 5），§4.3 的 deadline_ms 已落地（评审建议 4）；§3 三种链语义、§4.2 钩子、§4.4 能力、§4.5 事件未实施。前序评审见 `docs/pipeline-review.md`。
+状态：主体已实施——§3 三种链语义、§4.1 数据契约、§4.2 钩子（on_message/on_observe/before_send/on_unload）、§4.3 deadline_ms、§6 版本门与 v1 垫片已落地（评审建议 4/5/6）；未实施：on_event 插件间广播、§4.4 能力、§4.5 事件。偏离：on_unload 只在热重载/移除时触发，disable 不触发（无配对 init 钩子）。前序评审见 `docs/pipeline-review.md`。
 
 ## 1. 背景
 
