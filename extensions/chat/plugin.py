@@ -1,8 +1,10 @@
-# loquat-plugin
+# loquat-plugin v2
 # extensions/chat/plugin.py：LLM 对话插件（OpenAI 兼容 /chat/completions）。
 # 本插件保留：触发规则（群聊触发词/@机器人）、SCHEMA 配置、工具声明、
 # 危险工具的权限门禁；会话历史、QQ→LLM 消息转换、工具循环归内核库
 # loquat_agent（跨热重载存活），HTTP 细节归 loquat_llm，联网归 loquat_webtools。
+# 插件 API v2 两钩子：on_observe 对每条消息无条件记历史（被 qa/status 抢答、
+# 未触发的群消息、图片消息都不漏），on_message 只负责决定是否回复。
 
 import json
 import time
@@ -14,6 +16,7 @@ import loquat_llm
 import loquat_log
 import loquat_webtools
 
+API = 2
 PRIORITY = 200  # 兜底，排在 qa/status 之后
 
 # config 由宿主注入（本目录 config.yaml 的原始值；enabled 为宿主保留键）
@@ -239,26 +242,41 @@ TOOLS = [now, system_status, web_search, read_webpage,
          send_message, recall, poke, react]
 
 
-def handle(ctx: dict) -> list[str]:
+def on_observe(ctx: dict) -> None:
+    """每条消息无条件记历史（提案 §3 的观察语义）。
+
+    之前历史只在本插件 handle 里记：被 qa/status 抢答、群聊未触发、纯图片
+    三种情况全部漏记。挪到 on_observe 后抢答也照记；真正判断是否回复的
+    逻辑全部挪到 on_message，本函数不做任何触发判断。
+    """
+    cfg = _merged_cfg()
+    text = loquat_agent.clean_text(ctx)
+    if text:
+        loquat_agent.observe(ctx, text, cfg)
+
+
+def on_message(ctx: dict):
+    """路由：需要回复才接管，否则 None 放行（历史已由 on_observe 记好）。"""
     cfg = _merged_cfg()
     text = loquat_agent.clean_text(ctx)
     if not text:
-        return []
+        return None
 
     # is_at_bot 由适配器判定（at 段 target == bot 自身 ID），经 ctx 透传
     if ctx.get("message_type") == "group" and not (
         ctx.get("is_at_bot") or _hit_trigger(cfg, text)
     ):
-        loquat_agent.observe(ctx, text, cfg)  # 未触发的群消息也记历史，给模型当上下文
-        return []
+        return None  # 未触发的群消息：on_observe 已记历史，不当上下文之外的旁听者
 
     reply = loquat_agent.respond(
         ctx, text=text, cfg=cfg, chat_fn=loquat_llm.chat,
         tools=TOOLS, max_turns=cfg.get("max_turns", 6),
+        recorded=True,  # 用户消息已由 on_observe 记入历史
     )
     if reply is None:
-        return ["（LLM 调用失败，详见控制台日志）"]
-    return reply
+        return "（LLM 调用失败，详见控制台日志）"
+    # respond 给的是 [最终回复]；v2 返回 str 即一条 text 消息，空列表放行
+    return reply[0] if reply else None
 
 
 def _hit_trigger(cfg: dict, text: str) -> bool:

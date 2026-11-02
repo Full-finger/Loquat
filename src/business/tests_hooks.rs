@@ -179,3 +179,88 @@ fn observe_only_plugin_loads_and_info_lists_hooks() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- 建议 6 的收益：历史记录与回复分离（仿 chat 插件 v2 形状）----
+
+/// 拷真 _lib（log/config/agent）：同 tests_agent 的 agent_test_dir，各持一份保持解耦。
+fn with_agent_lib(dir: &Path) {
+    for f in ["log.py", "config.py", "agent.py"] {
+        let lib = dir.join("_lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::copy(Path::new("extensions/_lib").join(f), lib.join(f)).unwrap();
+    }
+}
+
+/// 独立 chat_id（108）：sessions 是全局锚点，与其他 agent 测试错开。
+fn ctx_108(text: &'static str) -> MsgCtx<'static> {
+    MsgCtx {
+        text,
+        chat: Chat::Private {
+            id: "108".to_string(),
+        },
+        sender_id: "1",
+        self_id: "100",
+        message_id: "",
+        mentions_bot: false,
+        images: &[],
+        segments: &[],
+        platform: "napcat",
+        started: std::time::Instant::now(),
+    }
+}
+
+#[test]
+fn history_survives_stealer_via_observe_and_recorded_respond() {
+    crate::pybridge::ensure_state_module();
+    let dir = plugin_dir("hooks_history");
+    with_agent_lib(&dir);
+    crate::pybridge::set_persist_dir(&dir.join("sess").to_string_lossy());
+    // 高优先级抢答者：除了 'chat' 一律接管
+    write_v2(
+        &dir,
+        "aa_steal",
+        "PRIORITY = 1\ndef on_message(ctx):\n    return None if ctx['text'] == 'chat' else 'stolen'\n",
+    );
+    // 仿 chat 插件：on_observe 无条件记历史，on_message 只对 'chat' 回复且 recorded=True；
+    // fake_chat 把看到的历史原样编进回复，测试据此断言
+    write_v2(
+        &dir,
+        "zz_chat",
+        concat!(
+            "PRIORITY = 9\n",
+            "import loquat_agent\n",
+            "CFG = {'history_limit': 20}\n",
+            "class FakeResp:\n",
+            "    def __init__(self, text):\n",
+            "        self.text = text\n",
+            "        self.tool_calls = []\n",
+            "def fake_chat(cfg, history, tools):\n",
+            "    return FakeResp('|'.join(m['content'] for m in history))\n",
+            "def on_observe(ctx):\n",
+            "    loquat_agent.observe(ctx, loquat_agent.clean_text(ctx), CFG)\n",
+            "def on_message(ctx):\n",
+            "    if ctx['text'] != 'chat':\n",
+            "        return None\n",
+            "    reply = loquat_agent.respond(ctx, text='chat', cfg=CFG, chat_fn=fake_chat,\n",
+            "                                 recorded=True)\n",
+            "    return reply[0] if reply else None\n",
+        ),
+    );
+    let business = Business::load(dir.to_str().unwrap()).unwrap();
+    // 两条都被抢答：老实现里 chat 根本轮不到、历史全丢
+    assert_eq!(
+        business.texts(&ctx_108("hi")).unwrap(),
+        vec!["stolen".to_string()]
+    );
+    assert_eq!(
+        business.texts(&ctx_108("again")).unwrap(),
+        vec!["stolen".to_string()]
+    );
+    // 第三条触发回复：模型看到的历史应含前两条，且本条用户消息只出现一次
+    assert_eq!(
+        business.texts(&ctx_108("chat")).unwrap(),
+        vec!["hi|again|chat".to_string()],
+        "on_observe 记下被抢答的消息，recorded=True 不重复追加"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

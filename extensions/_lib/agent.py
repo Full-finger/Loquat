@@ -87,13 +87,19 @@ def clean_text(ctx: dict) -> str:
 
 
 def observe(ctx: dict, text: str, cfg: dict | None = None) -> None:
-    """记一条用户消息进会话历史，不产生回复（群聊未触发场景）。"""
+    """记一条用户消息进会话历史，不产生回复。
+
+    v2 插件在 on_observe 里对每条消息调用（抢答、空回复、图片消息都不漏），
+    随后 on_message 用 respond(..., recorded=True) 接着这条历史回复。
+    给了 cfg 就按 history_limit 裁剪：纯观察的会话不会无限增长。
+    """
     msg = _user_message(ctx, text, cfg)
     if msg:
         key = _key(ctx)
         _append(key, msg)
+        if cfg:
+            _trim(cfg, key)
         _persist(key)
-
 
 
 # 预算收敛（评审建议 4）：宿主经 ctx["deadline_ms"] 给出本条消息的剩余预算。
@@ -111,6 +117,7 @@ def respond(
     chat_fn,
     tools: tuple = (),
     max_turns: int = 6,
+    recorded: bool = False,
 ) -> list[str] | None:
     """跑一次会话轮：记用户消息 → 工具循环 → 记最终回复。
 
@@ -118,14 +125,20 @@ def respond(
     契约同 llm_api.chat（system 消息由 chat_fn 拼，不入历史）。
     tools 为 @tool 声明的工具集；超过 max_turns 强制收尾并告警。
     预算（ctx["deadline_ms"]）不足一轮即收尾：有回复给回复，没有给 BUDGET_CUT_REPLY。
+    recorded=True 表示用户消息已由 observe() 记过（v2 的 on_observe → on_message），
+    这里不再追加；此时 LLM 失败的回滚只删本轮 assistant/tool 消息，用户消息保留。
     返回 [最终回复]；LLM 失败返回 None，本轮新增的消息全部回滚。
     """
     msg = _user_message(ctx, text, cfg)
     if msg is None:
         return []
     stats["responds"] = stats.get("responds", 0) + 1
-    history = _append(_key(ctx), msg)
-    start = len(history) - 1  # 本轮起点：失败时回滚到这里
+    if recorded:
+        history = sessions.setdefault(_key(ctx), [])
+        start = len(history)  # 用户消息已在历史里，本轮起点在它之后
+    else:
+        history = _append(_key(ctx), msg)
+        start = len(history) - 1  # 本轮起点：失败时回滚到这里
 
     registry = {t.name: t for t in tools}
     schema = [t.schema() for t in tools]

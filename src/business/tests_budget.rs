@@ -177,12 +177,12 @@ fn agent_test_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// 独立 chat_id（106）：sessions 是全局锚点，与 tests_agent 的 101~105 错开。
+/// 独立 chat_id（107）：sessions 是全局锚点，与 tests_agent 101~105、images 106 错开。
 fn ctx_budget(text: &'static str) -> MsgCtx<'static> {
     MsgCtx {
         text,
         chat: Chat::Private {
-            id: "106".to_string(),
+            id: "107".to_string(),
         },
         sender_id: "1",
         self_id: "100",
