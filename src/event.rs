@@ -32,6 +32,7 @@ impl Chat {
 /// 解析结果：传给插件 handle(ctx) 的字段来源。
 /// text/images 是从 segments 派生的便捷字段；结构化段在 segments 里，
 /// protojson 形态（如 {"text":{"text":"早"}}），插件可按需取用。
+#[derive(Debug)]
 pub struct Incoming {
     pub platform: String,
     pub chat: Chat,

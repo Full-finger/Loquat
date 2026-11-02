@@ -74,10 +74,9 @@ fn key_semantics_keep_clear_mask() {
     let dp = &v["llm"]["providers"]["deepseek"];
     assert_eq!(dp["api_key"], "");
     assert_eq!(dp["has_api_key"], true);
-    assert_eq!(resolved_of(&old).contains("sk-secret"), true);
-    assert_eq!(
-        resolved_of(&view_of(old.clone())).contains("sk-secret"),
-        false,
+    assert!(resolved_of(&old).contains("sk-secret"));
+    assert!(
+        !resolved_of(&view_of(old.clone())).contains("sk-secret"),
         "打码视图不能再喂回解析层"
     );
 }

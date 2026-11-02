@@ -6,6 +6,7 @@ mod business;
 mod console;
 mod dedupe;
 mod event;
+mod executor;
 mod ffi;
 mod log;
 mod outbound;
@@ -18,14 +19,13 @@ mod watchdog;
 mod webui;
 
 use std::any::Any;
-use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::c_char;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use business::Business;
 use event::{parse_incoming, Chat, Incoming};
@@ -48,9 +48,13 @@ enum HostMsg {
 }
 
 // worker 池：事件处理挪出主循环，慢回复（LLM 最长 60s）不再阻塞
-// 其他聊天与控制台命令（清单 26101801 #1）。worker 数与队列上限、
-// 管线统计在 src/stats.rs。
-use stats::{WORKER_COUNT, WORKER_QUEUE_CAP};
+// 其他聊天与控制台命令（清单 26101801 #1）。派发走每会话串行执行器
+// （src/executor.rs，评审建议 7）：同会话严格串行、不同会话互不阻塞。
+// worker 数与管线统计在 src/stats.rs。
+use stats::WORKER_COUNT;
+
+/// 退出时等在途消息排空的上限：超过即视为有会话卡死，不再等（旧实现 join 会永远挂住）。
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
 
 // Go 核心的事件回调：拷贝字节进通道就返回；队列满则阻塞——这正是
 // 反压（建议 3），Go 核心的 pump 暂停拉取，事件在其队列排队并计数。
@@ -161,15 +165,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // worker 池：见顶部常量注释。catch_unwind 兜一条消息的 panic 只损失
     // 一次迭代——线程死亡会让该 chat 后续消息静默失去去处。
-    // workers 与线程句柄成对收集：句柄在退出时 join，排空在途消息
-    let (workers, worker_handles): (Vec<mpsc::SyncSender<Incoming>>, Vec<_>) = (0..WORKER_COUNT)
+    // 每会话串行执行器（建议 7）：worker 从就绪队列取会话，处理完 done() 才放行
+    // 该会话的下一条；线程句柄留着退出时 join，排空在途消息
+    let executor = Arc::new(executor::Executor::new());
+    executor::install(Arc::clone(&executor));
+    let worker_handles: Vec<_> = (0..WORKER_COUNT)
         .map(|idx| {
-            let (tx, rx) = mpsc::sync_channel::<Incoming>(WORKER_QUEUE_CAP);
+            let ex = Arc::clone(&executor);
             let worker_dll = Arc::clone(&dll);
             let worker_business = Arc::clone(&business);
-            let h = std::thread::spawn(move || {
-                for incoming in rx {
+            std::thread::spawn(move || {
+                while let Some((key, incoming)) = ex.next() {
                     let chat_id = incoming.chat.id().to_string();
+                    stats::worker_pick(idx);
                     // panic 载荷必须留痕：静默吞掉会让会话砖化且查不到原因（26102701#8）
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         handle_message(incoming, &worker_dll, &worker_business);
@@ -177,15 +185,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if let Err(payload) = outcome {
                         log_error!("消息处理 panic（chat={chat_id}）：{}", panic_text(&payload));
                     }
-                    // 无论 panic 与否都归还计数，统计口径才守得住（agents 命令）
+                    // 无论 panic 与否都归还计数与会话，统计口径与串行契约才守得住
                     stats::worker_settle(idx, &chat_id);
+                    ex.done(&key);
                 }
-            });
-            (tx, h)
+            })
         })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .unzip();
+        .collect();
 
     // Ctrl+C：第一次触发主循环排空退出，第二次直接强退（用户不耐烦时
     // 的保底）。必须在 CPython 初始化之后注册：SetConsoleCtrlHandler 按
@@ -241,26 +247,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &incoming.text,
                 );
 
-                // chat ID 哈希定 worker：同一会话恒在同一线程串行（插件模块级状态免锁）
-                let idx = {
-                    let mut h = DefaultHasher::new();
-                    incoming.chat.id().hash(&mut h);
-                    (h.finish() % WORKER_COUNT as u64) as usize
-                };
+                // 每会话串行执行器（建议 7）：同会话 FIFO 是显式契约，不同会话互不阻塞；
+                // 该会话队列满则返还，走丢弃计数 + 私聊降级回复（建议 3）
                 let chat_id = incoming.chat.id().to_string();
-                match workers[idx].try_send(incoming) {
-                    Ok(()) => stats::worker_enqueue(idx, &chat_id),
-                    Err(mpsc::TrySendError::Full(dropped)) => {
+                match executor.submit(incoming) {
+                    Ok(()) => stats::session_enqueue(&chat_id),
+                    Err(dropped) => {
                         stats::bump_worker_dropped();
                         log_error!(
-                            "worker {idx} 队列已满，丢弃消息（chat={}）",
+                            "会话队列已满（上限 {}），丢弃消息（chat={}）",
+                            executor::SESSION_QUEUE_CAP,
                             dropped.chat.id()
                         );
-                        busy_reply(&dll, &dropped); // 私聊降级回复（建议 3）
-                    }
-                    Err(mpsc::TrySendError::Disconnected(_)) => {
-                        stats::bump_worker_dropped();
-                        log_error!("worker {idx} 已停止，丢弃消息");
+                        busy_reply(&dll, &dropped);
                     }
                 }
             }
@@ -273,12 +272,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // 优雅退出（评审建议 9）：关 worker 队列入口，等在途消息处理完
-    // （会话落盘在 handle 内完成），再停核心（连带杀适配器子进程）
-    drop(workers);
-    for h in worker_handles {
-        let _ = h.join();
+    // 优雅退出（评审建议 9）：停收新消息，等在途与待处理排空（会话落盘在
+    // handle 内完成），再停核心（连带杀适配器子进程）。排空有界：卡死的会话
+    // 不再让退出永远挂住（旧实现 join 会挂，只能靠第二次 Ctrl+C）
+    executor.close();
+    if !executor.wait_drained(DRAIN_TIMEOUT) {
+        log_warn!(
+            "{}s 内仍有会话未排空（疑似插件卡死），不再等待",
+            DRAIN_TIMEOUT.as_secs()
+        );
     }
+    // join 走辅助线程 + 超时：卡死的 worker 线程不该拖住退出
+    let (join_tx, join_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for h in worker_handles {
+            let _ = h.join();
+        }
+        let _ = join_tx.send(());
+    });
+    let _ = join_rx.recv_timeout(Duration::from_secs(5));
     log_info!("在途消息已排空，停止核心与适配器");
     dll.stop();
     Ok(())

@@ -125,9 +125,12 @@ async fn api_status(State(state): State<Arc<WebState>>, headers: HeaderMap) -> R
             "core_detail": core,
             "events": stats::event_count(),
             "replies": stats::reply_count(),
+            // workers 语义自建议 7 起为"各池线程是否在途"（0/1），Dashboard 管道视图不变
             "workers": stats::worker_backlogs(),
             "workers_done": stats::worker_done(),
             "active_chats": stats::active_chats(),
+            // 每会话串行执行器（建议 7）：就绪会话 / 待处理消息 / 有积压的会话
+            "sessions": crate::executor::snapshot_json(),
             // 可观测性最小集（26102701 建议 8）：队列占用 / worker 丢弃 / 分阶段延迟
             "main_backlog": stats::main_backlog(),
             "worker_dropped": stats::worker_dropped(),

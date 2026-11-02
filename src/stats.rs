@@ -13,14 +13,13 @@ use serde_json::json;
 
 // worker 池参数：事件处理挪出主循环，慢回复（LLM 最长 60s）不再阻塞
 // 其他聊天与控制台命令（清单 26101801 #1）。
-// chat_id hash 定 worker：同一会话恒在同一线程串行（插件模块级状态免锁），
-// 跨会话并行。并行度来自 LLM/HTTP 等待（socket 等待自动放 GIL）。
+// 派发走每会话串行执行器（src/executor.rs，评审建议 7）：同一会话恒串行
+// （插件模块级状态免锁），不同会话互不阻塞；每会话队列上限见 executor。
 pub const WORKER_COUNT: usize = 4;
-// 每 worker 的有界队列：积压超限丢消息并记日志（与 Go 核心队列同语义）。
-pub const WORKER_QUEUE_CAP: usize = 64;
 
 static EVENT_COUNT: AtomicU64 = AtomicU64::new(0);
 static REPLY_COUNT: AtomicU64 = AtomicU64::new(0);
+/// 各池线程是否在跑（0/1）：Dashboard 按线程画"管道"，语义从积压改为在途
 static WORKER_BACKLOG: [AtomicUsize; WORKER_COUNT] = [const { AtomicUsize::new(0) }; WORKER_COUNT];
 static WORKER_DONE: [AtomicU64; WORKER_COUNT] = [const { AtomicU64::new(0) }; WORKER_COUNT];
 static CHAT_STATS: OnceLock<Mutex<HashMap<String, ChatStat>>> = OnceLock::new();
@@ -46,9 +45,8 @@ pub fn reply_count() -> u64 {
     REPLY_COUNT.load(Ordering::Relaxed)
 }
 
-// 事件入队成功后记一笔（worker 处理完由 worker_settle 归还）。
-pub fn worker_enqueue(idx: usize, chat_id: &str) {
-    WORKER_BACKLOG[idx].fetch_add(1, Ordering::Relaxed);
+// 消息进入会话队列记一笔（按 chat 计积压与累计；处理完由 worker_settle 归还）。
+pub fn session_enqueue(chat_id: &str) {
     let map = CHAT_STATS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut m) = map.lock() {
         let st = m.entry(chat_id.to_string()).or_insert(ChatStat {
@@ -60,9 +58,14 @@ pub fn worker_enqueue(idx: usize, chat_id: &str) {
     }
 }
 
+// worker 从执行器取到一条：该线程标为在途。
+pub fn worker_pick(idx: usize) {
+    WORKER_BACKLOG[idx].store(1, Ordering::Relaxed);
+}
+
 // worker 处理完一条（无论 panic 与否）统一归还，统计口径才守得住。
 pub fn worker_settle(idx: usize, chat_id: &str) {
-    WORKER_BACKLOG[idx].fetch_sub(1, Ordering::Relaxed);
+    WORKER_BACKLOG[idx].store(0, Ordering::Relaxed);
     WORKER_DONE[idx].fetch_add(1, Ordering::Relaxed);
     if let Some(map) = CHAT_STATS.get() {
         if let Ok(mut m) = map.lock() {

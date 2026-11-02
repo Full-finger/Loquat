@@ -116,7 +116,7 @@ fn exhausted_budget_skips_remaining_plugins() {
     assert!(replies.is_empty(), "实际: {replies:?}");
     // 计数全局，其他并行测试也会加：只断言 aa 的注入超时至少记了一次
     // （bb 因预算耗尽被跳过是后果，不单独计数）
-    assert!(stats::plugin_timeouts() >= t0 + 1);
+    assert!(stats::plugin_timeouts() > t0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

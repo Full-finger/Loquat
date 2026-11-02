@@ -25,7 +25,7 @@ pub(super) fn write_file(dir: &Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).unwrap();
 }
 
-pub(super) fn ctx(text: &'static str) -> MsgCtx {
+pub(super) fn ctx(text: &'static str) -> MsgCtx<'static> {
     MsgCtx {
         text,
         chat: Chat::Private {

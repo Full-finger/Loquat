@@ -20,9 +20,15 @@ pub fn run_command(cmd: &str, dll: &CoreDll, business: &Business) -> bool {
         ),
         "agents" => {
             println!(
-                "worker 积压: {:?} | 累计处理: {:?}",
+                "worker 在途: {:?} | 累计处理: {:?}",
                 stats::worker_backlogs(),
                 stats::worker_done()
+            );
+            // 每会话队列（建议 7）：就绪会话 / 待处理消息 / 有积压的会话
+            let q = crate::executor::snapshot_json();
+            println!(
+                "会话队列: 就绪 {} · 待处理 {} · 积压会话 {}",
+                q["ready"], q["pending"], q["sessions"]
             );
             let active = stats::active_chats();
             if active.is_empty() {
