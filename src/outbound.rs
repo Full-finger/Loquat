@@ -58,6 +58,12 @@ pub(crate) fn retries() -> u64 {
     SEND_RETRIES.load(Ordering::Relaxed)
 }
 
+/// 启动时灌入上次落盘的基线（stats 持久化）：计数从历史值续走。
+pub(crate) fn init_baseline(dropped: u64, retries: u64) {
+    OUTBOUND_DROPPED.store(dropped, Ordering::Relaxed);
+    SEND_RETRIES.store(retries, Ordering::Relaxed);
+}
+
 static OUTBOUND_DROPPED: AtomicU64 = AtomicU64::new(0);
 static SEND_RETRIES: AtomicU64 = AtomicU64::new(0);
 

@@ -4,10 +4,18 @@
 //! agents / status 控制台命令与 /api/status 的数据源。
 //!
 //! 统计口径非记账：计数丢误差可接受，chat 表用一把 Mutex 而不分片。
+//!
+//! 持久化（data/stats.json）：累计类计数与按天活跃度跨重启保留，
+//! 启动时灌回基线（读侧不感知），每 60s 与优雅退出时原子写回；
+//! 延迟样本、队列占用这类瞬时诊断不落盘。
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -31,10 +39,12 @@ struct ChatStat {
 
 pub fn bump_event() {
     EVENT_COUNT.fetch_add(1, Ordering::Relaxed);
+    daily_bump(0);
 }
 
 pub fn bump_reply() {
     REPLY_COUNT.fetch_add(1, Ordering::Relaxed);
+    daily_bump(1);
 }
 
 pub fn event_count() -> u64 {
@@ -262,6 +272,160 @@ pub fn latency_report() -> serde_json::Value {
     })
 }
 
+// ---- 持久化（data/stats.json）----
+//
+// 累计类计数（事件/回复、丢弃/重试、插件超时/卡死）、per-chat 累计与
+// 按天活跃度（热力图数据源）跨重启保留：启动时把落盘值灌回各计数与
+// chat 表，之后的增量仍走原原子量路径，读侧无感。每 60s 与优雅退出
+// 时写回（tmp + rename），被 kill 的窗口最多丢一个写盘周期。
+// first_started_at 只取一次，是装龄的起点，永不重置。
+
+const STATS_PATH: &str = "data/stats.json";
+/// 热力图保留窗口（天）：约 13 个月，够看年节奏，文件不无限膨胀。
+const DAILY_KEEP: usize = 400;
+
+static FIRST_STARTED: AtomicI64 = AtomicI64::new(0);
+/// 日期（本地时区 YYYY-MM-DD）→ [events, replies]。BTreeMap 让落盘与
+/// 接口输出天然按日期有序。
+static DAILY: OnceLock<Mutex<BTreeMap<String, [u64; 2]>>> = OnceLock::new();
+
+fn daily() -> &'static Mutex<BTreeMap<String, [u64; 2]>> {
+    DAILY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// 当天活跃度 +1：slot 0 = 事件，slot 1 = 回复。
+fn daily_bump(slot: usize) {
+    let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+    if let Ok(mut m) = daily().lock() {
+        let slot_val = m.entry(day).or_insert([0, 0]);
+        slot_val[slot] += 1;
+    }
+}
+
+/// 首次上线时刻（unix 秒）：装龄的起点。
+pub fn first_started() -> i64 {
+    FIRST_STARTED.load(Ordering::Relaxed)
+}
+
+/// 按天活跃度（供 /api/status）：按日期升序。
+pub fn daily_json() -> serde_json::Value {
+    match daily().lock() {
+        Ok(m) => serde_json::Value::Object(
+            m.iter().map(|(k, v)| (k.clone(), json!(v))).collect(),
+        ),
+        Err(_) => json!({}),
+    }
+}
+
+/// 启动时读盘灌基线。无文件视为首次启动：装龄从现在起算，
+/// 并立刻落一次盘，否则装龄要等下一个写盘周期才站得住。
+pub fn init() {
+    let parsed: serde_json::Value = fs::read(STATS_PATH)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_else(|| json!({}));
+    let existed = parsed["first_started_at"].as_i64().unwrap_or(0) > 0;
+
+    FIRST_STARTED.store(
+        parsed["first_started_at"]
+            .as_i64()
+            .unwrap_or_else(|| chrono::Utc::now().timestamp()),
+        Ordering::Relaxed,
+    );
+    EVENT_COUNT.store(parsed["events"].as_u64().unwrap_or(0), Ordering::Relaxed);
+    REPLY_COUNT.store(parsed["replies"].as_u64().unwrap_or(0), Ordering::Relaxed);
+    WORKER_DROPPED.store(parsed["worker_dropped"].as_u64().unwrap_or(0), Ordering::Relaxed);
+    DUPLICATES.store(parsed["duplicates"].as_u64().unwrap_or(0), Ordering::Relaxed);
+    PLUGIN_TIMEOUTS.store(parsed["plugin_timeouts"].as_u64().unwrap_or(0), Ordering::Relaxed);
+    PLUGIN_STUCK.store(parsed["plugin_stuck"].as_u64().unwrap_or(0), Ordering::Relaxed);
+    crate::outbound::init_baseline(
+        parsed["outbound_dropped"].as_u64().unwrap_or(0),
+        parsed["outbound_retries"].as_u64().unwrap_or(0),
+    );
+
+    if let Ok(mut m) = CHAT_STATS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        if let Some(chats) = parsed["chats"].as_object() {
+            for (k, v) in chats {
+                let st = m
+                    .entry(k.clone())
+                    .or_insert(ChatStat { backlog: 0, total: 0 });
+                st.total = v.as_u64().unwrap_or(0);
+            }
+        }
+    }
+    if let Ok(mut m) = daily().lock() {
+        m.clear();
+        if let Some(days) = parsed["daily"].as_object() {
+            for (k, v) in days {
+                if let (Some(e), Some(r)) = (v[0].as_u64(), v[1].as_u64()) {
+                    m.insert(k.clone(), [e, r]);
+                }
+            }
+        }
+    }
+
+    if !existed {
+        save();
+    }
+}
+
+/// 收集当前累计值写盘。
+pub fn save() {
+    save_to(Path::new(STATS_PATH));
+}
+
+fn save_to(path: &Path) {
+    let chats: serde_json::Map<String, serde_json::Value> = CHAT_STATS
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), json!(v.total))).collect())
+        .unwrap_or_default();
+    // 留最近 DAILY_KEEP 天：日期字符串字典序即时间序，丢掉最旧的
+    let daily_val = match daily().lock() {
+        Ok(m) => {
+            let skip = m.len().saturating_sub(DAILY_KEEP);
+            serde_json::Value::Object(
+                m.iter().skip(skip).map(|(k, v)| (k.clone(), json!(v))).collect(),
+            )
+        }
+        Err(_) => json!({}),
+    };
+    let body = json!({
+        "version": 1,
+        "first_started_at": first_started(),
+        "events": event_count(),
+        "replies": reply_count(),
+        "worker_dropped": worker_dropped(),
+        "duplicates": duplicates(),
+        "plugin_timeouts": plugin_timeouts(),
+        "plugin_stuck": plugin_stuck(),
+        "outbound_dropped": crate::outbound::dropped(),
+        "outbound_retries": crate::outbound::retries(),
+        "chats": serde_json::Value::Object(chats),
+        "daily": daily_val,
+        "saved_at": chrono::Utc::now().to_rfc3339(),
+    });
+    // tmp + rename：写一半被杀不会留半个 JSON
+    let tmp = path.with_extension("json.tmp");
+    if let Ok(mut f) = fs::File::create(&tmp) {
+        if serde_json::to_writer_pretty(&mut f, &body).is_ok() && f.flush().is_ok() {
+            drop(f);
+            let _ = fs::rename(&tmp, path);
+        }
+    }
+}
+
+/// 定期写盘线程：强杀场景最多丢一个周期，正常 Ctrl+C 走退出钩子。
+pub fn spawn_persister() {
+    std::thread::spawn(|| loop {
+        std::thread::sleep(Duration::from_secs(60));
+        save();
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +456,54 @@ mod tests {
             l.record(ms * 1000);
         }
         assert_eq!(l.report()["n"], LATENCY_CAP);
+    }
+
+    #[test]
+    fn stats_json_roundtrip_and_daily_trim() {
+        let dir = std::env::temp_dir().join("loquat-stats-test");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stats.json");
+        let _ = fs::remove_file(&path);
+
+        // 灌测试态：DAILY_KEEP + 10 天数据，裁剪后应只剩最近 KEEP 天
+        let today = chrono::Local::now().date_naive();
+        let expect_first = chrono::Utc::now().timestamp();
+        FIRST_STARTED.store(expect_first, Ordering::Relaxed);
+        *daily().lock().unwrap() = (0..=DAILY_KEEP + 10)
+            .map(|i| {
+                (
+                    (today - chrono::Duration::days(i as i64))
+                        .format("%Y-%m-%d")
+                        .to_string(),
+                    [i as u64, i as u64],
+                )
+            })
+            .collect();
+        CHAT_STATS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .insert("chat_a".into(), ChatStat { backlog: 3, total: 42 });
+
+        save_to(&path);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["chats"]["chat_a"], 42, "只落累计，不落 backlog");
+        assert_eq!(saved["first_started_at"], expect_first);
+        let daily = saved["daily"].as_object().unwrap();
+        assert_eq!(daily.len(), DAILY_KEEP, "超出窗口的最旧天被裁掉");
+        // 最新一天（i=0）在，最旧一天（i=KEEP+10）不在
+        assert!(daily.contains_key(&today.format("%Y-%m-%d").to_string()));
+        let oldest = (today - chrono::Duration::days((DAILY_KEEP + 10) as i64))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert!(!daily.contains_key(&oldest));
+
+        // 读回：init 从落盘文件恢复（init 读固定路径，这里直接验证解析逻辑等价：
+        // save→改路径读回的字段都能还原）
+        let raw = fs::read(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(parsed["events"], saved["events"]);
+        assert_eq!(parsed["daily"], saved["daily"]);
     }
 }

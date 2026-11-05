@@ -143,6 +143,9 @@ async fn api_status(State(state): State<Arc<WebState>>, headers: HeaderMap) -> R
                 "retries": crate::outbound::retries(),
             },
             "uptime_sec": super::uptime_sec(),
+            // 装龄与按天活跃度（热力图数据源，见 stats.rs 持久化）
+            "first_started_at": stats::first_started(),
+            "daily": stats::daily_json(),
             "sys": super::proc::host(),
             "business": state.business.info(),
         }))

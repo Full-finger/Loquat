@@ -135,6 +135,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (tx, rx) = mpsc::sync_channel::<HostMsg>(MAIN_QUEUE_CAP);
     EVENT_TX.set(tx.clone()).expect("事件通道只能初始化一次");
 
+    // 统计基线先于核心启动灌回：WebUI 与控制台一开就是历史续算的口径
+    stats::init();
+    stats::spawn_persister();
+
     // 先起 Go 核心，再初始化 Python 与 stdin 线程：
     // 1) CPython 先于 Go 运行时初始化会在 Windows 上互相卡死；
     // 2) 阻塞读 stdin 的线程若先于首次 FFI 启动，Go 运行时初始化会直接冻死
@@ -292,6 +296,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
     let _ = join_rx.recv_timeout(Duration::from_secs(5));
     log_info!("在途消息已排空，停止核心与适配器");
+    stats::save();
     dll.stop();
     Ok(())
 }

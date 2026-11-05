@@ -5,6 +5,7 @@ import type { Status } from '@webui/api'
 import { useResource } from '@webui/composables/use-resource'
 import StateDot from '@webui/components/StateDot.vue'
 import Donut from '@webui/components/Donut.vue'
+import Heatmap from '@webui/components/Heatmap.vue'
 import Sparkline from '@webui/components/Sparkline.vue'
 import { useCtx } from '@webui/ext/mount'
 
@@ -66,11 +67,18 @@ const sys = computed(() => status.value?.sys)
 
 function fmtUptime(sec: number): string {
   const d = Math.floor(sec / 86400)
-  const h = Math.floor((sec % 86400) / 3600)
-  const m = Math.floor((sec % 3600) / 60)
+  const h = Math.floor(sec % 86400 / 3600)
+  const m = Math.floor(sec % 3600 / 60)
   if (d) return `${d} 天 ${h} 小时`
   if (h) return `${h} 小时 ${m} 分`
   return `${m} 分钟`
+}
+
+// 装龄：首次上线至今（跨重启累计，stats 持久化）；当天上线显示 0 天
+function fmtAge(ts?: number): string {
+  if (!ts) return ''
+  const days = Math.floor((Date.now() / 1000 - ts) / 86400)
+  return days <= 0 ? '今日上线' : `装龄 ${days} 天`
 }
 
 function fmtMem(bytes?: number): string {
@@ -142,7 +150,11 @@ onUnmounted(() => {
           <div class="ov-label">核心</div>
           <div class="ov-value">{{ status.core }}</div>
           <div class="ov-sub">
-            {{ status.uptime_sec ? `已运行 ${fmtUptime(status.uptime_sec)}` : '等待适配器上线' }}
+            {{
+              status.uptime_sec
+                ? `已运行 ${fmtUptime(status.uptime_sec)} · ${fmtAge(status.first_started_at)}`
+                : '等待适配器上线'
+            }}
           </div>
         </div>
         <div class="ov-item">
@@ -253,6 +265,11 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="sec">
+        <h3 class="sec-title">活跃热力</h3>
+        <Heatmap :daily="status.daily" :weeks="16" />
       </section>
 
       <section class="sec">

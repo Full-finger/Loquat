@@ -40,6 +40,10 @@ export interface Status {
   active_chats?: string[]
   /** WebUI 已运行秒数 */
   uptime_sec?: number
+  /** 装龄起点：首次上线 unix 秒（stats 持久化，见 src/stats.rs） */
+  first_started_at?: number
+  /** 按天活跃度：本地日期 → [events, replies]（热力图数据源） */
+  daily?: Record<string, [number, number]>
   /** 宿主进程占用 + 硬件静态信息（mem 单位字节，cpu_freq 单位 MHz） */
   sys?: {
     os_long?: string
