@@ -3,6 +3,8 @@
 // 灰弧 = 系统总占用（percent2），蓝弧叠其上 = 宿主进程占用（percent）；
 // 宿主小于总占用的部分露出灰色。超 warnAt 蓝弧换警示色。
 // tip 提供时 hover 弹出具体数值。
+import { computed } from 'vue'
+
 const props = withDefaults(
   defineProps<{
     percent: number
@@ -18,9 +20,9 @@ const props = withDefaults(
 const R = 32
 const C = 2 * Math.PI * R
 
-const main = Math.min(Math.max(props.percent, 0), 100)
-const total = Math.min(Math.max(props.percent2 ?? 0, 0), 100)
-const hot = props.percent >= props.warnAt
+const main = computed(() => Math.min(Math.max(props.percent, 0), 100))
+const total = computed(() => Math.min(Math.max(props.percent2 ?? 0, 0), 100))
+const hot = computed(() => props.percent >= props.warnAt)
 </script>
 
 <template>
@@ -81,7 +83,7 @@ svg {
 
 .fill-total {
   fill: none;
-  stroke: var(--text-3);
+  stroke: var(--chart-secondary);
   stroke-width: 8;
   stroke-linecap: round;
   transition: stroke-dasharray 0.4s ease;

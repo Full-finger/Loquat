@@ -2,11 +2,11 @@
 // 「设置」页：UI 偏好的编辑界面。偏好本体与生效逻辑在壳的
 // @webui/ext/prefs.ts（单一实现点），这里只收集输入——
 // 改动即时保存即时生效，无需「保存」按钮；token 除外（显式保存）。
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UiTab } from '@webui/api'
 import { mergeTabs } from '@webui/tabs'
-import { clearPrefs, DEFAULT_ACCENT, loadPrefs, savePrefs } from '@webui/ext/prefs'
+import { clearPrefs, loadPrefs, savePrefs } from '@webui/ext/prefs'
 import PageHead from '@webui/components/PageHead.vue'
 import Panel from '@webui/components/Panel.vue'
 import FieldRow from '@webui/components/FieldRow.vue'
@@ -17,14 +17,21 @@ const ctx = useCtx()
 const prefs = ref(loadPrefs())
 watch(prefs, (p) => savePrefs({ ...p }), { deep: true })
 
-// 主题：'' = 暗色（默认），'light' = 亮色；应用为 html.dark class
-const THEMES: { label: string; value: '' | 'light' }[] = [
+// 配色方案（Windows Terminal 式）：深浅 × 预设色组合成命名方案，
+// 左侧色卡预览该方案的派生色（面板底/正文/图表次级/主色），点击整套应用。
+// 各模式的令牌基线与 theme.css 同源，预览色卡按同一公式派生。
+const MODES: { label: string; value: '' | 'light' }[] = [
   { label: '深色', value: '' },
   { label: '浅色', value: 'light' },
 ]
 
+const MODE_TOKENS: Record<'' | 'light', { accent: string; panel: string; text: string }> = {
+  '': { accent: '#539bf5', panel: '#2d333b', text: '#cdd9e5' },
+  light: { accent: '#0969da', panel: '#ffffff', text: '#1f2328' },
+}
+
 // 预设色板：Primer 系，外加枇杷橙（项目名的颜色）。首档「默认」用
-// 空串表示（清掉覆盖，回到 theme.css 的 token）
+// 空串表示（清掉覆盖，回到 theme.css 的 token——两模式色值不同）
 const PRESETS: { label: string; value: string }[] = [
   { label: '默认蓝', value: '' },
   { label: '枇杷橙', value: '#e09140' },
@@ -33,8 +40,44 @@ const PRESETS: { label: string; value: string }[] = [
   { label: '绿', value: '#57ab5a' },
 ]
 
-function swatchColor(value: string): string {
-  return value || DEFAULT_ACCENT
+interface Scheme {
+  key: string
+  mode: '' | 'light'
+  /** 写进 prefs.accent 的值（「默认蓝」为空串 = 跟随主题默认） */
+  accentPref: string
+  label: string
+  /** 色卡预览用：面板底 / 正文 / 图表次级 / 主色（实际生效值） */
+  panel: string
+  text: string
+  secondary: string
+  accent: string
+}
+
+const SCHEMES: Scheme[] = MODES.flatMap((m) =>
+  PRESETS.map((p) => {
+    const t = MODE_TOKENS[m.value]
+    const accent = p.value === '' ? t.accent : p.value
+    return {
+      key: `${m.value}|${p.value}`,
+      mode: m.value,
+      accentPref: p.value,
+      label: `${m.label} · ${p.label}`,
+      panel: t.panel,
+      text: t.text,
+      secondary: `color-mix(in srgb, ${accent} 35%, ${t.panel})`,
+      accent,
+    }
+  }),
+)
+
+// 当前命中方案：深浅与主色都吻合才亮；自定义取色后全部熄灭
+const activeKey = computed(
+  () => SCHEMES.find((s) => s.mode === prefs.value.theme && s.accentPref === prefs.value.accent)?.key ?? '',
+)
+
+function applyScheme(s: Scheme) {
+  prefs.value.theme = s.mode
+  prefs.value.accent = s.accentPref
 }
 
 // 自定义取色：el-color-picker 空值是 null，映射回偏好的空串语义
@@ -93,30 +136,27 @@ onMounted(refreshTabs)
     </PageHead>
 
     <Panel class="section" title="外观" desc="改动即时生效并记住，只作用于当前浏览器">
-      <FieldRow label="主题">
-        <div class="swatch-row">
+      <FieldRow label="配色方案" hint="色卡预览：面板底 · 正文 · 图表次级 · 主色">
+        <div class="scheme-grid">
           <button
-            v-for="t in THEMES"
-            :key="t.label"
-            class="theme-btn"
-            :class="{ active: prefs.theme === t.value }"
-            @click="prefs.theme = t.value"
+            v-for="s in SCHEMES"
+            :key="s.key"
+            class="scheme"
+            :class="{ active: activeKey === s.key }"
+            @click="applyScheme(s)"
           >
-            {{ t.label }}
+            <span class="scheme-swatches">
+              <i :style="{ background: s.panel }" />
+              <i :style="{ background: s.text }" />
+              <i :style="{ background: s.secondary }" />
+              <i :style="{ background: s.accent }" />
+            </span>
+            <span class="scheme-name">{{ s.label }}</span>
           </button>
         </div>
       </FieldRow>
-      <FieldRow label="主题色" hint="全部颜色令牌跟随主色派生">
+      <FieldRow label="自定义主题色" hint="全部颜色令牌跟随主色派生；自定义后上方方案取消高亮">
         <div class="swatch-row">
-          <button
-            v-for="p in PRESETS"
-            :key="p.label"
-            class="swatch"
-            :class="{ active: prefs.accent === p.value }"
-            :style="{ background: swatchColor(p.value) }"
-            :title="p.label"
-            @click="prefs.accent = p.value"
-          />
           <el-color-picker
             class="custom-pick"
             :model-value="prefs.accent || null"
@@ -159,6 +199,8 @@ onMounted(refreshTabs)
 <style scoped>
 .settings {
   max-width: 720px;
+  /* 与仪表盘 .dash 同款：宽屏下内容居中，不贴侧栏 */
+  margin: 0 auto;
 }
 
 .section {
@@ -171,44 +213,61 @@ onMounted(refreshTabs)
   gap: 10px;
 }
 
-.theme-btn {
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-raised);
-  color: var(--text-2);
-  border-radius: 6px;
-  padding: 4px 14px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease;
+.scheme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
-.theme-btn:hover {
+.scheme {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-raised);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.scheme:hover {
+  border-color: var(--border);
+}
+
+.scheme.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+}
+
+/* 色卡 2×2：面板底 / 正文 / 图表次级 / 主色，同 WT 配色方案的预览思路 */
+.scheme-swatches {
+  display: grid;
+  grid-template-columns: repeat(2, 12px);
+  grid-auto-rows: 12px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.scheme-swatches i {
+  border-radius: 3px;
+}
+
+.scheme-name {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.scheme.active .scheme-name {
   color: var(--text-1);
 }
 
-.theme-btn.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.swatch {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  padding: 0;
-  outline-offset: 2px;
-}
-
-.swatch.active {
-  border-color: var(--text-1);
-  box-shadow: 0 0 0 2px var(--bg-page);
-}
-
-.custom-pick {
-  margin-left: 4px;
-  vertical-align: middle;
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .key-row {

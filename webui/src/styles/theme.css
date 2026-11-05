@@ -24,6 +24,10 @@
   /* 主色描边光晕：输入聚焦、发送按钮激活。跟随用户自定义主色 */
   --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 
+  /* 图表次级系列色（Donut 的「系统总占用」弧等）：主色淡化派生，
+     换主题/自定义主色自动跟随；在轨道色上拉得开、又不抢主系列风头 */
+  --chart-secondary: color-mix(in srgb, var(--accent) 35%, var(--bg-panel));
+
   /* 动效：一条「出快入慢」的缓动曲线统一全站，另留一条带回弹的用于
      小元素（胶囊滑片、发送键）——过冲控制在 4% 以内，不喧哗 */
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
