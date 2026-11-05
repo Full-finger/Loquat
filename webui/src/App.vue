@@ -37,6 +37,9 @@ watch(
 // 见 docs/ext-ui.md）。共享状态：启停/安装后即时刷新，轮询兜底外部变更。
 const extTabs = useExtTabs()
 const tabs = computed<UiTab[]>(() => mergeTabs(extTabs.value))
+// WinUI 式分区：置底组（pin=bottom，如设置）独立渲染，钉在侧栏视口底部
+const mainTabs = computed(() => tabs.value.filter((t) => t.pin !== 'bottom'))
+const bottomTabs = computed(() => tabs.value.filter((t) => t.pin === 'bottom'))
 
 // 图标按 element-plus 图标组件名解析（main.ts 已全局注册），缺省通用 Link
 function iconOf(tab: UiTab): string {
@@ -185,10 +188,24 @@ onUnmounted(() => {
             class="indicator"
             :style="{ transform: `translateY(${indY}px)`, height: `${indH}px` }"
           />
-          <el-menu router :default-active="activeIndex" class="menu">
+          <el-menu router :default-active="activeIndex" class="menu menu-main">
             <!-- 列表过渡：tab 增删时淡出收拢/生长展开，下方项随布局自然上移 -->
             <transition-group name="tab">
-              <el-menu-item v-for="t in tabs" :key="t.id" :index="t.path">
+              <el-menu-item v-for="t in mainTabs" :key="t.id" :index="t.path">
+                <el-icon><component :is="iconOf(t)" /></el-icon>
+                <span>{{ t.title }}</span>
+              </el-menu-item>
+            </transition-group>
+          </el-menu>
+          <!-- 置底区：不参与主列表滚动，项再多也钉在侧栏底缘（WinUI Settings 同款） -->
+          <el-menu router :default-active="activeIndex" class="menu menu-bottom">
+            <transition-group name="tab">
+              <el-menu-item
+                v-for="t in bottomTabs"
+                :key="t.id"
+                :index="t.path"
+                class="pinned"
+              >
                 <el-icon><component :is="iconOf(t)" /></el-icon>
                 <span>{{ t.title }}</span>
               </el-menu-item>
@@ -364,9 +381,26 @@ onUnmounted(() => {
 }
 
 .menu-wrap {
+  /* border-box：height 含上下 padding，否则总高 100%+16px 溢出，
+     底部留白被 aside 的 overflow:hidden 裁掉，置底项直接碰底 */
+  box-sizing: border-box;
   height: 100%;
+  display: flex;
+  flex-direction: column;
   position: relative;
   padding: 8px 0;
+}
+
+/* 主列表吃掉剩余空间并自滚，置底区因此恒贴侧栏底缘；
+   项少时设置也钉在底部，不跟主列表内容走 */
+.menu-main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.menu-bottom {
+  flex-shrink: 0;
 }
 
 /* 共享指示条：胶囊短条，贴菜单项左缘（项缘 x=4，缩进 6px），切换时滑动。
@@ -437,6 +471,21 @@ onUnmounted(() => {
 
 .menu :deep(.el-menu-item:hover) {
   background: var(--bg-raised);
+}
+
+/* 置底组（pin=bottom，如设置）：WinUI 式分隔线，与主列表隔开 */
+.menu :deep(.el-menu-item.pinned:first-child) {
+  position: relative;
+}
+
+.menu :deep(.el-menu-item.pinned:first-child)::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 4px;
+  right: 4px;
+  height: 1px;
+  background: var(--border-subtle);
 }
 
 /* 选中态：WinUI 式可见圆角背景块，无描边。用 text-1 派生：暗色是

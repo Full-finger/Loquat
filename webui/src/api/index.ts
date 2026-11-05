@@ -400,6 +400,8 @@ export interface UiTab {
   icon?: string
   /** 侧栏排序权重（小在前）；缺省 100，排到内置页之后 */
   order?: number
+  /** WinUI 式置底（分隔线下方），目前只有 "bottom"；置底项不参与 order 竞争 */
+  pin?: 'bottom'
   /** ui.js 的 mtime 毫秒：热更后变化，击穿浏览器 module 缓存 */
   v?: number
 }

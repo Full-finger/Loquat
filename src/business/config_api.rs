@@ -309,7 +309,7 @@ impl Business {
                 if !valid_ext_id(id) || title.is_empty() {
                     continue;
                 }
-                tabs.push(serde_json::json!({
+                let mut item = serde_json::json!({
                     "id": format!("{}-{}", p.dir_name, id),
                     "title": title,
                     "path": format!("/ext/{}/{}", p.dir_name, id),
@@ -318,7 +318,13 @@ impl Business {
                     "v": v,
                     // 侧栏排序权重（小在前）；缺省排到内置页之后
                     "order": entry.get("order").and_then(|x| x.as_i64()).unwrap_or(100),
-                }));
+                });
+                // WinUI 惯例：设置这类固定入口置底（侧栏分隔线下方），
+                // 不参与 order 竞争——其它 tab 再多也挤不掉它
+                if entry.get("pin").and_then(|x| x.as_str()) == Some("bottom") {
+                    item["pin"] = serde_json::json!("bottom");
+                }
+                tabs.push(item);
             }
         }
         tabs

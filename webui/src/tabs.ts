@@ -13,13 +13,19 @@ export interface BuiltinTab {
   icon: string
   /** 排序权重：插件管理页固定 20，其余内置位从 10 起 */
   order: number
+  /** WinUI 式置底（分隔线下方），目前只有 "bottom" */
+  pin?: 'bottom'
 }
 
 export const BUILTIN_TABS: BuiltinTab[] = [
   { id: 'plugins', title: '插件', path: '/plugins', icon: 'Grid', order: 20 },
 ]
 
-/** 侧栏最终清单：内置在前、插件在后，按 order 升序稳定排序。 */
+/** 侧栏最终清单：内置在前、插件在后，按 order 升序稳定排序；
+ *  pin="bottom" 的项（如设置）殿后——WinUI NavigationView 的 Settings 就是
+ *  这个待遇：分隔线下方固定底部，其它 tab 再多也挤不掉它。 */
 export function mergeTabs(ext: UiTab[]): UiTab[] {
-  return [...BUILTIN_TABS, ...ext].sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
+  const merged = [...BUILTIN_TABS, ...ext].sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
+  const pinned = merged.filter((t) => t.pin === 'bottom')
+  return [...merged.filter((t) => t.pin !== 'bottom'), ...pinned]
 }

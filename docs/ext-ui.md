@@ -34,6 +34,9 @@ color-mix 自对应 token 或用 --accent-text/--pink-text/--danger-text，
 TABS = [
     # order 是侧栏排序权重（小在前），缺省 100；内置插件管理页固定 20
     {"id": "main", "title": "统计", "icon": "TrendCharts", "order": 40},
+    # pin="bottom" 把入口固定在侧栏最底（分隔线下方），像 WinUI 的设置：
+    # 不参与 order 竞争，其它 tab 再多也挤不掉（样例：settings_ui）
+    {"id": "main", "title": "设置", "icon": "Setting", "order": 90, "pin": "bottom"},
 ]
 ```
 
@@ -101,7 +104,8 @@ ctx = {
 - `GET /api/extensions/ui`（`Business::ui_tabs`）：聚合**已启用**插件的
   TABS 声明，条目不合规（缺 id/title）或 ui.js 缺失时丢弃。返回
   `{ id: "<插件>-<tab>", title, path: "/ext/<插件>/<tab>", entry, icon,
-  order, v }`，`v` 是 ui.js 的 mtime 毫秒。
+  order, pin, v }`，`v` 是 ui.js 的 mtime 毫秒；`pin` 仅在声明为
+  `"bottom"` 时出现。
 - `GET /ext/<插件>/ui.js`（`Business::plugin_ui_js`）：脚本分发。动态
   `import()` 带不了 Authorization 头，token 走 `?token=` 查询参数兜底
   （与 `/api/ws` 同款）；name 只允许字母数字`-_` 且目录必须含 plugin.py，

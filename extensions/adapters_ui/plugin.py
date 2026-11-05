@@ -5,7 +5,7 @@
 # 不参与消息路由：handle 恒返回空列表，责任链继续。
 
 TABS = [
-    {"id": "main", "title": "适配器", "icon": "Setting", "order": 50},
+    {"id": "main", "title": "适配器", "icon": "Connection", "order": 50},
 ]
 
 
