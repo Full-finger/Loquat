@@ -30,6 +30,18 @@ venv/
 *.egg-info/
 .ruff_cache/
 
+# ---- Agent ----
+# .agent/ 存放项目 agent 工作规范文档，入库；
+# 其余是各工具的个人配置与本地状态，不入库
+/.workbuddy/
+/.zcode/
+/.claude/
+/.cursor/
+/.codex/
+/.gemini/
+/.copilot/
+/.aider*
+
 # ---- 本地内容 ----
 # 本机演示，暂不入库
 /demo/
@@ -41,10 +53,6 @@ venv/
 !/config/loquat.yaml.example
 # 私人编译器配置（本机路径），缺失时构建回退 PATH 里的 go
 /compile.toml
-# pi agent 个人环境（配置与工作流），不入库
-.agent/
-# 本地工作目录（截图输出、会话 memory）
-/.workbuddy/
 # 设计稿与原型（本地保留）
 /design/
 # 插件配置是运行时状态（个人 token、启停声明），不入库：
@@ -56,5 +64,3 @@ extensions/*/.disabled
 # 编辑器 / 系统
 .DS_Store
 Thumbs.db
-# ZCode 本地工作区状态
-/.zcode/
