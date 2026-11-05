@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,17 @@ func TestTranslateSelfMessageDropped(t *testing.T) {
 		time.Now())
 	if err == nil || !strings.Contains(err.Error(), "机器人自己") {
 		t.Fatalf("机器人自己的消息应被丢弃: %v", err)
+	}
+}
+
+func TestTranslateMessageSentIgnored(t *testing.T) {
+	// NapCat/go-cqhttp 扩展事件：机器人账号自己发出的消息，
+	// 与 self-message 同口径静默跳过，不算故障。
+	_, err := translateEvent([]byte(`{"post_type":"message_sent","message_type":"private","self_id":42,
+		"message_id":1,"user_id":42,"message":"hi","raw_message":"hi","sender":{"user_id":42}}`),
+		time.Now())
+	if !errors.Is(err, errSelfSent) {
+		t.Fatalf("message_sent 应返回 errSelfSent: %v", err)
 	}
 }
 

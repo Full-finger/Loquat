@@ -231,6 +231,10 @@ func (n *NapCat) dispatch(data []byte) {
 			if errors.Is(err, errSelfMessage) {
 				return // 机器人自己的消息，静默丢弃防自问自答
 			}
+			if errors.Is(err, errSelfSent) {
+				n.logger.Debug("忽略机器人自己发送的消息上报", "head", head(data, 120))
+				return
+			}
 			n.logger.Error("事件翻译失败，已丢弃", "err", err, "head", head(data, 120))
 			return
 		}

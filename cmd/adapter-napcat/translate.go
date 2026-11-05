@@ -40,6 +40,9 @@ func translateEvent(raw []byte, recvAt time.Time) (*pluginapi.EventEnvelope, err
 
 	kind := kindFromPostType(ev.PostType)
 	if kind == pluginapi.EventKind_EVENT_KIND_UNSPECIFIED {
+		if ev.PostType == "message_sent" {
+			return nil, errSelfSent
+		}
 		return nil, fmt.Errorf("未知的 post_type=%q", ev.PostType)
 	}
 
@@ -100,6 +103,11 @@ func translateEvent(raw []byte, recvAt time.Time) (*pluginapi.EventEnvelope, err
 
 // errSelfMessage 标记机器人自己的消息：不是故障，调用方静默跳过。
 var errSelfMessage = fmt.Errorf("机器人自己的消息，丢弃")
+
+// errSelfSent 标记 message_sent 事件（go-cqhttp/NapCat 扩展 post_type，
+// 机器人账号自己发出的消息）：与 self-message 同口径，不进系统防自问自答，
+// 不算故障，调用方静默跳过并留 Debug 日志。
+var errSelfSent = fmt.Errorf("机器人自己发送的消息（message_sent），忽略")
 
 func kindFromPostType(postType string) pluginapi.EventKind {
 	switch postType {
