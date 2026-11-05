@@ -4,7 +4,7 @@
 //    ctx.api.get/post 走宿主 http 封装（token 自动携带），ctx.toast 是
 //    Element Plus 消息条薄封装
 // 3) 必须防重复 define：热更后 v 变化会让宿主重新 import 本文件
-const TAG = 'loquat-page-demo_ui-demo'
+const TAG = 'loquat-page-test_demo_ui-demo'
 
 if (!customElements.get(TAG)) {
   customElements.define(
@@ -51,8 +51,8 @@ if (!customElements.get(TAG)) {
           <div class="demo-ui-card">
             <h2>插件演示页</h2>
             <p class="hint">
-              这个页面完全由 extensions/demo_ui/ui.js 渲染——宿主只负责
-              导航聚合（TABS）与脚本分发（/ext/demo_ui/ui.js）。
+              这个页面完全由 extensions/test_demo_ui/ui.js 渲染——宿主只负责
+              导航聚合（TABS）与脚本分发（/ext/test_demo_ui/ui.js）。
             </p>
             <button>ctx.toast 提示</button>
             <pre class="demo-ui-cfg">正在经 ctx.api.get 读取本插件配置…</pre>

@@ -100,7 +100,7 @@ async function postMsg(path: string): Promise<string> {
 
 const mockPlugins: PluginInfo[] = [
   { name: 'chat', installed: true, enabled: true, priority: 100, has_ui: false },
-  { name: 'demo_ui', installed: true, enabled: true, priority: 100, has_ui: true },
+  { name: 'test_demo_ui', installed: true, enabled: true, priority: 100, has_ui: true },
   { name: 'qa', installed: true, enabled: true, priority: 100, has_ui: false },
   { name: 'status', installed: true, enabled: false, priority: 50, has_ui: false },
   { name: 'weather', installed: false, enabled: false, priority: 100, has_ui: false },
@@ -411,10 +411,10 @@ export async function fetchUiTabs(): Promise<UiTab[]> {
   if (USE_MOCK) {
     return [
       {
-        id: 'demo_ui-demo',
+        id: 'test_demo_ui-demo',
         title: '演示页',
-        path: '/ext/demo_ui/demo',
-        entry: '/ext/demo_ui/ui.js',
+        path: '/ext/test_demo_ui/demo',
+        entry: '/ext/test_demo_ui/ui.js',
         icon: 'MagicStick',
         v: 1,
       },

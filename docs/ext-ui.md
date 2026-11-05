@@ -46,7 +46,7 @@ tab id 支持子路径导航：路由 `/ext/<插件>/<id>/<子路径>` 会挂载
 
 页面脚本两种形态，宿主不区分（只认 `ui.js` 这个文件）：
 
-- **免构建手写**：原生 ES module + 自定义元素（样例：demo_ui）。
+- **免构建手写**：原生 ES module + 自定义元素（样例：test_demo_ui）。
 - **构建产物**：源码在 `ui-src/`（TS + Vue SFC），由 webui 的构建脚本
   打成单文件 `ui.js`（第一方插件用这种）。构建复用 webui/node_modules，
   插件目录不需要自己的 package.json：
@@ -66,7 +66,7 @@ tab id 支持子路径导航：路由 `/ext/<插件>/<id>/<子路径>` 会挂载
 `loquat-page-<插件名>-<tab id>`：
 
 ```js
-const TAG = 'loquat-page-demo_ui-demo'
+const TAG = 'loquat-page-test_demo_ui-demo'
 if (!customElements.get(TAG)) {           // 必须守卫，见下
   customElements.define(TAG, class extends HTMLElement {
     connectedCallback() { /* 用 this.ctx 渲染 */ }
